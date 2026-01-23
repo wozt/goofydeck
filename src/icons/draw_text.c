@@ -156,7 +156,7 @@ static int get_size(const char *path, int *w, int *h) {
 
 static int validate_font(const char *font_path) {
     if (!font_path || !*font_path) return 0;
-    char tmp[]="/tmp/magick-fontcheck-XXXXXX.png";
+    char tmp[]="/dev/shm/magick-fontcheck-XXXXXX.png";
     int fd = mkstemps(tmp,4); // .png suffix
     if (fd!=-1) close(fd);
     char cmd[PATH_MAX*3];

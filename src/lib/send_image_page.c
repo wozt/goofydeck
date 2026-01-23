@@ -1496,37 +1496,37 @@ int main(int argc, char **argv) {
         }
         
     } else {
-        // Mode fichiers: créer le répertoire temporaire et écrire les fichiers en parallèle
-        // printf("Mode fichiers: création des tuiles sur disque (threads activés)...\n");
+        // File mode: create temporary directory and write files in parallel
+        // printf("File mode: creating tiles on disk (threads enabled)...\n");
         
         char tag[32];
         unique_tag(tag, sizeof(tag));
         char tmpdir[] = "/dev/shm/d200_tilesXXXXXX";
         if (!mkdtemp(tmpdir)) {
-            strcpy(tmpdir, "/tmp/d200_tilesXXXXXX");
+            strcpy(tmpdir, "/dev/shm/d200_tilesXXXXXX");
             if (!mkdtemp(tmpdir)) { 
-                fprintf(stderr, "Erreur: mkdtemp failed\n"); 
+                fprintf(stderr, "Error: mkdtemp failed\n"); 
                 free(processed_src); 
                 return 1; 
             }
         }
-        // printf("Répertoire temporaire: %s\n", tmpdir);
+        // printf("Temporary directory: %s\n", tmpdir);
         
-        // Initialiser le thread pool pour l'écriture PNG en parallèle
+        // Initialize thread pool for parallel PNG writing
         png_write_pool_t write_pool;
         if (png_write_pool_init(&write_pool, 4) != 0) {
-            fprintf(stderr, "Erreur: impossible d'initialiser le thread pool\n");
+            fprintf(stderr, "Error: failed to initialize thread pool\n");
             free(processed_src);
             return 1;
         }
         
-        // Préparer les tâches d'écriture PNG pour les 14 tuiles
+        // Prepare PNG writing tasks for the 14 tiles
         png_write_task_t write_tasks[14];
         const uint8_t *tiles_data[14];
         int tiles_w[14], tiles_h[14];
         
-        // Traiter les 13 premiers boutons (grille 5x3)
-        // printf("Préparation des tuiles pour les boutons 1-13...\n");
+        // Process first 13 buttons (5x3 grid)
+        // printf("Preparing tiles for buttons 1-13...\n");
         for (int i = 0; i < 13; i++) {
             int r2 = (i < 10) ? i / 5 : 2;
             int c = (i < 10) ? i % 5 : (i - 10);

@@ -159,13 +159,13 @@ OUT="${OUT_DIR}/${FILENAME}"
 mkdir -p "${OUT_DIR}"
 
 tmp_tag="${FILENAME//[^A-Za-z0-9_.-]/_}"
-TMP_BASE="/tmp/.icon_build_base_${tmp_tag}"
-TMP_MASK="/tmp/.icon_build_mask_${tmp_tag}"
-TMP_BORDER="/tmp/.icon_build_border_${tmp_tag}"
-TMP_ICON="/tmp/.icon_build_icon_${tmp_tag}"
-TMP_ICON_MASK="/tmp/.icon_build_icon_mask_${tmp_tag}"
-TMP_ICON_OVERLAY="/tmp/.icon_build_icon_overlay_${tmp_tag}"
-TMP_OUT="/tmp/.icon_build_out_${tmp_tag}"
+TMP_BASE="/dev/shm/.icon_build_base_${tmp_tag}"
+TMP_MASK="/dev/shm/.icon_build_mask_${tmp_tag}"
+TMP_BORDER="/dev/shm/.icon_build_border_${tmp_tag}"
+TMP_ICON="/dev/shm/.icon_build_icon_${tmp_tag}"
+TMP_ICON_MASK="/dev/shm/.icon_build_icon_mask_${tmp_tag}"
+TMP_ICON_OVERLAY="/dev/shm/.icon_build_icon_overlay_${tmp_tag}"
+TMP_OUT="/dev/shm/.icon_build_out_${tmp_tag}"
 
 trap 'rm -f "${TMP_BASE}" "${TMP_MASK}" "${TMP_BORDER}" "${TMP_ICON}" "${TMP_ICON_MASK}" "${TMP_ICON_OVERLAY}" "${TMP_OUT}"' EXIT
 

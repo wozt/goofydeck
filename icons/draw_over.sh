@@ -57,9 +57,9 @@ fi
 
 echo "Bottom image: ${BOTTOM_W}x${BOTTOM_H}"
 
-# Create temporary files in /tmp
-TMP_TOP="/tmp/.draw_over_top_${BOTTOM_FILE##*/}"
-TMP_RESIZED="/tmp/.draw_over_resized_${BOTTOM_FILE##*/}"
+# Create temporary files in /dev/shm
+TMP_TOP="/dev/shm/.draw_over_top_${BOTTOM_FILE##*/}"
+TMP_RESIZED="/dev/shm/.draw_over_resized_${BOTTOM_FILE##*/}"
 
 trap 'rm -f "${TMP_TOP}" "${TMP_RESIZED}"' EXIT
 

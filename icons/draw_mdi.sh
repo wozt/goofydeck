@@ -66,10 +66,10 @@ if [ ! -f "${TARGET}" ]; then
 fi
 
 tmp_tag="${TARGET##*/}"
-TMP_ICON="/tmp/.mdi_icon_${tmp_tag}"
-TMP_MASK="/tmp/.mdi_mask_${tmp_tag}"
-TMP_OVERLAY="/tmp/.mdi_overlay_${tmp_tag}"
-TMP_OUT="/tmp/.mdi_out_${tmp_tag}"
+TMP_ICON="/dev/shm/.mdi_icon_${tmp_tag}"
+TMP_MASK="/dev/shm/.mdi_mask_${tmp_tag}"
+TMP_OVERLAY="/dev/shm/.mdi_overlay_${tmp_tag}"
+TMP_OUT="/dev/shm/.mdi_out_${tmp_tag}"
 
 trap 'rm -f "${TMP_ICON}" "${TMP_MASK}" "${TMP_OVERLAY}" "${TMP_OUT}"' EXIT
 
