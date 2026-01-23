@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <limits.h>
@@ -193,6 +194,7 @@ int main(int argc, char **argv) {
     const char *text_offset="0,0";
     const char *filename=NULL;
     int list_ttf=0;
+    int is_transparent=0;
 
     for (int i=1;i<argc;i++) {
         if (strncmp(argv[i],"--text=",7)==0) text = argv[i]+7;
@@ -233,6 +235,15 @@ int main(int argc, char **argv) {
     }
 
     if (!is_int(text_size)) text_size="16";
+
+    // Check for transparent mode
+    if (strcasecmp(text_color, "transparent") == 0) {
+        is_transparent = 1;
+    } else if (strlen(text_color) != 6 || 
+               strspn(text_color, "0123456789ABCDEFabcdef") != 6) {
+        fprintf(stderr, "Invalid text_color: %s (expected 6-digit hex or 'transparent')\n", text_color);
+        return 1;
+    }
 
     // parse offset
     int off_x=0, off_y=0;
@@ -280,47 +291,135 @@ int main(int argc, char **argv) {
         }
     }
 
-    // temp output
+    // temp files
     char tmp_out[PATH_MAX];
+    char tmp_text[PATH_MAX];
     snprintf_checked(tmp_out, sizeof(tmp_out), "tmp_out", "%s.texttmp", target);
+    snprintf_checked(tmp_text, sizeof(tmp_text), "tmp_text", "%s.texttmp.png", target);
 
-    // build magick command
-    char annotate[64];
-    snprintf_checked(annotate, sizeof(annotate), "annotate", "+%d+%d", off_x, off_y);
+    pid_t pid;
+    int status;
 
-    // Prepare argv for exec
-    const char *magick = "magick";
-    char inputspec[PATH_MAX];
-    snprintf_checked(inputspec, sizeof(inputspec), "inputspec", "png32:%s", target);
-    int argi=0;
-    const char *args[32];
-    args[argi++]=magick;
-    args[argi++]= inputspec;
-    args[argi++]= "-gravity";
-    args[argi++]= gravity;
-    if (font_path[0]) { args[argi++]= "-font"; args[argi++]= font_path; }
-    args[argi++]= "-pointsize"; args[argi++]= text_size;
-    char fill[16];
-    snprintf_checked(fill, sizeof(fill), "fill", "#%s", text_color);
-    args[argi++]= "-fill"; args[argi++]= fill;
-    args[argi++]= "-annotate"; args[argi++]= annotate; args[argi++]= text;
-    char outspec[PATH_MAX];
-    snprintf_checked(outspec, sizeof(outspec), "outspec", "png32:%s", tmp_out);
-    args[argi++]= outspec;
-    args[argi]=NULL;
+    if (is_transparent) {
+        // For transparent mode: create text mask and use DstOut to cut out text shape
+        // 1) Create text as white on transparent background
+        const char *args1[32];
+        int argi1=0;
+        args1[argi1++]="magick";
+        args1[argi1++]="-size";
+        char size[16];
+        snprintf_checked(size, sizeof(size), "size", "%dx%d", w, h);
+        args1[argi1++]=size;
+        args1[argi1++]="xc:none";
+        args1[argi1++]="-gravity";
+        args1[argi1++]=gravity;
+        if (font_path[0]) { args1[argi1++]="-font"; args1[argi1++]=font_path; }
+        args1[argi1++]="-pointsize"; args1[argi1++]=text_size;
+        args1[argi1++]="-fill"; args1[argi1++]="white";
+        args1[argi1++]="-annotate"; 
+        char annotate[64];
+        snprintf_checked(annotate, sizeof(annotate), "annotate", "+%d+%d", off_x, off_y);
+        args1[argi1++]=annotate; args1[argi1++]=text;
+        char outspec1[PATH_MAX];
+        snprintf_checked(outspec1, sizeof(outspec1), "outspec1", "png32:%s", tmp_text);
+        args1[argi1++]=outspec1;
+        args1[argi1]=NULL;
 
-    pid_t pid = fork();
-    if (pid==0) {
-        execvp(magick,(char * const*)args);
-        _exit(127);
+        pid = fork();
+        if (pid==0) {
+            execvp("magick",(char * const*)args1);
+            _exit(127);
+        }
+        waitpid(pid,&status,0);
+        if (status!=0) {
+            fprintf(stderr,"magick text creation failed\n");
+            unlink(tmp_text); unlink(tmp_out);
+            return 1;
+        }
+
+        // 2) Apply DstOut composition directly (the text image already has proper alpha)
+        const char *args2[32];
+        int argi2=0;
+        args2[argi2++]="magick";
+        char inputspec2[PATH_MAX];
+        snprintf_checked(inputspec2, sizeof(inputspec2), "inputspec2", "png32:%s", target);
+        args2[argi2++]=inputspec2;
+        args2[argi2++]=tmp_text;
+        args2[argi2++]="-gravity";
+        args2[argi2++]=gravity;
+        args2[argi2++]="-compose";
+        args2[argi2++]="DstOut";
+        args2[argi2++]="-composite";
+        char outspec2[PATH_MAX];
+        snprintf_checked(outspec2, sizeof(outspec2), "outspec2", "png32:%s", tmp_out);
+        args2[argi2++]=outspec2;
+        args2[argi2]=NULL;
+
+        pid = fork();
+        if (pid==0) {
+            execvp("magick",(char * const*)args2);
+            _exit(127);
+        }
+        waitpid(pid,&status,0);
+        if (status!=0) {
+            fprintf(stderr,"magick DstOut composite failed\n");
+            unlink(tmp_text); unlink(tmp_out);
+            return 1;
+        }
+
+        // Cleanup temp files
+        unlink(tmp_text);
+    } else {
+        // Normal mode: standard text overlay
+        const char *args[32];
+        int argi=0;
+        const char *magick = "magick";
+        char inputspec[PATH_MAX];
+        snprintf_checked(inputspec, sizeof(inputspec), "inputspec", "png32:%s", target);
+        args[argi++]=magick;
+        args[argi++]= inputspec;
+        args[argi++]= "-gravity";
+        args[argi++]= gravity;
+        if (font_path[0]) { args[argi++]= "-font"; args[argi++]= font_path; }
+        args[argi++]= "-pointsize"; args[argi++]= text_size;
+        char fill[16];
+        snprintf_checked(fill, sizeof(fill), "fill", "#%s", text_color);
+        args[argi++]= "-fill"; args[argi++]= fill;
+        args[argi++]= "-annotate"; 
+        char annotate[64];
+        snprintf_checked(annotate, sizeof(annotate), "annotate", "+%d+%d", off_x, off_y);
+        args[argi++]= annotate; args[argi++]= text;
+        char outspec[PATH_MAX];
+        snprintf_checked(outspec, sizeof(outspec), "outspec", "png32:%s", tmp_out);
+        args[argi++]= outspec;
+        args[argi]=NULL;
+
+        pid = fork();
+        if (pid==0) {
+            execvp(magick,(char * const*)args);
+            _exit(127);
+        }
+        waitpid(pid,&status,0);
+        if (status!=0) {
+            fprintf(stderr,"magick annotate failed\n");
+            unlink(tmp_out);
+            return 1;
+        }
     }
-    int status=0;
-    waitpid(pid,&status,0);
+
     if (status!=0) {
-        fprintf(stderr,"magick annotate failed\n");
+        fprintf(stderr,"text processing failed\n");
         unlink(tmp_out);
         return 1;
     }
+    
     rename(tmp_out, target);
+    
+    if (is_transparent) {
+        printf("Updated %s with text '%s' (transparent mask, align %s)\n", target, text, text_align);
+    } else {
+        printf("Updated %s with text '%s' (color #%s, align %s)\n", target, text, text_color, text_align);
+    }
+    
     return 0;
 }

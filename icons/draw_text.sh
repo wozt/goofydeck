@@ -58,7 +58,7 @@ if [ "${LIST_TTF}" -eq 1 ]; then
 fi
 
 if [ -z "${FILENAME}" ]; then
-  echo "Usage: $0 [--text=hello] [--text_color=00FF00] [--text_align=top|center|bottom] [--text_font=Roboto.ttf] [--text_size=16] [--text_offset=x,y] <filename.png>" >&2
+  echo "Usage: $0 [--text=hello] [--text_color=00FF00|transparent] [--text_align=top|center|bottom] [--text_font=Roboto.ttf] [--text_size=16] [--text_offset=x,y] <filename.png>" >&2
   exit 1
 fi
 
@@ -67,8 +67,11 @@ if [[ "${FILENAME}" != *.png ]]; then
   exit 1
 fi
 
-if ! [[ "${TEXT_COLOR}" =~ ^[0-9A-Fa-f]{6}$ ]]; then
-  echo "Invalid text_color: ${TEXT_COLOR}" >&2
+IS_TRANSPARENT=0
+if [[ "${TEXT_COLOR,,}" == "transparent" ]]; then
+  IS_TRANSPARENT=1
+elif ! [[ "${TEXT_COLOR}" =~ ^[0-9A-Fa-f]{6}$ ]]; then
+  echo "Invalid text_color: ${TEXT_COLOR} (expected 6-digit hex or 'transparent')" >&2
   exit 1
 fi
 
@@ -101,7 +104,9 @@ if [ "${W}" -gt 196 ] || [ "${H}" -gt 196 ]; then
 fi
 
 TMP_OUT="${TARGET}.texttmp"
-trap 'rm -f "${TMP_OUT}"' EXIT
+TMP_TEXT="${TARGET}.texttmp.png"
+TMP_MASK="${TARGET}.textmask.png"
+trap 'rm -f "${TMP_OUT}" "${TMP_TEXT}" "${TMP_MASK}"' EXIT
 
 FONT_OPT=()
 if [ -n "${TEXT_FONT}" ]; then
@@ -142,12 +147,35 @@ if [ -n "${FONT_CAND:-}" ]; then
   FONT_OPT=(-font "${FONT_CAND}")
 fi
 
-"${MAGICK_BIN}" png32:"${TARGET}" \
-  -gravity "${GRAVITY}" "${FONT_OPT[@]}" \
-  -pointsize "${TEXT_SIZE}" \
-  -fill "#${TEXT_COLOR}" \
-  -annotate +${OFF_X}+${OFF_Y} "${TEXT}" \
-  png32:"${TMP_OUT}"
+if [ "${IS_TRANSPARENT}" -eq 1 ]; then
+  # For transparent mode: create text mask and use DstOut to cut out text shape
+  # 1) Create text as white on transparent background
+  "${MAGICK_BIN}" -size "${W}x${H}" xc:none \
+    -gravity "${GRAVITY}" "${FONT_OPT[@]}" \
+    -pointsize "${TEXT_SIZE}" \
+    -fill white \
+    -annotate +${OFF_X}+${OFF_Y} "${TEXT}" \
+    png32:"${TMP_TEXT}"
+  
+  # 2) Apply DstOut composition directly (the text image already has proper alpha)
+  "${MAGICK_BIN}" png32:"${TARGET}" \
+    png32:"${TMP_TEXT}" \
+    -gravity "${GRAVITY}" -compose DstOut -composite \
+    png32:"${TMP_OUT}"
+else
+  # Normal mode: standard text overlay
+  "${MAGICK_BIN}" png32:"${TARGET}" \
+    -gravity "${GRAVITY}" "${FONT_OPT[@]}" \
+    -pointsize "${TEXT_SIZE}" \
+    -fill "#${TEXT_COLOR}" \
+    -annotate +${OFF_X}+${OFF_Y} "${TEXT}" \
+    png32:"${TMP_OUT}"
+fi
+
 mv -f "${TMP_OUT}" "${TARGET}"
 
-echo "Updated ${TARGET} with text '${TEXT}' (color #${TEXT_COLOR}, align ${TEXT_ALIGN})"
+if [ "${IS_TRANSPARENT}" -eq 1 ]; then
+  echo "Updated ${TARGET} with text '${TEXT}' (transparent mask, align ${TEXT_ALIGN})"
+else
+  echo "Updated ${TARGET} with text '${TEXT}' (color #${TEXT_COLOR}, align ${TEXT_ALIGN})"
+fi
