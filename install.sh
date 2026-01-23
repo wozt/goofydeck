@@ -11,7 +11,6 @@ COLLECT_FONTS="${ROOT}/icons/collect_fonts.sh"
 FORCE_COMPILE=0
 NO_COMPILE=0
 DEPS_ONLY=0
-WITH_PYTHON=0
 NO_FONTS=0
 
 usage() {
@@ -24,7 +23,6 @@ Options:
   --compile            Force full rebuild (make clean all)
   --no-compile         Do not build anything
   --deps-only          Install deps only (implies --no-compile)
-  --python             Create venv/ and install requirements-dev.txt
   --no-fonts           Skip fonts collection/copy
   --env-file <path>    Use a specific .env file (default: ${ENV_FILE})
   -h, --help           Show this help
@@ -32,6 +30,7 @@ Options:
 Notes:
   - USER or USERNAME can be defined in .env for font ownership.
   - This script does not move binaries; it relies on the Makefile outputs.
+  - This is a C-only project; Python dependencies are not installed.
 EOF
 }
 
@@ -45,7 +44,6 @@ while [ "$#" -gt 0 ]; do
     --compile) FORCE_COMPILE=1; shift ;;
     --no-compile) NO_COMPILE=1; shift ;;
     --deps-only) DEPS_ONLY=1; NO_COMPILE=1; shift ;;
-    --python) WITH_PYTHON=1; shift ;;
     --no-fonts) NO_FONTS=1; shift ;;
     --env-file) ENV_FILE="${2:-}"; shift 2 || { usage; exit 2; } ;;
     --env-file=*) ENV_FILE="${1#*=}"; shift ;;
@@ -202,19 +200,6 @@ ensure_fonts() {
   fi
 }
 
-ensure_python_venv() {
-  [ "${WITH_PYTHON}" -eq 1 ] || return 0
-
-  command -v python3 >/dev/null 2>&1 || die "python3 is required for --python"
-  log "Setting up Python venv at ${ROOT}/venv ..."
-  python3 -m venv "${ROOT}/venv"
-  # shellcheck disable=SC1091
-  source "${ROOT}/venv/bin/activate"
-  python -m pip install --upgrade pip setuptools wheel
-  if [ -f "${ROOT}/requirements-dev.txt" ]; then
-    python -m pip install -r "${ROOT}/requirements-dev.txt"
-  fi
-}
 
 need_build() {
   local -a expected=(
@@ -267,7 +252,6 @@ main() {
   esac
 
   ensure_fonts
-  ensure_python_venv
   build_all
 
   log "Done."

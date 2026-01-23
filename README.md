@@ -58,9 +58,6 @@ Automatic installation:
 # Do not compile binaries
 ./install.sh --no-compile
 
-# Include Python environment (optional)
-./install.sh --python
-
 # Do not install fonts
 ./install.sh --no-fonts
 ```
