@@ -64,13 +64,13 @@ static int write_packet(hid_device *dev, const uint8_t *packet, size_t len) {
     return res;
 }
 
-// Déclarations des fonctions pour l'écriture PNG en mémoire
+// Function declarations for in-memory PNG writing
 static void png_write_data_to_memory(png_structp png_ptr, png_bytep data, png_size_t length);
 static void png_flush_data_to_memory(png_structp png_ptr);
 static int rgba_to_png_memory(const uint8_t *rgba, int w, int h, uint8_t **png_data, size_t *png_len);
 static FD_UNUSED int write_png_rgba(const char *path, const uint8_t *data, int w, int h);
 
-// Implémentation de write_png_rgba
+// Implementation of write_png_rgba
 static int write_png_rgba(const char *path, const uint8_t *data, int w, int h) {
     FILE *fp=fopen(path,"wb"); if(!fp) return -1;
     png_structp png=png_create_write_struct(PNG_LIBPNG_VER_STRING,NULL,NULL,NULL);
@@ -676,7 +676,7 @@ int main(void) {
                 line[n] = '\0';
                 trim_line(line);
                 
-                // Cas spécial pour set-buttons-explicit-14-data: les données binaires suivent
+                // Special case for set-buttons-explicit-14-data: binary data follows
                 int is_binary_command = 0;
                 if (strncmp(line,"set-buttons-explicit-14-data",28)==0) {
                     is_binary_command = 1;
@@ -684,8 +684,8 @@ int main(void) {
                 
                 if (is_binary_command) {
                     // Format: set-buttons-explicit-14-data\n
-                    // Ensuite 14 blocs de données PNG: taille (4 bytes) + données PNG
-                    // Approche optimisée: les tuiles sont déjà converties en PNG par le client
+                    // Then 14 PNG data blocks: size (4 bytes) + PNG data
+                    // Optimized approach: tiles are already converted to PNG by client
                     
                     IconItem items[14]; 
                     memset(items,0,sizeof(items));
@@ -697,7 +697,7 @@ int main(void) {
                     int ok=1;
                     
                     for (int i=0;i<14 && ok;i++) {
-                        // Lire la taille (4 bytes)
+                        // Read size (4 bytes)
                         uint8_t lenbuf[4];
                         ssize_t bytes_read = read(cfd, lenbuf, 4);
                         
@@ -706,7 +706,7 @@ int main(void) {
                         }
                         uint32_t blen = (lenbuf[0]<<24)|(lenbuf[1]<<16)|(lenbuf[2]<<8)|lenbuf[3];
                         
-                        // Allouer et lire les données PNG (déjà converties par le client)
+                        // Allocate and read PNG data (already converted by client)
                         items[i].data = malloc(blen);
                         if (!items[i].data) { ok=0; break; }
                         items[i].data_len = blen;
@@ -721,13 +721,13 @@ int main(void) {
                         }
                         if (!ok) break;
                         
-                        // Nom du fichier PNG
+                        // PNG filename
                         char nm[32]; 
                         snprintf(nm,sizeof(nm), i==13 ? "b14.png" : "b%d.png", i+1);
                         items[i].name = strdup(nm);
                     }
                     
-                    // Créer le ZIP avec les fichiers PNG déjà convertis
+                    // Create ZIP with already converted PNG files
                     if (ok) {
                         uint8_t *zipbuf=NULL; size_t ziplen=0; int pad_used=0; size_t patched=0;
                         if (build_zip_from_icons(items,14,&zipbuf,&ziplen,&pad_used,&patched)==0 && zipbuf) {
@@ -745,7 +745,7 @@ int main(void) {
                         write(cfd,"err\n",4);
                     }
                     
-                    // Nettoyer les ressources
+                    // Clean up resources
                     for (int i=0;i<14;i++) { 
                         free(items[i].data); 
                         free(items[i].name); 

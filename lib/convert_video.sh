@@ -1,29 +1,29 @@
 #!/bin/bash
 
-# Script de conversion vidéo frame par frame avec dithering et quantification 256 couleurs
+# Frame-by-frame video conversion script with dithering and 256-color quantization
 # Usage: ./convert_video.sh [--size=720|480|360] [--fps=1-60] [-d|--dither] <filename.mp4>
 # 
-# Fonctionnalités:
-# - Conversion au format cible (720p=1280x720, 480p=854x480, 360p=640x360) OU conservation résolution originale
-# - Crop intelligent 16:9 au centre (si redimensionnement)
-# - Traitement frame par frame avec dithering Floyd-Steinberg (optionnel)
-# - Quantification 256 couleurs PAR frame (systématique)
-# - Recomposition avec audio original
-# - Compression optimisée
+# Features:
+# - Convert to target format (720p=1280x720, 480p=854x480, 360p=640x360) OR keep original resolution
+# - Smart 16:9 center crop (if resizing)
+# - Frame-by-frame processing with Floyd-Steinberg dithering (optional)
+# - 256-color quantization PER frame (systematic)
+# - Recomposition with original audio
+# - Optimized compression
 
-# Fonctions d'affichage
+# Display functions
 print_info() { echo -e "\033[1;34m[INFO]\033[0m $1"; }
 print_success() { echo -e "\033[1;32m[SUCCESS]\033[0m $1"; }
 print_error() { echo -e "\033[1;31m[ERROR]\033[0m $1"; }
 print_warning() { echo -e "\033[1;33m[WARNING]\033[0m $1"; }
 
-# Vérifier les dépendances
+# Check dependencies
 check_dependencies() {
     local deps=("ffmpeg" "ffprobe" "convert" "identify")
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" &> /dev/null; then
-            print_error "Dépendance manquante: $dep"
-            print_info "Installez avec: sudo apt install ffmpeg imagemagick"
+            print_error "Missing dependency: $dep"
+            print_info "Install with: sudo apt install ffmpeg imagemagick"
             exit 1
         fi
     done
@@ -33,12 +33,12 @@ check_dependencies() {
 parse_args() {
     if [[ $# -lt 1 || $# -gt 4 ]]; then
         print_error "Usage: $0 [--size=720|480|360] [--fps=1-60] [-d|--dither] <filename.mp4>"
-        print_info "Exemples:"
+        print_info "Examples:"
         print_info "  $0 video.mp4"
         print_info "  $0 --size=720 video.mp4"
         print_info "  $0 --size=480 --fps=30 video.mkv"
         print_info "  $0 --size=360 --fps=15 video.avi"
-        print_info "  $0 -d video.mp4  # avec dithering Floyd-Steinberg"
+        print_info "  $0 -d video.mp4  # with Floyd-Steinberg dithering"
         print_info "  $0 --size=720 -d --fps=30 video.mp4  # conversion + dithering"
         exit 1
     fi
@@ -46,9 +46,9 @@ parse_args() {
     TARGET_SIZE=""
     TARGET_FPS=""
     INPUT_FILE=""
-    DITHER_MODE=""  # "" = pas de dithering, "FloydSteinberg" = dithering activé
+    DITHER_MODE=""  # "" = no dithering, "FloydSteinberg" = dithering enabled
     
-    # Parser les arguments
+    # Parse arguments
     for arg in "$@"; do
         if [[ "$arg" =~ ^--size=(720|480|360)$ ]]; then
             TARGET_SIZE="${BASH_REMATCH[1]}"
@@ -61,14 +61,14 @@ parse_args() {
         fi
     done
     
-    # Vérifications
+    # Checks
     if [[ -z "$INPUT_FILE" ]]; then
-        print_error "Fichier d'entrée requis"
+        print_error "Input file required"
         exit 1
     fi
     
     if [[ ! -f "$INPUT_FILE" ]]; then
-        print_error "Fichier introuvable: $INPUT_FILE"
+        print_error "File not found: $INPUT_FILE"
         exit 1
     fi
     
@@ -76,7 +76,7 @@ parse_args() {
     INPUT_BASE="$(basename "$INPUT_FILE")"
     INPUT_NAME="${INPUT_BASE%.*}"
     
-    # Construire le nom de sortie avec FPS si spécifié
+    # Build output name with FPS if specified
     if [[ -n "$TARGET_FPS" ]]; then
         if [[ -n "$TARGET_SIZE" ]]; then
             OUTPUT_FILE="${INPUT_DIR}/${INPUT_NAME}_converted_${TARGET_SIZE}p_${TARGET_FPS}fps.mp4"
@@ -91,24 +91,24 @@ parse_args() {
         fi
     fi
     
-    print_info "Fichier d'entrée: $INPUT_FILE"
-    print_info "Fichier de sortie: $OUTPUT_FILE"
+    print_info "Input file: $INPUT_FILE"
+    print_info "Output file: $OUTPUT_FILE"
     if [[ -n "$TARGET_SIZE" ]]; then
-        print_info "Taille cible: ${TARGET_SIZE}p"
+        print_info "Target size: ${TARGET_SIZE}p"
     else
-        print_info "Taille: résolution originale"
+        print_info "Size: original resolution"
     fi
     if [[ -n "$TARGET_FPS" ]]; then
-        print_info "FPS cible: $TARGET_FPS"
+        print_info "Target FPS: $TARGET_FPS"
     fi
     if [[ -n "$DITHER_MODE" ]]; then
-        print_info "Dithering: activé (Floyd-Steinberg)"
+        print_info "Dithering: enabled (Floyd-Steinberg)"
     else
-        print_info "Dithering: désactivé"
+        print_info "Dithering: disabled"
     fi
 }
 
-# Obtenir les informations vidéo
+# Get video information
 get_video_info() {
     local info
     info=$(ffprobe -v quiet -print_format json -show_streams "$INPUT_FILE")
@@ -125,12 +125,12 @@ get_video_info() {
         DURATION=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=duration -of csv=p=0 "$INPUT_FILE")
     fi
     
-    print_info "Dimensions originales: ${WIDTH}x${HEIGHT}"
+    print_info "Original dimensions: ${WIDTH}x${HEIGHT}"
     print_info "FPS: $FPS"
-    print_info "Durée: ${DURATION}s"
+    print_info "Duration: ${DURATION}s"
 }
 
-# Définir les dimensions cibles
+# Set target dimensions
 set_target_dimensions() {
     if [[ -n "$TARGET_SIZE" ]]; then
         case "$TARGET_SIZE" in
@@ -148,28 +148,28 @@ set_target_dimensions() {
                 ;;
         esac
         
-        print_info "Format cible: ${TARGET_WIDTH}x${TARGET_HEIGHT} (${TARGET_SIZE}p)"
+        print_info "Target format: ${TARGET_WIDTH}x${TARGET_HEIGHT} (${TARGET_SIZE}p)"
     else
-        # Garder la résolution originale
+        # Keep original resolution
         TARGET_WIDTH="$WIDTH"
         TARGET_HEIGHT="$HEIGHT"
-        print_info "Format cible: ${TARGET_WIDTH}x${TARGET_HEIGHT} (résolution originale)"
+        print_info "Target format: ${TARGET_WIDTH}x${TARGET_HEIGHT} (original resolution)"
     fi
 }
 
-# Pas de crop - simple redimensionnement
+# No crop - simple resizing
 calculate_crop_dimensions() {
-    # Utiliser directement les dimensions cibles sans crop
+    # Use target dimensions directly without crop
     CROP_WIDTH="$TARGET_WIDTH"
     CROP_HEIGHT="$TARGET_HEIGHT"
     CROP_X=0
     CROP_Y=0
-    print_info "Redimensionnement direct: ${CROP_WIDTH}x${CROP_HEIGHT} (pas de crop)"
+    print_info "Direct resize: ${CROP_WIDTH}x${CROP_HEIGHT} (no crop)"
 }
 
-# Fonction principale
+# Main function
 main() {
-    print_info "Démarrage de la conversion vidéo frame par frame..."
+    print_info "Starting frame-by-frame video conversion..."
     
     parse_args "$@"
     check_dependencies
@@ -177,82 +177,82 @@ main() {
     set_target_dimensions
     calculate_crop_dimensions
     
-    # Créer le répertoire temporaire
+    # Create temporary directory
     TEMP_DIR=$(mktemp -d -p /dev/shm/ convert_video_XXXXXX)
     if [[ ! -d "$TEMP_DIR" ]]; then
-        print_error "Impossible de créer le répertoire temporaire"
+        print_error "Unable to create temporary directory"
         exit 1
     fi
     
-    print_info "Répertoire temporaire: $TEMP_DIR"
+    print_info "Temporary directory: $TEMP_DIR"
     
-    # Nettoyage en cas d'interruption
+    # Cleanup on interruption
     cleanup() {
-        print_info "Nettoyage..."
+        print_info "Cleaning up..."
         rm -rf "$TEMP_DIR"
     }
     trap cleanup EXIT INT TERM
     
     local cropped_video="${TEMP_DIR}/cropped_video.mp4"
     
-    # ÉTAPE 1: Convertir et redimensionner la vidéo
+    # STEP 1: Convert and resize video
     if [[ -n "$TARGET_SIZE" ]]; then
-        print_info "Étape 1: Conversion au format ${TARGET_SIZE}p..."
+        print_info "Step 1: Converting to ${TARGET_SIZE}p format..."
     else
-        print_info "Étape 1: Conversion avec résolution originale..."
+        print_info "Step 1: Resizing video..."
     fi
     
     local ffmpeg_cmd="ffmpeg -y -i \"$INPUT_FILE\" -vf \"scale=${TARGET_WIDTH}:${TARGET_HEIGHT}\" -c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -movflags +faststart -threads 4"
     
-    # Ajouter le FPS si spécifié
+    # Add FPS if specified
     if [[ -n "$TARGET_FPS" ]]; then
         ffmpeg_cmd="$ffmpeg_cmd -r $TARGET_FPS"
-        print_info "FPS cible: $TARGET_FPS fps"
+        print_info "Target FPS: $TARGET_FPS fps"
     fi
     
-    # Limiter à 10 secondes pour le test - SUPPRIMÉ POUR LA VERSION FINALE
+    # Limit to 10 seconds for testing - REMOVED FOR FINAL VERSION
     # ffmpeg_cmd="$ffmpeg_cmd -t 10"
     
     ffmpeg_cmd="$ffmpeg_cmd \"$cropped_video\""
     
-    print_info "Commande: $ffmpeg_cmd"
+    print_info "Command: $ffmpeg_cmd"
     
     if eval "$ffmpeg_cmd"; then
         if [[ -f "$cropped_video" ]]; then
-            print_success "Vidéo convertie et croppée: $cropped_video"
+            print_success "Video converted and cropped: $cropped_video"
             ls -lh "$cropped_video"
         else
-            print_error "Fichier non créé: $cropped_video"
+            print_error "File not created: $cropped_video"
             exit 1
         fi
     else
-        print_error "Échec de la conversion"
+        print_error "Conversion failed"
         exit 1
     fi
     
-    # ÉTAPE 2: Traiter les frames individuellement
-    print_info "Étape 2: Traitement frame par frame avec 256 couleurs..."
+    # STEP 2: Process individual frames
+    print_info "Step 2: Frame-by-frame processing with 256 colors..."
     if [[ -n "$DITHER_MODE" ]]; then
-        print_info "Dithering Floyd-Steinberg activé"
+        print_info "Floyd-Steinberg dithering enabled"
     else
-        print_info "Dithering désactivé"
+        print_info "Dithering disabled"
     fi
     
     local frames_dir="${TEMP_DIR}/frames"
     local processed_dir="${TEMP_DIR}/processed"
     mkdir -p "$frames_dir" "$processed_dir"
     
-    # Extraire toutes les frames (plus de limitation pour la version finale)
+    # Extract all frames (no more limitation for final version)
     ffmpeg -y -i "$cropped_video" "${frames_dir}/frame_%06d.png" 2>/dev/null
     
-    # Traiter chaque frame
+    # Process each frame
     local frame_count=0
     for frame_file in "${frames_dir}"/*.png; do
         if [[ -f "$frame_file" ]]; then
             local frame_name=$(basename "$frame_file")
             local output_frame="${processed_dir}/${frame_name}"
             
-            # Appliquer 256 couleurs systématiquement, dithering optionnel
+            # Apply 256 colors systematically, optional dithering
             local convert_cmd="convert \"$frame_file\""
             
             if [[ -n "$DITHER_MODE" ]]; then
@@ -265,18 +265,18 @@ main() {
             
             ((frame_count++))
             
-            # Afficher la progression
+            # Show progress
             if [[ $((frame_count % 10)) -eq 0 ]]; then
-                echo -ne "\rFrames traitées: $frame_count"
+                echo -ne "\rFrames processed: $frame_count"
             fi
         fi
     done
     
-    echo # Nouvelle ligne
-    print_success "Traitement terminé: $frame_count frames traitées"
+    echo # New line
+    print_success "Processing completed: $frame_count frames processed"
     
-    # ÉTAPE 3: Recomposer la vidéo
-    print_info "Étape 3: Recomposition de la vidéo..."
+    # STEP 3: Recompose video
+    print_info "Step 3: Recomposing video..."
     
     local temp_video="${TEMP_DIR}/temp_video.mp4"
     local final_fps="$FPS"
@@ -284,7 +284,7 @@ main() {
         final_fps="$TARGET_FPS"
     fi
     
-    # Créer la vidéo à partir des frames traitées
+    # Create video from processed frames
     ffmpeg -y \
         -framerate "$final_fps" \
         -i "${processed_dir}/frame_%06d.png" \
@@ -297,7 +297,7 @@ main() {
         "$temp_video" 2>/dev/null
     
     if [[ -f "$temp_video" ]]; then
-        # Ajouter l'audio original
+        # Add original audio
         ffmpeg -y \
             -i "$temp_video" \
             -i "$INPUT_FILE" \
@@ -309,29 +309,29 @@ main() {
             "$OUTPUT_FILE" 2>/dev/null
         
         if [[ -f "$OUTPUT_FILE" ]]; then
-            print_success "Vidéo finale créée: $OUTPUT_FILE"
+            print_success "Final video created: $OUTPUT_FILE"
             
-            # Afficher les statistiques
+            # Show statistics
             if command -v stat &> /dev/null; then
                 local input_size=$(stat -f%z "$INPUT_FILE" 2>/dev/null || stat -c%s "$INPUT_FILE" 2>/dev/null)
                 local output_size=$(stat -f%z "$OUTPUT_FILE" 2>/dev/null || stat -c%s "$OUTPUT_FILE" 2>/dev/null)
                 
                 if [[ -n "$input_size" && -n "$output_size" ]]; then
                     local ratio=$(echo "scale=1; $output_size * 100 / $input_size" | bc 2>/dev/null || echo "N/A")
-                    print_info "Taille d'entrée: $(numfmt --to=iec $input_size)"
-                    print_info "Taille de sortie: $(numfmt --to=iec $output_size)"
+                    print_info "Input size: $(numfmt --to=iec $input_size)"
+                    print_info "Output size: $(numfmt --to=iec $output_size)"
                     print_info "Ratio: ${ratio}%"
                 fi
             fi
         else
-            print_error "Échec de l'ajout de l'audio"
+            print_error "Failed to add audio"
             exit 1
         fi
     else
-        print_error "Échec de la recomposition vidéo"
+        print_error "Video recomposition failed"
         exit 1
     fi
 }
 
-# Lancer le script
+# Run script
 main "$@"

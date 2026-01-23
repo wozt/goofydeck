@@ -47,7 +47,7 @@ if [ ! -f "${BOTTOM_FILE}" ]; then
   exit 1
 fi
 
-# Obtenir les dimensions du fichier bottom
+# Get bottom file dimensions
 read -r BOTTOM_W BOTTOM_H <<<"$("${CMD}" identify -format "%w %h" "${BOTTOM_FILE}")"
 
 if [ -z "${BOTTOM_W}" ] || [ -z "${BOTTOM_H}" ]; then
@@ -57,18 +57,18 @@ fi
 
 echo "Bottom image: ${BOTTOM_W}x${BOTTOM_H}"
 
-# Créer des fichiers temporaires dans /tmp
+# Create temporary files in /tmp
 TMP_TOP="/tmp/.draw_over_top_${BOTTOM_FILE##*/}"
 TMP_RESIZED="/tmp/.draw_over_resized_${BOTTOM_FILE##*/}"
 
 trap 'rm -f "${TMP_TOP}" "${TMP_RESIZED}"' EXIT
 
-# Étape 1: Obtenir les dimensions du fichier top
+# STEP 1: Get top file dimensions
 read -r TOP_W TOP_H <<<"$("${CMD}" identify -format "%w %h" "${TOP_FILE}")"
 
 echo "Top image: ${TOP_W}x${TOP_H}"
 
-# Étape 2: Redimensionner top.png aux dimensions de bottom.png
+# STEP 2: Resize top.png to bottom.png dimensions
 if [ "${TOP_W}" -eq "${BOTTOM_W}" ] && [ "${TOP_H}" -eq "${BOTTOM_H}" ]; then
   echo "Same dimensions, no resize needed"
   cp "${TOP_FILE}" "${TMP_RESIZED}"
@@ -77,7 +77,7 @@ else
   "${CMD}" "${TOP_FILE}" -resize "${BOTTOM_W}x${BOTTOM_H}" "${TMP_RESIZED}"
 fi
 
-# Étape 3: Composer les images (top OVER bottom)
+# STEP 3: Compose images (top OVER bottom)
 echo "Compositing overlay..."
 "${CMD}" \
   "${BOTTOM_FILE}" \
@@ -85,7 +85,7 @@ echo "Compositing overlay..."
   -gravity center -compose over -composite \
   "${BOTTOM_FILE}"
 
-# Nettoyer les fichiers temporaires
+# Clean up temporary files
 rm -f "${TMP_TOP}" "${TMP_RESIZED}"
 
 echo "Updated ${BOTTOM_FILE} with overlay from ${TOP_FILE}"

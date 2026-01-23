@@ -26,19 +26,19 @@
 #define FD_UNUSED
 #endif
 
-// Structure pour les tâches de conversion PNG en parallèle
+// Structure for parallel PNG conversion tasks
 typedef struct {
     const uint8_t *rgba_data;
     int w, h;
     uint8_t *png_data;
     size_t png_len;
     int tile_id;
-    int status; // 0 = en attente, 1 = terminé, -1 = erreur
+    int status; // 0 = pending, 1 = completed, -1 = error
     pthread_mutex_t mutex;
     pthread_cond_t cond;
 } tile_task_t;
 
-// Structure pour le thread pool
+// Structure for thread pool
 typedef struct {
     tile_task_t *tasks;
     int task_count;
@@ -298,29 +298,29 @@ static void unique_tag(char *out, size_t cap) {
     snprintf(out, cap, "%ld%06ld", (long)ts.tv_sec, ts.tv_nsec/1000);
 }
 
-// Structure pour les options de traitement
+// Structure for processing options
 typedef struct {
-    int optimize_input;  // Optimiser l'image input (dithering avant quantification)
-    int dither;         // Activer dithering Floyd-Steinberg
-    int compress;         // Activer compression PNG
-    int colors;           // Nombre de couleurs pour quantization (8 ou 16)
-    int tile_optimize;    // Optimisation des tuiles (défaut: true)
-    int buffer_mode;      // Envoyer les données directement au démon (pas de fichiers)
-    int icon_size;        // Taille de référence des icônes (calculée dynamiquement)
-    int quality_percent;   // Pourcentage de qualité (100=taille originale, 50=moitié, défaut: 100)
-    int magnify_percent;   // Pourcentage de magnification (100=normal, 200=2x, défaut: 100)
-    char *keep_folder;     // Dossier pour copier les icônes (-k/--keep-icons, NULL = désactivé)
-    char *filename_prefix; // Préfixe pour les noms de fichiers (NULL = "icon")
+    int optimize_input;  // Optimize input image (dithering before quantization)
+    int dither;         // Enable Floyd-Steinberg dithering
+    int compress;         // Enable PNG compression
+    int colors;           // Number of colors for quantization (8 or 16)
+    int tile_optimize;    // Tile optimization (default: true)
+    int buffer_mode;      // Send data directly to daemon (no files)
+    int icon_size;        // Reference icon size (calculated dynamically)
+    int quality_percent;   // Quality percentage (100=original size, 50=half, default: 100)
+    int magnify_percent;   // Magnification percentage (100=normal, 200=2x, default: 100)
+    char *keep_folder;     // Folder to copy icons to (-k/--keep-icons, NULL = disabled)
+    char *filename_prefix; // Prefix for filenames (NULL = "icon")
 } process_options_t;
 
-// Déclarations des fonctions
+// Function declarations
 static void quantize_to_256_colors(uint8_t *img, int w, int h);
 static void optimize_input_image(uint8_t *img, int w, int h);
 static void apply_dithering(uint8_t *img, int w, int h);
 static int write_png_8bit(const char *path, const uint8_t *data, int w, int h);
 static int send_rgba_data_direct(const uint8_t *tiles[14], const int tile_w[14], const int tile_h[14]);
 
-// Fonction pour copier les icônes générées dans un dossier
+// Function to copy generated icons to a folder
 static void copy_icons_to_folder(const uint8_t *tiles[14], const int tile_w[14], const int tile_h[14], const char *folder, const char *filename_prefix) {
     if (!folder) return;
     
@@ -332,7 +332,7 @@ static void copy_icons_to_folder(const uint8_t *tiles[14], const int tile_w[14],
     // Déterminer le préfixe de nom de fichier
     const char *prefix = filename_prefix ? filename_prefix : "icon";
     
-    // Copier chaque icône
+    // Copy each icon
     for (int i = 0; i < 14; i++) {
         char filename[PATH_MAX];
         snprintf(filename, sizeof(filename), "%s/%s-%d.png", folder, prefix, i + 1);
@@ -340,16 +340,16 @@ static void copy_icons_to_folder(const uint8_t *tiles[14], const int tile_w[14],
     }
 }
 
-// Structure pour les tâches d'écriture PNG en parallèle (mode fichiers)
+// Structure for parallel PNG writing tasks (file mode)
 typedef struct {
     const uint8_t *rgba_data;
     int w, h;
     char filepath[PATH_MAX];
     int tile_id;
-    int status; // 0 = en attente, 1 = terminé, -1 = erreur
+    int status; // 0 = pending, 1 = completed, -1 = error
 } png_write_task_t;
 
-// Structure pour le thread pool d'écriture PNG
+// Structure for PNG writing thread pool
 typedef struct {
     png_write_task_t *tasks;
     int task_count;
@@ -364,7 +364,7 @@ typedef struct {
     int shutdown;
 } png_write_pool_t;
 
-// Fonction pour redimensionner une icône
+// Function to resize an icon
 static uint8_t* resize_icon(const uint8_t *src, int src_w, int src_h, int dst_w, int dst_h) {
     if (src_w == dst_w && src_h == dst_h) {
         uint8_t *copy = malloc((size_t)dst_w * dst_h * 4);
@@ -375,7 +375,7 @@ static uint8_t* resize_icon(const uint8_t *src, int src_w, int src_h, int dst_w,
     uint8_t *dst = malloc((size_t)dst_w * dst_h * 4);
     if (!dst) return NULL;
     
-    // Redimensionnement bilinéaire simple
+    // Simple bilinear resizing
     for (int y = 0; y < dst_h; y++) {
         for (int x = 0; x < dst_w; x++) {
             float src_x = (float)x * src_w / dst_w;
@@ -413,7 +413,7 @@ static uint8_t* resize_icon(const uint8_t *src, int src_w, int src_h, int dst_w,
     return dst;
 }
 
-// Écriture PNG en format 8-bit avec palette 256 couleurs
+// PNG writing in 8-bit format with 256 color palette
 static FD_UNUSED int write_png_8bit(const char *path, const uint8_t *data, int w, int h) {
     FILE *fp = fopen(path, "wb"); 
     if (!fp) return -1;
@@ -431,9 +431,9 @@ static FD_UNUSED int write_png_8bit(const char *path, const uint8_t *data, int w
     }
     
     png_init_io(png, fp);
-    png_set_compression_level(png, 9);  // Compression maximale
+    png_set_compression_level(png, 9);  // Maximum compression
     
-    // Créer une palette 256 couleurs (6x6x6 + gris)
+    // Create 256 color palette (6x6x6 + gray)
     png_color palette[256];
     int idx = 0;
     
@@ -449,7 +449,7 @@ static FD_UNUSED int write_png_8bit(const char *path, const uint8_t *data, int w
         }
     }
     
-    // Niveaux de gris (40 dernières entrées)
+    // Gray levels (last 40 entries)
     for (int i = 0; i < 40; i++) {
         int gray = (i * 255) / 39;
         palette[idx].red = palette[idx].green = palette[idx].blue = gray;
@@ -467,24 +467,24 @@ static FD_UNUSED int write_png_8bit(const char *path, const uint8_t *data, int w
         return -1; 
     }
     
-    // Convertir RGBA en indices de palette
+    // Convert RGBA to palette indices
     png_bytep indexed_data = malloc(w * h);
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             const uint8_t *p = data + (y * w + x) * 4;
             uint8_t r = p[0], g = p[1], b = p[2];
             
-            // Déterminer si c'est un niveau de gris
+            // Determine if it's a gray level
             int diff_rg = abs(r - g);
             int diff_rb = abs(r - b);
             int diff_gb = abs(g - b);
             
             if (diff_rg < 30 && diff_rb < 30 && diff_gb < 30) {
-                // Index de gris (216-255)
+                // Gray index (216-255)
                 int gray = (r + g + b) / 3;
                 indexed_data[y * w + x] = 216 + (gray * 39 / 255);
             } else {
-                // Index dans la grille 6x6x6
+                // Index in 6x6x6 grid
                 int ri = (r * 5) / 255;
                 int gi = (g * 5) / 255;
                 int bi = (b * 5) / 255;
