@@ -7,6 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 MDI_DIR="${ROOT}/assets/mdi"
+ICON_SPEC="${1:-}"
 COLOR="${2:-}"
 shift 2 || true
 
@@ -48,8 +49,6 @@ if [ -z "${MAGICK_BIN}" ]; then
   echo "ImageMagick v7 (magick) is required." >&2
   exit 1
 fi
-
-MDI_DIR="${ROOT}/mdi"
 
 ICON_NAME="${ICON_SPEC#mdi:}"
 ICON_PATH="${MDI_DIR}/${ICON_NAME}.svg"

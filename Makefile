@@ -31,7 +31,10 @@ daemon: ulanzi_d200_demon
 ulanzi_d200_demon: ulanzi_d200.c
 	$(CC) $(CFLAGS) -o $@ $< $(HID_LIBS) $(ZLIB_LIBS) $(PNG_LIBS)
 
-tools: lib/send_image_page lib/send_video_page_wrapper
+tools: lib/send_image_page lib/send_video_page_wrapper lib/pagging_demon
+
+lib/pagging_demon: src/lib/pagging.c | dir_lib
+	$(CC) $(CFLAGS) -o $@ $< $(PNG_LIBS) $(ZLIB_LIBS)
 
 lib/send_image_page: src/lib/send_image_page.c | dir_lib
 	$(CC) $(CFLAGS) -o $@ $< $(PNG_LIBS) $(PTHREAD_LIBS) $(MATH_LIBS)
@@ -74,6 +77,7 @@ dir_standalone:
 
 clean:
 	rm -f ulanzi_d200_demon
+	rm -f lib/pagging_demon
 	rm -f lib/send_video_page_wrapper
 	rm -f lib/send_image_page
 	rm -f icons/draw_border icons/draw_mdi icons/draw_optimize icons/draw_over icons/draw_square icons/draw_text

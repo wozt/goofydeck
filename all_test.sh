@@ -93,18 +93,18 @@ C_ICON="./test_std_c_${ts}.png"
 run_step "Compilation (make clean all)" make clean all
 
 run_step "Standard icon (BASH) -> ${BASH_ICON}" bash -c \
-  "./icons/draw_square.sh transparent --size=${SIZE} ${BASH_ICON} && \
-   ./icons/draw_border.sh ${COLOR_BORDER} --size=${SIZE} --radius=${RADIUS} ${BASH_ICON} && \
-   ./icons/draw_border.sh transparent --size=${INNER_SIZE} --radius=${RADIUS} ${BASH_ICON} && \
-   ./icons/draw_mdi.sh ${MDI_ICON} ${COLOR_MDI} --size=${MDI_SIZE} ${BASH_ICON} && \
-   ./icons/draw_optimize.sh -c ${OPT_COLORS} ${BASH_ICON}"
+  "./icons/draw_square transparent --size=${SIZE} ${BASH_ICON} && \
+   ./icons/draw_border ${COLOR_BORDER} --size=${SIZE} --radius=${RADIUS} ${BASH_ICON} && \
+   ./icons/draw_border transparent --size=${INNER_SIZE} --radius=${RADIUS} ${BASH_ICON} && \
+   ./icons/draw_mdi ${MDI_ICON} ${COLOR_MDI} --size=${MDI_SIZE} ${BASH_ICON} && \
+   ./icons/draw_optimize -c ${OPT_COLORS} ${BASH_ICON}"
 
 run_step "Standard icon (C) -> ${C_ICON}" bash -c \
   "./icons/draw_square transparent --size=${SIZE} ${C_ICON} && \
    ./icons/draw_border ${COLOR_BORDER} --size=${SIZE} --radius=${RADIUS} ${C_ICON} && \
    ./icons/draw_border transparent --size=${INNER_SIZE} --radius=${RADIUS} ${C_ICON} && \
    ./icons/draw_mdi ${MDI_ICON} ${COLOR_MDI} --size=${MDI_SIZE} ${C_ICON} && \
-   ./icons/draw_optimize.sh -c ${OPT_COLORS} ${C_ICON}"
+   ./icons/draw_optimize -c ${OPT_COLORS} ${C_ICON}"
 
 run_step "Verify icons exist" bash -c "ls -la ${BASH_ICON} ${C_ICON} && file ${BASH_ICON} ${C_ICON}"
 

@@ -1,0 +1,329 @@
+brightness: 90
+
+system_buttons:
+  $page.back:
+    position: 11
+  $page.previous:
+    position: 12
+  $page.next:
+    position: 13
+
+presets:
+  default:
+    icon_background_color: "241f31"
+    icon_border_radius: 12
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  $nav:
+    icon_background_color: "1a5fb4"
+    icon_border_radius: 50
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p01:
+    icon_background_color: "241f31"
+    icon_border_radius: 12
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p02:
+    icon_background_color: "1c71d8"
+    icon_border_radius: 12
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p03:
+    icon_background_color: "813d9c"
+    icon_border_radius: 12
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p04:
+    icon_background_color: "c01c28"
+    icon_border_radius: 12
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p05:
+    icon_background_color: "e66100"
+    icon_border_radius: 12
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p06:
+    icon_background_color: "f6d32d"
+    icon_border_radius: 12
+    icon_size: 128
+    icon_color: "000000"
+    text_color: "000000"
+    text_size: 16
+  p07:
+    icon_background_color: "26a269"
+    icon_border_radius: 12
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p08:
+    icon_background_color: "3584e4"
+    icon_border_radius: 18
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p09:
+    icon_background_color: "5e5c64"
+    icon_border_radius: 18
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p10:
+    icon_background_color: "000000"
+    icon_border_radius: 18
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p11:
+    icon_background_color: "2ec27e"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p12:
+    icon_background_color: "e01b24"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p13:
+    icon_background_color: "1a5fb4"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p14:
+    icon_background_color: "613583"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p15:
+    icon_background_color: "c64600"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p16:
+    icon_background_color: "1f9e7a"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p17:
+    icon_background_color: "2b6ea3"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p18:
+    icon_background_color: "9141ac"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p19:
+    icon_background_color: "a51d2d"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p20:
+    icon_background_color: "c64600"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p21:
+    icon_background_color: "e5a50a"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "000000"
+    text_color: "000000"
+    text_size: 16
+  p22:
+    icon_background_color: "26a269"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p23:
+    icon_background_color: "3584e4"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p24:
+    icon_background_color: "5e5c64"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p25:
+    icon_background_color: "241f31"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p26:
+    icon_background_color: "1c71d8"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p27:
+    icon_background_color: "813d9c"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p28:
+    icon_background_color: "c01c28"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p29:
+    icon_background_color: "e66100"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+  p30:
+    icon_background_color: "26a269"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_size: 16
+
+pages:
+  $root:
+    buttons:
+      - name: "Item 01"
+        presets: [p01]
+        icon: mdi:numeric-1-circle
+      - name: "Item 02"
+        presets: [p02]
+        icon: mdi:numeric-2-circle
+      - name: "Item 03"
+        presets: [p03]
+        icon: mdi:numeric-3-circle
+      - name: "Item 04"
+        presets: [p04]
+        icon: mdi:numeric-4-circle
+      - name: "Item 05"
+        presets: [p05]
+        icon: mdi:numeric-5-circle
+      - name: "Item 06"
+        presets: [p06]
+        icon: mdi:numeric-6-circle
+      - name: "Item 07"
+        presets: [p07]
+        icon: mdi:numeric-7-circle
+      - name: "Item 08"
+        presets: [p08]
+        icon: mdi:numeric-8-circle
+      - name: "Item 09"
+        presets: [p09]
+        icon: mdi:numeric-9-circle
+      - name: "Item 10"
+        presets: [p10]
+        icon: mdi:numeric-0-circle
+      - name: "Item 11"
+        presets: [p11]
+        icon: mdi:star-outline
+      - name: "Item 12"
+        presets: [p12]
+        icon: mdi:heart-outline
+      - name: "Item 13"
+        presets: [p13]
+        icon: mdi:home-outline
+      - name: "Item 14"
+        presets: [p14]
+        icon: mdi:cog-outline
+      - name: "Item 15"
+        presets: [p15]
+        icon: mdi:account-outline
+      - name: "Item 16"
+        presets: [p16]
+        icon: mdi:bell-outline
+      - name: "Item 17"
+        presets: [p17]
+        icon: mdi:calendar-outline
+      - name: "Item 18"
+        presets: [p18]
+        icon: mdi:camera-outline
+      - name: "Item 19"
+        presets: [p19]
+        icon: mdi:chart-line
+      - name: "Item 20"
+        presets: [p20]
+        icon: mdi:cloud-outline
+      - name: "Item 21"
+        presets: [p21]
+        icon: mdi:code-tags
+      - name: "Item 22"
+        presets: [p22]
+        icon: mdi:database-outline
+      - name: "Item 23"
+        presets: [p23]
+        icon: mdi:download-outline
+      - name: "Item 24"
+        presets: [p24]
+        icon: mdi:email-outline
+      - name: "Item 25"
+        presets: [p25]
+        icon: mdi:file-document-outline
+      - name: "Item 26"
+        presets: [p26]
+        icon: mdi:folder-outline
+      - name: "Item 27"
+        presets: [p27]
+        icon: mdi:format-list-bulleted
+      - name: "Item 28"
+        presets: [p28]
+        icon: mdi:map-outline
+      - name: "Item 29"
+        presets: [p29]
+        icon: mdi:music-note-outline
+      - name: "Item 30"
+        presets: [p30]
+        icon: mdi:power

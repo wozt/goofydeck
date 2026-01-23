@@ -1,0 +1,248 @@
+brightness: 90
+
+sleep:
+  dim_brightness: 20
+  dim_timeout: 10
+  sleep_timeout: 86400
+
+system_buttons:
+  $page.back:
+    position: 11
+  $page.previous:
+    position: 12
+  $page.next:
+    position: 13
+
+###############################################################################
+# PRESETS (STYLE UNIQUEMENT)
+###############################################################################
+
+presets:
+  
+  booltrue:
+    icon_size: 128
+    icon_border_radius: 12
+    icon_background_color: "00FF00"  # vert
+    icon_color: FFFFFF
+
+  boolfalse:
+    icon_size: 128
+    icon_border_radius: 12
+    icon_background_color: "8B0000"  # rouge foncé
+    icon_color: FFFFFF
+
+
+  settings_folder:
+    icon_border_width: 4
+    icon_border_color: "FFFFFF"
+    icon_background_color: "241f31"
+    icon_size: 128
+    icon_border_radius: 12
+    icon_color: "FFFFFF"
+
+  danger_button:
+    icon_background_color: "FF0000"
+    icon_color: "FFFFFF"
+  script_button:
+    icon_color: "0960A5"
+    icon_background_color: "042844"
+  local_command_result:
+    text_color: "39FF14"  # hex RGB (6 chars, no #)
+    text_size: 65
+  local_command_result2:
+    text_color: "39FF14"  # hex RGB (6 chars, no #)
+    text_size: 35
+
+
+###############################################################################
+# PAGES
+###############################################################################
+
+pages:
+  $root:
+    buttons:
+      - name: ""
+      - name: ""
+      - name: ""
+      - name: ""
+      - name: ""     
+      - name: ""
+      - name: ""
+      - name: ""
+      - name: ""
+      - name: ""
+      - name: ""
+## should be in 12th position
+      - name: "settings"
+        presets:
+          - settings_folder
+        icon: mdi:cog
+        tap_action:
+          action: $page.go_to
+          data: settings
+
+  #local_scripts:
+  settings:
+    buttons:
+#check cached files
+      - name: Check Cache
+        presets: 
+          - script_button
+          - local_command_result2
+        icon: mdi:hand-wave
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "/home/wozt/homedeck/assets/scripts/check_cache.sh"
+            refresh: 10s
+        hold_action:
+          action: $cmd.execute
+          data:
+              cmd: $stoploop
+        text: "{{ local_command_result('/home/wozt/homedeck/assets/scripts/check_cache.sh').stdout }}"
+# # show pi cpu usage
+      - name: Show CPU
+        presets: 
+          - script_button
+          - local_command_result
+        icon: mdi:chip
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "/home/wozt/homedeck/assets/scripts/show_cpu.sh"
+            refresh: 10s
+        hold_action:
+          action: $cmd.execute
+          data:
+              cmd: $stoploop
+        text: "{{ local_command_result('/home/wozt/homedeck/assets/scripts/show_cpu.sh').stdout }}"
+# # #show pi mem usage
+      - name: Show Mem
+        presets: 
+          - script_button
+          - local_command_result
+        icon: mdi:memory
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "/home/wozt/homedeck/assets/scripts/show_memory.sh"
+            refresh: 10s
+        hold_action:
+          action: $cmd.execute
+          data:
+              cmd: $stoploop
+        text: "{{ local_command_result('/home/wozt/homedeck/assets/scripts/show_memory.sh').stdout }}"
+# # show pi uptime
+      - name: Uptime
+        presets: 
+          - script_button
+          - local_command_result
+        icon: mdi:clock
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "/home/wozt/homedeck/assets/scripts/show_uptime.sh"
+            refresh: 60s
+        hold_action:
+          action: $cmd.execute
+          data:
+              cmd: $stoploop
+        text: "{{ local_command_result('/home/wozt/homedeck/assets/scripts/show_uptime.sh').stdout }}"
+# #show homedeck runtime since last launch/relaunch
+      - name: Runtime
+        presets: 
+          - script_button
+          - local_command_result
+        icon: mdi:clock
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "/home/wozt/homedeck/assets/scripts/show_deck_uptime.sh"
+            refresh: 60s
+        hold_action:
+          action: $cmd.execute
+          data:
+              cmd: $stoploop
+        text: "{{ local_command_result('/home/wozt/homedeck/assets/scripts/show_deck_uptime.sh').stdout }}"
+# flush cache both SD and RAMDISK
+      - name: Clear Cache
+        presets: 
+          - script_button
+        icon: mdi:trash-can-outline
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "sudo /home/wozt/homedeck/assets/scripts/clear_cache.sh"
+# mount dev folder on dev pc by sshing into it and sshfs back for dev purposes
+      - name: MountDev
+        icon: mdi:dev-to
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "sudo /home/wozt/homedeck/assets/scripts/mount_dev_folder_to_pc.sh"
+        state_result: "{{ state_result('/home/wozt/homedeck/assets/scripts/mount_dev_folder_to_pc.sh state') }}"
+        states:
+          "on":
+            name: "Mount ON"
+            presets:
+              - booltrue
+          "off":
+            name: "Mount OFF"
+            presets:
+              - boolfalse
+# just an exec with no feedback 
+      - name: Restart HomeDeck
+        presets: danger_button
+        icon: mdi:restart
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "sudo /home/wozt/homedeck/assets/scripts/restart_homedeck.sh"
+#check HA status
+      - name: HA Status
+        icon: mdi:home-assistant
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "sudo /home/wozt/homedeck/assets/scripts/check_ha_site_status.sh"
+        state_result: "{{ state_result('/home/wozt/homedeck/assets/scripts/check_ha_site_status.sh state') }}"
+        states:
+          "on":
+            name: "HA ON"
+            presets:
+              - booltrue
+          "off":
+            name: "HA OFF"
+            presets:
+              - boolfalse
+# example of looped text              
+      - name: looped test
+        presets:
+          - script_button
+          - local_command_result2
+        icon: mdi:test-tube-empty
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "echo looped"
+            refresh: 5s
+        hold_action:
+          action: $cmd.execute
+          data:
+              cmd: $stoploop
+        text: "{{ local_command_result('echo looped').stdout }}"
+#example of just text once 
+      - name: alpha dice
+        presets: 
+          - script_button
+          - local_command_result
+        icon: mdi:hand-wave
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "/home/wozt/homedeck/assets/scripts/echo_test.sh"
+        hold_action:
+          action: $cmd.execute
+          data:
+              cmd: $cleartext
+        text: "{{ local_command_result('/home/wozt/homedeck/assets/scripts/echo_test.sh').stdout }}"   
