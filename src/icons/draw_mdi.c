@@ -6,8 +6,9 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <limits.h>
+#include <strings.h>
+#include <cairo/cairo.h>
+#include <librsvg-2.0/librsvg/rsvg.h>
 #include <errno.h>
 #include <zlib.h>
 #include <cairo.h>
@@ -127,7 +128,15 @@ static int hexbyte(char h, char l) {
     return v;
 }
 
-static int parse_color(const char *s, uint8_t *r, uint8_t *g, uint8_t *b) {
+static int parse_color(const char *s, uint8_t *r, uint8_t *g, uint8_t *b, int *is_transparent) {
+    // Check for transparent mode
+    if (strcasecmp(s, "transparent") == 0) {
+        *is_transparent = 1;
+        return 0;
+    }
+    
+    // Normal hex color parsing
+    *is_transparent = 0;
     if (strlen(s) != 6) return -1;
     int r8 = hexbyte(s[0], s[1]);
     int g8 = hexbyte(s[2], s[3]);
@@ -137,7 +146,7 @@ static int parse_color(const char *s, uint8_t *r, uint8_t *g, uint8_t *b) {
     return 0;
 }
 
-static void colorize_surface(cairo_surface_t *surf, uint8_t r, uint8_t g, uint8_t b) {
+static void colorize_surface(cairo_surface_t *surf, uint8_t r, uint8_t g, uint8_t b, int is_transparent) {
     unsigned char *data = cairo_image_surface_get_data(surf);
     int stride = cairo_image_surface_get_stride(surf);
     int width = cairo_image_surface_get_width(surf);
@@ -154,27 +163,44 @@ static void colorize_surface(cairo_surface_t *surf, uint8_t r, uint8_t g, uint8_
             uint8_t a_src = p[3];
             
             if (a_src > 0) {
-                // For MDI icons, we need to check if this is a black or white pixel
-                // MDI icons are typically black (0,0,0) or white (255,255,255)
-                // We want to colorize the black parts and keep white parts transparent or white
-                
-                // Calculate the grayscale intensity
-                float gray_intensity = (r_src + g_src + b_src) / (3.0f * 255.0f);
-                
-                // If it's a dark pixel (black parts of the icon), apply the color
-                if (gray_intensity < 0.5f) {
-                    // Apply the target color with full intensity for dark pixels
-                    p[0] = b;  // Blue
-                    p[1] = g;  // Green
-                    p[2] = r;  // Red
-                    p[3] = a_src;  // Preserve original alpha
+                if (is_transparent) {
+                    // For transparent mode: create pure alpha mask
+                    // Black parts become opaque (alpha=255), white parts become transparent (alpha=0)
+                    float gray_intensity = (r_src + g_src + b_src) / (3.0f * 255.0f);
+                    
+                    if (gray_intensity < 0.5f) {
+                        // Dark pixels (black parts of icon) become opaque
+                        p[0] = p[1] = p[2] = 0;  // RGB doesn't matter for mask
+                        p[3] = 255;             // Fully opaque
+                    } else {
+                        // Light pixels (white parts) become transparent
+                        p[0] = p[1] = p[2] = 0;  // RGB doesn't matter
+                        p[3] = 0;               // Fully transparent
+                    }
                 } else {
-                    // For light/white pixels, either keep them white or make transparent
-                    // Keep them white but with original alpha
-                    p[0] = 255;  // Blue
-                    p[1] = 255;  // Green
-                    p[2] = 255;  // Red
-                    p[3] = a_src;  // Preserve original alpha
+                    // Normal colorization mode
+                    // For MDI icons, we need to check if this is a black or white pixel
+                    // MDI icons are typically black (0,0,0) or white (255,255,255)
+                    // We want to colorize the black parts and keep white parts transparent or white
+                    
+                    // Calculate the grayscale intensity
+                    float gray_intensity = (r_src + g_src + b_src) / (3.0f * 255.0f);
+                    
+                    // If it's a dark pixel (black parts of the icon), apply the color
+                    if (gray_intensity < 0.5f) {
+                        // Apply the target color with full intensity for dark pixels
+                        p[0] = b;  // Blue
+                        p[1] = g;  // Green
+                        p[2] = r;  // Red
+                        p[3] = a_src;  // Preserve original alpha
+                    } else {
+                        // For light/white pixels, either keep them white or make transparent
+                        // Keep them white but with original alpha
+                        p[0] = 255;  // Blue
+                        p[1] = 255;  // Green
+                        p[2] = 255;  // Red
+                        p[3] = a_src;  // Preserve original alpha
+                    }
                 }
             }
         }
@@ -184,7 +210,7 @@ static void colorize_surface(cairo_surface_t *surf, uint8_t r, uint8_t g, uint8_
 
 int main(int argc, char **argv) {
     if (argc < 4) {
-        fprintf(stderr, "Usage: %s <mdi:name|name> <hexcolor> [--size=N<=196] <filename.png>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <mdi:name|name> <hexcolor|transparent> [--size=N<=196] <filename.png>\n", argv[0]);
         return 1;
     }
 
@@ -204,8 +230,9 @@ int main(int argc, char **argv) {
     if (size > 196) size = 196;
 
     uint8_t r,g,b;
-    if (parse_color(color_str, &r, &g, &b) != 0) {
-        fprintf(stderr, "Invalid color: %s\n", color_str);
+    int is_transparent = 0;
+    if (parse_color(color_str, &r, &g, &b, &is_transparent) != 0) {
+        fprintf(stderr, "Invalid color: %s (expected 6-digit hex or 'transparent')\n", color_str);
         return 1;
     }
 
@@ -272,7 +299,7 @@ int main(int argc, char **argv) {
     cairo_destroy(cr);
 
     // Colorize overlay
-    colorize_surface(overlay, r, g, b);
+    colorize_surface(overlay, r, g, b, is_transparent);
 
     // // Save debug overlay (tinted icon only)
     // const char *base = base_name(png_path);
@@ -283,6 +310,15 @@ int main(int argc, char **argv) {
     // Composite centered
     cairo_t *ct = cairo_create(target);
     cairo_set_source_surface(ct, overlay, (tw - size) / 2.0, (th - size) / 2.0);
+    
+    if (is_transparent) {
+        // For transparent mode: use DstOut to cut out the icon shape from target
+        cairo_set_operator(ct, CAIRO_OPERATOR_DEST_OUT);
+    } else {
+        // Normal mode: standard overlay
+        cairo_set_operator(ct, CAIRO_OPERATOR_OVER);
+    }
+    
     cairo_paint(ct);
     cairo_destroy(ct);
 

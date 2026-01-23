@@ -22,12 +22,15 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "${ICON_SPEC}" ] || [ -z "${COLOR}" ] || [ -z "${FILENAME}" ]; then
-  echo "Usage: $0 <mdi:name> <hexcolor> [--size=128] <filename.png>" >&2
+  echo "Usage: $0 <mdi:name> <hexcolor|transparent> [--size=128] <filename.png>" >&2
   exit 1
 fi
 
-if ! [[ "${COLOR}" =~ ^[0-9A-Fa-f]{6}$ ]]; then
-  echo "Invalid color: ${COLOR} (expected 6-digit hex)" >&2
+IS_TRANSPARENT=0
+if [[ "${COLOR,,}" == "transparent" ]]; then
+  IS_TRANSPARENT=1
+elif ! [[ "${COLOR}" =~ ^[0-9A-Fa-f]{6}$ ]]; then
+  echo "Invalid color: ${COLOR} (expected 6-digit hex or 'transparent')" >&2
   exit 1
 fi
 
@@ -87,10 +90,19 @@ trap 'rm -f "${TMP_ICON}" "${TMP_MASK}" "${TMP_OVERLAY}" "${TMP_OUT}"' EXIT
 "${MAGICK_BIN}" "${TMP_ICON}" -alpha extract png8:"${TMP_MASK}"
 #cp "${TMP_MASK}" "${DBG_MASK}"
 
-# 3) Build colored overlay: solid color + icon mask as opacity
-"${MAGICK_BIN}" -size "${SIZE}x${SIZE}" "xc:#${COLOR}" -alpha set \
-  "${TMP_MASK}" -compose CopyOpacity -composite \
+# 3) Build overlay (different logic for transparent mode)
+if [ "${IS_TRANSPARENT}" -eq 1 ]; then
+  # For transparent mode: create pure alpha mask (black parts opaque, white parts transparent)
+  # Create a transparent image, then use the mask as alpha channel
+  "${MAGICK_BIN}" -size "${SIZE}x${SIZE}" xc:none -alpha set \
+    "${TMP_MASK}" -alpha off -compose CopyOpacity -composite \
     png32:"${TMP_OVERLAY}"
+else
+  # Normal mode: solid color + icon mask as opacity
+  "${MAGICK_BIN}" -size "${SIZE}x${SIZE}" "xc:#${COLOR}" -alpha set \
+    "${TMP_MASK}" -compose CopyOpacity -composite \
+    png32:"${TMP_OVERLAY}"
+fi
 #cp "${TMP_OVERLAY}" "${DBG_OVERLAY}"
 
 # 4) Composite overlay onto target (fix target colortype/alpha first)
@@ -101,15 +113,29 @@ trap 'rm -f "${TMP_ICON}" "${TMP_MASK}" "${TMP_OVERLAY}" "${TMP_OUT}"' EXIT
 mv -f "${TMP_OUT}" "${TARGET}"
 
 # Now composite (force png32 on both inputs)
-"${MAGICK_BIN}" \
-  png32:"${TARGET}" \
-  png32:"${TMP_OVERLAY}" \
-  -gravity center -compose over -composite \
-  png32:"${TMP_OUT}"
+if [ "${IS_TRANSPARENT}" -eq 1 ]; then
+  # For transparent mode: use DstOut to cut out the icon shape from target
+  "${MAGICK_BIN}" \
+    png32:"${TARGET}" \
+    png32:"${TMP_OVERLAY}" \
+    -gravity center -compose DstOut -composite \
+    png32:"${TMP_OUT}"
+else
+  # Normal mode: standard overlay
+  "${MAGICK_BIN}" \
+    png32:"${TARGET}" \
+    png32:"${TMP_OVERLAY}" \
+    -gravity center -compose over -composite \
+    png32:"${TMP_OUT}"
+fi
 #cp "${TMP_OUT}" "${DBG_COMPOSITED}"
 mv -f "${TMP_OUT}" "${TARGET}"
 
-echo "Updated ${TARGET} with mdi:${ICON_NAME} at size ${SIZE} color #${COLOR}"
+if [ "${IS_TRANSPARENT}" -eq 1 ]; then
+  echo "Updated ${TARGET} with mdi:${ICON_NAME} at size ${SIZE} (transparent mask)"
+else
+  echo "Updated ${TARGET} with mdi:${ICON_NAME} at size ${SIZE} color #${COLOR}"
+fi
 # echo "Debug written:"
 # echo " - ${DBG_ICON}"
 # echo " - ${DBG_MASK}"
