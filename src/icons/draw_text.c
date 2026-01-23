@@ -2,7 +2,7 @@
 // Mirrors draw_text.sh behavior and supports fonts in ./fonts.
 // Usage: draw_text [--list-ttf] [--text=...] [--text_color=RRGGBB]
 //        [--text_align=top|center|bottom] [--text_font=font.ttf]
-//        [--text_size=N] [--text_offset=x,y] --filename=foo.png
+//        [--text_size=N] [--text_offset=x,y] <filename.png>
 
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -201,8 +201,6 @@ int main(int argc, char **argv) {
         else if (strncmp(argv[i],"--text_font=",12)==0) text_font = argv[i]+12;
         else if (strncmp(argv[i],"--text_size=",12)==0) text_size = argv[i]+12;
         else if (strncmp(argv[i],"--text_offset=",14)==0) text_offset = argv[i]+14;
-        else if (strncmp(argv[i],"--filename=",11)==0) filename = argv[i]+11;
-        else if (strncmp(argv[i],"-f=",3)==0) filename = argv[i]+3;
         else if (strcmp(argv[i],"--list-ttf")==0) list_ttf=1;
         else if (argv[i][0]=='-') { /* ignore unknown */ }
         else filename = argv[i];
@@ -222,7 +220,7 @@ int main(int argc, char **argv) {
     }
 
     if (!filename || !strstr(filename,".png")) {
-        fprintf(stderr,"Usage: draw_text ... --filename=foo.png\n");
+        fprintf(stderr,"Usage: draw_text ... <filename.png>\n");
         return 1;
     }
 

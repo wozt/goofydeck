@@ -26,9 +26,15 @@ while [ "$#" -gt 0 ]; do
     --text_font=*) TEXT_FONT="${1#*=}"; shift ;;
     --text_size=*) TEXT_SIZE="${1#*=}"; shift ;;
     --text_offset=*) TEXT_OFFSET="${1#*=}"; shift ;;
-    --filename=*) FILENAME="${1#*=}"; shift ;;
-    -f=*) FILENAME="${1#*=}"; shift ;;
-    *) FILENAME="$1"; shift ;;
+    -*) echo "Unknown option: $1" >&2; exit 1 ;;
+    *) 
+      if [ -z "${FILENAME}" ]; then
+        FILENAME="$1"
+      else
+        echo "Unexpected argument: $1" >&2
+        exit 1
+      fi
+      shift ;;
   esac
 done
 

@@ -50,12 +50,12 @@ PLAY VIDEO AFTER RENDER
 -rw-rw-r--  1 wozt wozt 1,9M 19 janv. 20:03 neige.png
 
 TEST PRERENDER VIDEO
-time ./lib/send_video_page_wrapper -r -q=32 ./test_video/skrillex_clip_converted_360p_15fps.mp4
+time ./lib/send_video_page_wrapper -r -q=32 ./test_video/skrillex_10s.mp4
 
 
 TEST VIDEO PLAYBACK INFINITLY
 
-while true; do ./lib/send_video_page_wrapper -q=24 ./test_video/skrillex_clip_converted_360p_15fps.mp4; done
+while true; do ./lib/send_video_page_wrapper -q=24 ./test_video/skrillex_10s.mp4; done
 
 
 
@@ -107,7 +107,18 @@ rm -f c_std.png 2>/dev/null || true
 ./icons/draw_border 00FF00 --size=196 --radius=20 ./c_std.png >/dev/null
 ./icons/draw_border FF00FF --size=172 --radius=20 ./c_std.png >/dev/null
 ./icons/draw_mdi.sh mdi:dev-to FFFFFF --size=120 ./c_std.png
+./icons/draw_text --filename=./c_std.png --text="hello"   --text_color=00FF5F --text_align=center --text_font=LiberationMono-Italic.ttf  --text_size=60 --text_offset=-0,0 
 ./icons/draw_optimize -c 64 ./c_std.png >/dev/null
+
+
+rm -f c_std.png 2>/dev/null || true
+./icons/draw_square 111111 ./c_std.png
+./icons/draw_border 00FF00 --size=196 --radius=20 ./c_std.png >/dev/null
+./icons/draw_border FF00FF --size=172 --radius=20 ./c_std.png >/dev/null
+./icons/draw_mdi.sh mdi:dev-to FFFFFF --size=120 ./c_std.png
+./icons/draw_text.sh --filename=./c_std.png --text="hello"   --text_color=00FF5F --text_align=center --text_font=LiberationMono-Italic.ttf  --text_size=60 --text_offset=-0,0 
+./icons/draw_optimize -c 64 ./c_std.png >/dev/null
+
 
 
 ./icons/draw_square 111111 ./c_std.png
