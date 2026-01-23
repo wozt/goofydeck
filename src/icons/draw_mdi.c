@@ -142,15 +142,41 @@ static void colorize_surface(cairo_surface_t *surf, uint8_t r, uint8_t g, uint8_
     int stride = cairo_image_surface_get_stride(surf);
     int width = cairo_image_surface_get_width(surf);
     int height = cairo_image_surface_get_height(surf);
+    
     for (int y = 0; y < height; y++) {
         uint32_t *row = (uint32_t *)(data + y * stride);
         for (int x = 0; x < width; x++) {
             uint8_t *p = (uint8_t *)&row[x];
-            uint8_t a = p[3];
-            p[0] = b;
-            p[1] = g;
-            p[2] = r;
-            p[3] = a;
+            // Cairo uses BGRA format on little-endian systems
+            uint8_t b_src = p[0];
+            uint8_t g_src = p[1]; 
+            uint8_t r_src = p[2];
+            uint8_t a_src = p[3];
+            
+            if (a_src > 0) {
+                // For MDI icons, we need to check if this is a black or white pixel
+                // MDI icons are typically black (0,0,0) or white (255,255,255)
+                // We want to colorize the black parts and keep white parts transparent or white
+                
+                // Calculate the grayscale intensity
+                float gray_intensity = (r_src + g_src + b_src) / (3.0f * 255.0f);
+                
+                // If it's a dark pixel (black parts of the icon), apply the color
+                if (gray_intensity < 0.5f) {
+                    // Apply the target color with full intensity for dark pixels
+                    p[0] = b;  // Blue
+                    p[1] = g;  // Green
+                    p[2] = r;  // Red
+                    p[3] = a_src;  // Preserve original alpha
+                } else {
+                    // For light/white pixels, either keep them white or make transparent
+                    // Keep them white but with original alpha
+                    p[0] = 255;  // Blue
+                    p[1] = 255;  // Green
+                    p[2] = 255;  // Red
+                    p[3] = a_src;  // Preserve original alpha
+                }
+            }
         }
     }
     cairo_surface_mark_dirty(surf);
@@ -210,14 +236,25 @@ int main(int argc, char **argv) {
 
     cairo_surface_t *target = cairo_image_surface_create_from_png(png_path);
     if (cairo_surface_status(target) != CAIRO_STATUS_SUCCESS) {
-        // create blank 196x196 if missing
+        // create blank 196x196 transparent if missing
         target = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 196, 196);
+        // Initialize as transparent
+        cairo_t *clear_cr = cairo_create(target);
+        cairo_set_source_rgba(clear_cr, 0, 0, 0, 0); // Fully transparent
+        cairo_set_operator(clear_cr, CAIRO_OPERATOR_SOURCE);
+        cairo_paint(clear_cr);
+        cairo_destroy(clear_cr);
     }
     int tw = cairo_image_surface_get_width(target);
     int th = cairo_image_surface_get_height(target);
 
     cairo_surface_t *overlay = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, size, size);
     cairo_t *cr = cairo_create(overlay);
+    // Initialize overlay as transparent
+    cairo_set_source_rgba(cr, 0, 0, 0, 0); // Fully transparent
+    cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+    cairo_paint(cr);
+    cairo_set_operator(cr, CAIRO_OPERATOR_OVER); // Reset to default
 
     RsvgHandle *handle = rsvg_handle_new_from_file(svg_path, NULL);
     if (!handle) { fprintf(stderr,"Failed to load SVG\n"); cairo_destroy(cr); cairo_surface_destroy(overlay); cairo_surface_destroy(target); return 1; }
