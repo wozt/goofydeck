@@ -123,9 +123,9 @@ install_deps_debian() {
 
 install_deps_arch() {
   local -a pkgs=(
-    base-devel pkgconf git ca-certificates
+    base-devel pkgconf pkg-config git ca-certificates
     hidapi libusb zlib libpng
-    ffmpeg
+    ffmpeg ffmpeg-devel
     imagemagick librsvg cairo
     jq bc
     openbsd-netcat socat
@@ -137,10 +137,10 @@ install_deps_arch() {
 
 install_deps_redhat() {
   local -a pkgs=(
-    gcc gcc-c++ make pkgconf-pkg-config git ca-certificates
+    gcc gcc-c++ make pkgconf-pkg-config pkg-config git ca-certificates
     hidapi hidapi-devel libusbx-devel zlib zlib-devel libpng-devel
     ffmpeg ffmpeg-devel
-    ImageMagick librsvg2-tools librsvg2-devel cairo-devel
+    ImageMagick ImageMagick-devel librsvg2-tools librsvg2-devel cairo-devel
     jq bc
     nmap-ncat socat
     google-noto-emoji-color-fonts google-noto-sans-fonts
@@ -160,6 +160,7 @@ install_deps_brew() {
   command -v brew >/dev/null 2>&1 || die "brew not found."
   local -a pkgs=(
     git
+    pkg-config
     hidapi libusb zlib libpng
     ffmpeg
     imagemagick librsvg cairo
@@ -170,6 +171,13 @@ install_deps_brew() {
   log "Installing Homebrew dependencies..."
   brew update
   brew install "${pkgs[@]}"
+  
+  # Install ffmpeg development headers if needed
+  if ! brew list ffmpeg >/dev/null 2>&1 || [ ! -d "$(brew --prefix)/include/libavformat" ]; then
+    log "Installing ffmpeg with development support..."
+    brew reinstall ffmpeg --with-libvpx --with-libx264 --with-libx265 || true
+  fi
+  
   if brew tap | grep -q "^homebrew/cask-fonts\$"; then
     :
   else
