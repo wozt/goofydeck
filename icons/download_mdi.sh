@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-DEST="${ROOT}/mdi"
+DEST="${ROOT}/assets/mdi"
 REPO_URL="https://github.com/Templarian/MaterialDesign.git"
 
 command -v git >/dev/null 2>&1 || { echo "git is required." >&2; exit 1; }

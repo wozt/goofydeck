@@ -246,7 +246,7 @@ int main(int argc, char **argv) {
     }
 
     char svg_path[PATH_MAX];
-    snprintf_checked(svg_path, sizeof(svg_path), "svg_path", "%s/mdi/%s.svg", root, name);
+    snprintf_checked(svg_path, sizeof(svg_path), "svg_path", "%s/assets/mdi/%s.svg", root, name);
     struct stat st;
     if (stat(svg_path, &st) != 0) {
         perror("svg not found");

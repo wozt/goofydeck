@@ -6,8 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-
-ICON_SPEC="${1:-}"
+MDI_DIR="${ROOT}/assets/mdi"
 COLOR="${2:-}"
 shift 2 || true
 

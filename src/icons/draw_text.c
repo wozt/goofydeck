@@ -214,7 +214,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     char font_dir[PATH_MAX];
-    snprintf_checked(font_dir, sizeof(font_dir), "font_dir", "%s/fonts", root);
+    snprintf_checked(font_dir, sizeof(font_dir), "font_dir", "%s/assets/fonts", root);
 
     if (list_ttf) {
         list_fonts(font_dir);

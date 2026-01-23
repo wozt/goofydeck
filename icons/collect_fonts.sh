@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-FONT_DIR="${ROOT}/fonts"
+FONT_DIR="${ROOT}/assets/fonts"
 mkdir -p "${FONT_DIR}"
 
 declare -a SEARCH_DIRS=(
