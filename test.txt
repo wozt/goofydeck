@@ -1,0 +1,262 @@
+TEST ACTUALISATION BOUTTON FULL PAGE + LABEL
+
+printf 'set-buttons-explicit --button-1=test_icons/test_icons_old_m/gradient_sunset.png --label-1=a --button-2=test_icons/test_icons_old_m/diamond_gold.png --label-2=b --button-3=test_icons/test_icons_old_m/noise_confetti.png --label-3=c --button-4=test_icons/test_icons_old_m/stripes_orange.png --label-4=d --button-5=test_icons/test_icons_old_m/radial_glow.png --label-5=e --button-6=test_icons/test_icons_old_m/wave_teal.png --label-6=f --button-7=test_icons/test_icons_old_m/rings_blue.png --label-7=g --button-8=test_icons/test_icons_old_m/checker_neon.png --label-8=h --button-9=test_icons/test_icons_old_m/grid_magenta.png --label-9=i --button-10=test_icons/test_icons_old_m/triband_rainbow.png --label-10=j --button-11=test_icons/test_icons_old_m/diamond_gold.png --label-11=k --button-12=test_icons/test_icons_old_m/diagonal_cyan_purple.png --label-12=l --button-13=test_icons/test_icons_old_m/zigzag_green.png --label-13="m"\n' | nc -U /tmp/ulanzi_device.sock
+
+
+TEST ACTUALISATION JUST LABEL
+
+printf 'set-buttons-explicit --button-1=test_icons/test_icons_old_m/gradient_sunset.png --label-1=blabla\n' | nc -U /tmp/ulanzi_device.sock
+
+printf 'set-partial-explicit --button-2=test_icons/test_icons_old_m/gradient_sunset.png --label-2=blabla\n' | nc -U /tmp/ulanzi_device.sock
+
+printf 'set-buttons-explicit --label-1=blabla\n' | nc -U /tmp/ulanzi_device.sock
+
+
+TEST ALL 14 BUTTONS ACTUALISATION PAGE
+
+printf 'set-buttons-explicit-14 --button-1=test_icons/test_icons_old_m/gradient_sunset.png --button-2=test_icons/test_icons_old_m/diamond_gold.png --button-3=test_icons/test_icons_old_m/noise_confetti.png --button-4=test_icons/test_icons_old_m/stripes_orange.png --button-5=test_icons/test_icons_old_m/radial_glow.png --button-6=test_icons/test_icons_old_m/wave_teal.png --button-7=test_icons/test_icons_old_m/rings_blue.png --button-8=test_icons/test_icons_old_m/checker_neon.png --button-9=test_icons/test_icons_old_m/grid_magenta.png --button-10=test_icons/test_icons_old_m/triband_rainbow.png --button-11=test_icons/test_icons_old_m/diamond_gold.png --button-12=test_icons/test_icons_old_m/diagonal_cyan_purple.png --button-13=test_icons/test_icons_old_m/zigzag_green.png --button-14=test_icon_14/icon14_gap50.png --label-1=A --label-2=B --label-3=C --label-4=D --label-5=E --label-6=F --label-7=G --label-8=H --label-9=I --label-10=J --label-11=K --label-12=L --label-13=M --label--14=N\n' | nc -U /tmp/ulanzi_device.sock
+
+
+TEST APPLY LABEL JSON STYLE
+
+
+printf 'set-label-style test_json/style.json\n' | nc -U /tmp/ulanzi_device.sock
+
+
+TEST IMAGE STREAM
+./lib/send_image_page.sh test_image/grid_1280x720.png
+# ou
+./lib/send_image_page test_image/grid_1280x720.png
+time $(./lib/send_image_page test_image/neige_16.png)
+
+
+TEST VIDEO STREAM
+./compile_lib.sh
+./lib/send_video_page.sh test_video/skrillex_clip.mp4
+# ou en C
+./lib/send_video_page skrillex_clip.mp4
+
+
+RENDER VIDEO STREAM
+
+
+PLAY VIDEO AFTER RENDER
+./lib/play_rendered_video.sh -d=66 ./test_video/skrillex_10s/
+
+
+
+
+-rw-rw-r--  1 wozt wozt 1,3M 19 janv. 21:28 neige_16.png
+-rw-rw-r--  1 wozt wozt 1,9M 19 janv. 20:03 neige.png
+
+TEST PRERENDER VIDEO
+time ./lib/send_video_page_wrapper -r -q=32 ./test_video/skrillex_clip_converted_360p_15fps.mp4
+
+
+TEST VIDEO PLAYBACK INFINITLY
+
+while true; do ./lib/send_video_page_wrapper -q=24 ./test_video/skrillex_clip_converted_360p_15fps.mp4; done
+
+
+
+printf 'set-buttons-explicit-14 --button-1=/dev/shm/tmpvideoplayback_1636041/1/000.png --button-2=/dev/shm/tmpvideoplayback_1636041/2/000.png --button-3=/dev/shm/tmpvideoplayback_1636041/3/000.png --button-4=/dev/shm/tmpvideoplayback_1636041/4/000.png --button-5=/dev/shm/tmpvideoplayback_1636041/5/000.png --button-6=/dev/shm/tmpvideoplayback_1636041/6/000.png --button-7=/dev/shm/tmpvideoplayback_1636041/7/000.png --button-8=/dev/shm/tmpvideoplayback_1636041/8/000.png --button-9=/dev/shm/tmpvideoplayback_1636041/9/000.png --button-10=/dev/shm/tmpvideoplayback_1636041/10/000.png --button-11=/dev/shm/tmpvideoplayback_1636041/11/000.png --button-12=/dev/shm/tmpvideoplayback_1636041/12/000.png --button-13=/dev/shm/tmpvideoplayback_1636041/13/000.png --button-14=/dev/shm/tmpvideoplayback_1636041/14/000.png\n' | nc -U /tmp/ulanzi_device.sock
+
+TEST RENDER BAD APPLE
+./lib/send_video_page_wrapper -q=61 -s=66 -c="--fps=15" -r ./test_video/bad_apple.mp4
+
+
+
+##### backup #####
+
+./backup_project.sh
+
+############+ FULL TEST ÷###########
+
+###### compilation ######
+
+./install.sh --compile
+
+
+#test image gen######################
+
+rm -f bash_std.png 2>/dev/null || true
+./icons/draw_square.sh 111111 bash_std.png
+./icons/draw_border.sh 00FF00 --size=196 --radius=20 bash_std.png
+./icons/draw_border.sh transparent --size=172 --radius=20 bash_std.png
+./icons/draw_mdi.sh mdi:dev-to FFFFFF --size=120 bash_std.png
+./icons/draw_optimize.sh -c 64 bash_std.png
+
+rm -f c_std.png 2>/dev/null || true
+./icons/draw_square 111111 ./c_std.png
+./icons/draw_border 00FF00 --size=196 --radius=20 ./c_std.png >/dev/null
+./icons/draw_border transparent --size=172 --radius=20 ./c_std.png >/dev/null
+./icons/draw_mdi mdi:dev-to FFFFFF --size=120 ./c_std.png
+./icons/draw_optimize -c 64 ./c_std.png >/dev/null
+
+
+rm -f c_std.png 2>/dev/null || true
+./icons/draw_square 111111 ./c_std.png
+./icons/draw_border 00FF00 --size=196 --radius=20 ./c_std.png >/dev/null
+./icons/draw_border FF00FF --size=172 --radius=20 ./c_std.png >/dev/null
+./icons/draw_mdi mdi:dev-to FFFFFF --size=120 ./c_std.png        
+#draw_mdi  fonctionne pas corretement, il fonctionne si fond transparent
+./icons/draw_optimize -c 64 ./c_std.png >/dev/null
+
+rm -f c_std.png 2>/dev/null || true
+./icons/draw_square 111111 ./c_std.png
+./icons/draw_border 00FF00 --size=196 --radius=20 ./c_std.png >/dev/null
+./icons/draw_border FF00FF --size=172 --radius=20 ./c_std.png >/dev/null
+./icons/draw_mdi.sh mdi:dev-to FFFFFF --size=120 ./c_std.png
+./icons/draw_optimize -c 64 ./c_std.png >/dev/null
+
+
+./icons/draw_square 111111 ./c_std.png
+./icons/draw_border 00FF00 --size=196 --radius=20 ./c_std.png >/dev/null
+./icons/draw_border FFFFFF --size=172 --radius=20 ./c_std.png >/dev/null
+./icons/draw_mdi mdi:dev-to tansparent --size=120 ./c_std.png      
+#need to implement transparent color
+./icons/draw_optimize -c 64 ./c_std.png >/dev/null
+
+
+
+#test video render#######################
+./lib/send_video_page_wrapper -q=61 -s=50 -c="--fps=15" -r ./test_video/skrillex_10s.mp4
+./lib/send_video_page_wrapper -q=61 -s=50 -r ./test_video/skrillex_10s.mp4
+./lib/send_video_page_wrapper -q=61 -s=50 -d -r ./test_video/skrillex_10s.mp4
+
+#test video playback  #####################
+./lib/play_rendered_video.sh -c -d=66 ./test_video/skrillex_10s/
+./lib/play_rendered_video.sh -c -d=64 ./test_video/skrillex_10s/
+
+#test video playback command   ################
+./lib/play_rendered_video_control play
+./lib/play_rendered_video_control pause
+./lib/play_rendered_video_control stop
+./lib/play_rendered_video_control back
+./lib/play_rendered_video_control forward
+
+#test button reception    ###################
+./lib/test_button_pressed.sh
+
+FULLTEST VALIDE LE 23/01/2026 a 01:30
+############################################################################
+
+
+$ '/bin/bash -lc "set -euo pipefail
+cd /home/wozt/GoofyDeck
+
+# --- Standard icon pipeline (BASH) ---
+rm -f bash_std.png 2>/dev/null || true
+./icons/draw_square.sh 111111 bash_std.png
+./icons/draw_border.sh 00FF00 --size=196 --radius=20 bash_std.png
+./icons/draw_border.sh transparent --size=172 --radius=20 bash_std.png
+./icons/draw_mdi.sh mdi:dev-to FFFFFF --size=120 bash_std.png
+./icons/draw_optimize.sh -c 64 bash_std.png
+
+
+
+time $( \
+rm -f bash_std.png 2>/dev/null || true && \
+./icons/draw_square.sh 111111 bash_std.png && \
+./icons/draw_border.sh 00FF00 --size=196 --radius=20 bash_std.png && \
+./icons/draw_border.sh transparent --size=172 --radius=20 bash_std.png && \
+./icons/draw_mdi.sh mdi:dev-to FFFFFF --size=120 bash_std.png && \
+./icons/draw_optimize.sh -c 64 bash_std.png)
+
+
+
+
+# --- Standard icon pipeline (C) ---
+rm -f c_std.png 2>/dev/null || true
+./icons/draw_square 111111 ./c_std.png
+./icons/draw_border 00FF00 --size=196 --radius=20 ./c_std.png >/dev/null
+./icons/draw_border transparent --size=172 --radius=20 ./c_std.png >/dev/null
+./icons/draw_mdi mdi:dev-to FFFFFF --size=120 ./c_std.png
+./icons/draw_optimize -c 64 ./c_std.png >/dev/null
+
+
+
+
+time $( \
+rm -f c_std.png 2>/dev/null || true && \
+./icons/draw_square 111111 ./c_std.png && \
+./icons/draw_border 00FF00 --size=196 --radius=20 ./c_std.png >/dev/null && \
+./icons/draw_border transparent --size=172 --radius=20 ./c_std.png >/dev/null && \
+./icons/draw_mdi mdi:dev-to FFFFFF --size=120 ./c_std.png && \
+./icons/draw_optimize -c 64 ./c_std.png >/dev/null)
+
+
+
+
+--filename=
+--icon=mdi:  # mdi means to get the icon into mdi folder like --icon=mdi:dev-to
+--icon_size=  #max 196 par 196
+--icon_padding=
+--icon_offset=
+--icon_border_radius #angular radius of the border in %, max 50%, 50 is a circle
+--icon_border_width=  #width of the border of the icon, max
+--icon_border_color= # border color defined by 000000 to FFFFFF
+--icon_brightness=    #brigtness of th icon from 0 to 100
+--icon_color=    # icon color defined by 000000 to FFFFFF
+--icon_background_color=   # background color defined by 000000 to FFFFFF
+
+ça enregistrera l'icone dans un nouveau dossier appelé cache
+si certaines options ne sont pas donné, on fallback vers des valeurs par default
+on appliquera dans l'ordre par empillement
+- background
+- border si il y en a une
+- icon
+
+
+
+
+
+
+
+#fullgen+border+text
+
+
+./icons/draw_square transparent --size=196 base.png
+./icons/draw_border FFFFFF --size=136 --radius=8 base.png
+./icons/draw_border b9003e --size=128 --radius=4 base.png
+./scripts/lib/icons/draw_mdi.sh mdi:sofa FFFFFF --size=128 base.png
+./icons/draw_text --filename=base.png --text="hello"   --text_color=00FF5F --text_align=center --text_font=LiberationMono-Italic.ttf  --text_size=60 --text_offset=-0,0
+./icons/draw_optimize -c 4 base.png
+
+#fullgen+border+transparentborder+text
+
+./icons/draw_square transparent --size=196 base.png
+./icons/draw_border FFFFFF --size=136 --radius=8 base.png
+./icons/draw_border transparent --size=128 --radius=4 base.png
+./scripts/lib/icons/draw_mdi.sh mdi:sofa FFFFFF --size=128 base.png
+./icons/draw_text --filename=base.png --text="hello"   --text_color=00FF5F --text_align=center --text_font=LiberationMono-Italic.ttf  --text_size=60 --text_offset=-0,0
+./icons/draw_optimize -c 4 base.png
+
+#fullgen+text
+
+time $( \
+./icons/draw_square FF0000 --size=196 base.png && \
+./icons/draw_mdi mdi:sofa FFFFFF --size=128 base.png && \
+./icons/draw_text --filename=base.png --text="hello"   --text_color=00FF5F --text_align=center --text_font=LiberationMono-Italic.ttf  --text_size=60 --text_offset=-0,0 && \
+./icons/draw_optimize -c 4 base.png \
+)
+
+#fullgen+border
+
+time $( \
+./icons/draw_square transparent --size=196 base.png && \
+./icons/draw_border FFFFFF --size=136 --radius=8 base.png && \
+./icons/draw_border b9003e --size=128 --radius=4 base.png && \
+./icons/draw_mdi mdi:sofa FFFFFF --size=128 base.png && \
+./icons/draw_optimize -c 4 base.png \
+)
+
+#fullgen
+
+time $( \
+./icons/draw_square FF0000 --size=196 base.png && \
+./icons/draw_mdi mdi:sofa FFFFFF --size=128 base.png && \
+./icons/draw_optimize -c 4 base.png \
+)
+
+

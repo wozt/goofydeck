@@ -1,0 +1,5 @@
+# Example aliases for GoofyDeck helpers
+alias testgoofydeck='cd "/home/wozt/GoofyDeck" && ./test_function.sh'
+alias helpgoofydeck='cd "/home/wozt/GoofyDeck" && ./show_help.sh'
+alias t='cd "/home/wozt/GoofyDeck" && ./test_function.sh'
+alias h='cd "/home/wozt/GoofyDeck" && ./show_help.sh'

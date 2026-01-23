@@ -1,0 +1,47 @@
+# Python venv
+venv/
+
+# Environment
+.env
+
+# Build artifacts
+cache/
+fonts/
+mdi/
+
+# Editor/OS trash (generic)
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+.Trash*/
+.Trashes/
+.Trash-*/
+.local/share/Trash/
+*.swp
+*.swo
+*~
+
+# Android/others
+Android/
+.cache/
+
+
+# Local binaries (built by Makefile)
+icons/draw_border
+icons/draw_mdi
+icons/draw_optimize
+icons/draw_over
+icons/draw_square
+icons/draw_text
+ulanzi_d200_demon
+send_video_page
+lib/send_image_page
+lib/send_video_page_wrapper
+standalone/draw_optimize_std
+
+# Logs
+*.log
+
+# Test artifacts
+test_*/
