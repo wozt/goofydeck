@@ -800,8 +800,10 @@ int main(void) {
     int rb_fd = -1;
     double down_time[14] = {0};
     int hold_emitted[14] = {0};
+    int longhold_emitted[14] = {0};
     int tap_pending[14] = {0};
     const double HOLD_THRESHOLD = 0.75;     // seconds
+    const double LONGHOLD_THRESHOLD = 5.0;  // seconds
     const double TAP_THRESHOLD = 0.02;      // seconds
     time_t last_keepalive = time(NULL);
     while (running) {
@@ -1202,6 +1204,7 @@ int main(void) {
                         if (down_time[idx] == 0) {
                             down_time[idx] = now;
                             hold_emitted[idx] = 0;
+                            longhold_emitted[idx] = 0;
                             tap_pending[idx] = 1;
                             if (debug) fprintf(stderr, "[dbg] press start idx=%d t=%.3f\n", idx+1, now);
                             if (idx == 13) {
@@ -1216,22 +1219,17 @@ int main(void) {
                         if (down_time[idx] > 0) held = now - down_time[idx];
                         if (debug) fprintf(stderr, "[dbg] release idx=%d held=%.3f\n", idx+1, held);
                         if (idx == 13) {
-                            if (held >= HOLD_THRESHOLD) {
-                                snprintf(out, sizeof(out), "button %d HOLD (%.2fs)\n", idx+1, held);
-                                if (write(rb_fd, out, strlen(out)) < 0) { close(rb_fd); rb_fd = -1; }
-                            }
                             snprintf(out, sizeof(out), "button %d RELEASED\n", idx+1);
                         } else {
-                            if (held < TAP_THRESHOLD) {
-                                snprintf(out,sizeof(out),"button %d TAP\nbutton %d RELEASED\n", idx+1, idx+1);
-                            } else if (held >= HOLD_THRESHOLD) {
-                                snprintf(out,sizeof(out),"button %d HOLD (%.2fs)\nbutton %d RELEASED\n", idx+1, held, idx+1);
+                            // Only emit TAP on release if it was a short press; HOLD/LONGHOLD are emitted while pressed.
+                            if (held < TAP_THRESHOLD || held < HOLD_THRESHOLD) {
+                                snprintf(out, sizeof(out), "button %d TAP\nbutton %d RELEASED\n", idx+1, idx+1);
                             } else {
-                                snprintf(out,sizeof(out),"button %d TAP\nbutton %d RELEASED\n", idx+1, idx+1);
+                                snprintf(out, sizeof(out), "button %d RELEASED\n", idx+1);
                             }
                         }
                         if (write(rb_fd,out,strlen(out))<0) { close(rb_fd); rb_fd=-1; }
-                        down_time[idx]=0; hold_emitted[idx]=0; tap_pending[idx]=0;
+                        down_time[idx]=0; hold_emitted[idx]=0; longhold_emitted[idx]=0; tap_pending[idx]=0;
                     }
                 } else {
                     // Unknown command, ignore but continue loop
@@ -1250,6 +1248,12 @@ int main(void) {
                             if (write(rb_fd, out, strlen(out)) < 0) { close(rb_fd); rb_fd = -1; break; }
                             hold_emitted[i] = 1;
                             if (debug) fprintf(stderr, "[dbg] idle HOLD idx=%d held=%.3f\n", i+1, held);
+                        } else if (hold_emitted[i] && !longhold_emitted[i] && held >= LONGHOLD_THRESHOLD) {
+                            char out[128];
+                            snprintf(out, sizeof(out), "button %d LONGHOLD (%.2fs)\n", i + 1, held);
+                            if (write(rb_fd, out, strlen(out)) < 0) { close(rb_fd); rb_fd = -1; break; }
+                            longhold_emitted[i] = 1;
+                            if (debug) fprintf(stderr, "[dbg] idle LONGHOLD idx=%d held=%.3f\n", i+1, held);
                         }
                     }
                 }
