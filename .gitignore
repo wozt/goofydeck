@@ -9,6 +9,13 @@ cache/
 fonts/
 mdi/
 
+# User provided assets
+mymedia/images/*
+mymedia/videos/*
+mymedia/scripts/*
+mymedia/wallpapers/*
+mymedia/games/*
+
 # Editor/OS trash (generic)
 .DS_Store
 Thumbs.db

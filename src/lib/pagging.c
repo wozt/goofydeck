@@ -1491,12 +1491,24 @@ int main(int argc, char **argv) {
                 if (evline[0] == 0) continue;
                 if (strcmp(evline, "ok") == 0) continue;
 
-                if (!control_enabled) continue;
-
                 int btn = 0;
                 char evt[32] = {0};
                 if (sscanf(evline, "button %d %31s", &btn, evt) != 2) continue;
                 if (strcmp(evt, "RELEASED") == 0) snprintf(evt, sizeof(evt), "RELEASE");
+
+                // Emergency resume: LONGHOLD 5s on button 14 forces start-control.
+                if (btn == 14 && strcmp(evt, "LONGHOLD") == 0) {
+                    if (!control_enabled) {
+                        log_msg("start-control (forced by button 14 LONGHOLD)");
+                        control_enabled = true;
+                        last_sig[0] = 0; // force refresh
+                        render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
+                        persist_last_page(&opt, cur_page, offset);
+                    }
+                    continue;
+                }
+
+                if (!control_enabled) continue;
                 if (strcmp(evt, "TAP") != 0) continue;
 
                 const Page *p = config_get_page(&cfg, cur_page);

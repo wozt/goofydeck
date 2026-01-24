@@ -306,6 +306,7 @@ typedef struct {
     int colors;           // Number of colors for quantization (8 or 16)
     int tile_optimize;    // Tile optimization (default: true)
     int buffer_mode;      // Send data directly to daemon (no files)
+    int no_send;          // Do not send to daemon (render only)
     int icon_size;        // Reference icon size (calculated dynamically)
     int quality_percent;   // Quality percentage (100=original size, 50=half, default: 100)
     int magnify_percent;   // Magnification percentage (100=normal, 200=2x, default: 100)
@@ -1168,6 +1169,7 @@ static void show_help(const char *prog_name) {
     printf("  -k, --keep-icons=F[=P]   Copier les icônes générées dans le dossier F [avec préfixe P]\n");
     printf("  --no-tile-optimize    Désactiver optimisation des tuiles\n");
     printf("  -b, --buffer            Envoie les données directement au démon (plus rapide)\n");
+    printf("  --no-send              Ne pas envoyer au démon (render uniquement)\n");
     printf("  -h, --help            Afficher cette aide\n");
     printf("\nExemples:\n");
     printf("  %s image.png                           # Comportement par défaut\n", prog_name);
@@ -1217,6 +1219,7 @@ int main(int argc, char **argv) {
         .colors = 8,  // Défaut: 8 couleurs
         .tile_optimize = 1,  // Défaut: optimisation tuiles activée
         .buffer_mode = 0,  // Défaut: mode fichiers
+        .no_send = 0,
         .icon_size = 0,  // Calculé dynamiquement
         .quality_percent = 100,  // Défaut: pas de redimensionnement
         .magnify_percent = 100,  // Défaut: pas de magnification
@@ -1231,6 +1234,8 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             show_help(argv[0]);
             return 0;
+        } else if (strcmp(argv[i], "--no-send") == 0) {
+            opts.no_send = 1;
         } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--optimize-input") == 0) {
             opts.optimize_input = 1;
         } else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--dither") == 0) {
@@ -1482,12 +1487,14 @@ int main(int argc, char **argv) {
         // Copier les icônes dans le dossier spécifié si demandé
         copy_icons_to_folder(tiles, tile_w, tile_h, opts.keep_folder, opts.filename_prefix);
         
-        // Envoyer directement au démon
-        // printf("Envoi direct des données au démon...\n");
-        if (send_rgba_data_direct(tiles, tile_w, tile_h) != 0) {
-            fprintf(stderr, "Erreur: échec de l'envoi direct\n");
-        } else {
-            // printf("Données envoyées avec succès!\n");
+        if (!opts.no_send) {
+            // Envoyer directement au démon
+            // printf("Envoi direct des données au démon...\n");
+            if (send_rgba_data_direct(tiles, tile_w, tile_h) != 0) {
+                fprintf(stderr, "Erreur: échec de l'envoi direct\n");
+            } else {
+                // printf("Données envoyées avec succès!\n");
+            }
         }
         
         // Nettoyer les tuiles
@@ -1650,10 +1657,12 @@ int main(int argc, char **argv) {
         // Envoyer la commande au daemon
         // printf("Envoi de la commande au daemon...\n");
         // printf("Commande: %s\n", sendline);
-        if (send_cmd(sendline) != 0) {
-            fprintf(stderr, "Erreur: échec de l'envoi de la commande\n");
-        } else {
-            // printf("Commande envoyée avec succès!\n");
+        if (!opts.no_send) {
+            if (send_cmd(sendline) != 0) {
+                fprintf(stderr, "Erreur: échec de l'envoi de la commande\n");
+            } else {
+                // printf("Commande envoyée avec succès!\n");
+            }
         }
         
         // Nettoyer
