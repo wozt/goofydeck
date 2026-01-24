@@ -38,6 +38,16 @@
 #include <png.h>
 #include <yaml.h>
 
+#include "../third_party/jsmn.h"
+
+typedef struct {
+    char *key;    // e.g. "on", "off", "unavailable"
+    char *name;   // label override
+    char *icon;   // icon override (mdi:...)
+    char *preset; // preset override (first preset only)
+    char *text;   // text override (rendered on icon)
+} StateOverride;
+
 typedef struct {
     char *name;
     char *icon;
@@ -45,10 +55,16 @@ typedef struct {
     char *text;
     char *tap_action;
     char *tap_data;
+    char *entity_id;
+    StateOverride *states;
+    size_t state_count;
+    size_t state_cap;
 } Item;
 
 typedef struct {
     char *name;
+    char *icon;                 // optional default icon for the preset (mdi:...)
+    char *text;                 // optional default text for the preset
     char *icon_background_color; // "RRGGBB" or "transparent"
     int icon_border_radius;      // percent (0..50)
     int icon_border_width;       // px (0..98)
@@ -94,6 +110,7 @@ typedef struct {
     char *config_path;
     char *ulanzi_sock;
     char *control_sock;
+    char *ha_sock;
     char *cache_root;
     char *error_icon;
     char *sys_pregen_dir;
@@ -234,9 +251,6 @@ static int unix_connect(const char *sock_path) {
     addr.sun_family = AF_UNIX;
     snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", sock_path);
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
-        if (errno == ENOENT) {
-            fprintf(stderr, "[pagging] ERROR: ulanzi socket not found: %s (is ulanzi_d200_demon running?)\n", sock_path);
-        }
         close(fd);
         return -1;
     }
@@ -424,6 +438,8 @@ static void config_init_defaults(Config *cfg) {
 static void preset_init_defaults(Preset *p, const char *name) {
     memset(p, 0, sizeof(*p));
     p->name = xstrdup(name ? name : "default");
+    p->icon = NULL;
+    p->text = NULL;
     p->icon_background_color = xstrdup("241f31");
     p->icon_border_radius = 12;
     p->icon_border_width = 0;
@@ -472,6 +488,8 @@ static void config_free(Config *cfg) {
     for (size_t i = 0; i < cfg->preset_count; i++) {
         Preset *p = &cfg->presets[i];
         free(p->name);
+        free(p->icon);
+        free(p->text);
         free(p->icon_background_color);
         free(p->icon_border_color);
         free(p->icon_color);
@@ -490,6 +508,15 @@ static void config_free(Config *cfg) {
             free(p->items[j].text);
             free(p->items[j].tap_action);
             free(p->items[j].tap_data);
+            free(p->items[j].entity_id);
+            for (size_t k = 0; k < p->items[j].state_count; k++) {
+                free(p->items[j].states[k].key);
+                free(p->items[j].states[k].name);
+                free(p->items[j].states[k].icon);
+                free(p->items[j].states[k].preset);
+                free(p->items[j].states[k].text);
+            }
+            free(p->items[j].states);
         }
         free(p->items);
         free(p->name);
@@ -588,6 +615,11 @@ static int load_config(const char *path, Config *out) {
 
             yaml_node_t *n;
 
+            n = yaml_mapping_get(&doc, v, "icon");
+            if (yaml_scalar_cstr(n)) { free(pr->icon); pr->icon = xstrdup(yaml_scalar_cstr(n)); }
+            n = yaml_mapping_get(&doc, v, "text");
+            if (yaml_scalar_cstr(n)) { free(pr->text); pr->text = xstrdup(yaml_scalar_cstr(n)); }
+
             n = yaml_mapping_get(&doc, v, "icon_background_color");
             if (yaml_scalar_cstr(n)) { free(pr->icon_background_color); pr->icon_background_color = xstrdup(yaml_scalar_cstr(n)); }
             n = yaml_mapping_get(&doc, v, "icon_border_radius");
@@ -649,6 +681,8 @@ static int load_config(const char *path, Config *out) {
                 if (yaml_scalar_cstr(n)) out_item.icon = xstrdup(yaml_scalar_cstr(n));
                 n = yaml_mapping_get(&doc, item, "text");
                 if (yaml_scalar_cstr(n)) out_item.text = xstrdup(yaml_scalar_cstr(n));
+                n = yaml_mapping_get(&doc, item, "entity_id");
+                if (yaml_scalar_cstr(n)) out_item.entity_id = xstrdup(yaml_scalar_cstr(n));
 
                 // presets: [p01, ...] => keep first
                 n = yaml_mapping_get(&doc, item, "presets");
@@ -670,6 +704,47 @@ static int load_config(const char *path, Config *out) {
                     yaml_node_t *d = yaml_mapping_get(&doc, n, "data");
                     if (yaml_scalar_cstr(a)) out_item.tap_action = xstrdup(yaml_scalar_cstr(a));
                     if (yaml_scalar_cstr(d)) out_item.tap_data = xstrdup(yaml_scalar_cstr(d));
+                }
+
+                // states: { "on": { name, presets, icon, text }, ... }
+                n = yaml_mapping_get(&doc, item, "states");
+                if (n && n->type == YAML_MAPPING_NODE) {
+                    for (yaml_node_pair_t *sp = n->data.mapping.pairs.start; sp < n->data.mapping.pairs.top; sp++) {
+                        yaml_node_t *sk = yaml_document_get_node(&doc, sp->key);
+                        yaml_node_t *sv = yaml_document_get_node(&doc, sp->value);
+                        const char *state_key = yaml_scalar_cstr(sk);
+                        if (!state_key || !sv || sv->type != YAML_MAPPING_NODE) continue;
+
+                        StateOverride ov;
+                        memset(&ov, 0, sizeof(ov));
+                        ov.key = xstrdup(state_key);
+
+                        yaml_node_t *sn;
+                        sn = yaml_mapping_get(&doc, sv, "name");
+                        if (yaml_scalar_cstr(sn)) ov.name = xstrdup(yaml_scalar_cstr(sn));
+                        sn = yaml_mapping_get(&doc, sv, "icon");
+                        if (yaml_scalar_cstr(sn)) ov.icon = xstrdup(yaml_scalar_cstr(sn));
+                        sn = yaml_mapping_get(&doc, sv, "text");
+                        if (yaml_scalar_cstr(sn)) ov.text = xstrdup(yaml_scalar_cstr(sn));
+
+                        sn = yaml_mapping_get(&doc, sv, "presets");
+                        if (sn) {
+                            if (sn->type == YAML_SEQUENCE_NODE && sn->data.sequence.items.start < sn->data.sequence.items.top) {
+                                yaml_node_t *first = yaml_document_get_node(&doc, *sn->data.sequence.items.start);
+                                const char *s = yaml_scalar_cstr(first);
+                                if (s && s[0]) ov.preset = xstrdup(s);
+                            } else if (sn->type == YAML_SCALAR_NODE) {
+                                const char *s = yaml_scalar_cstr(sn);
+                                if (s && s[0]) ov.preset = xstrdup(s);
+                            }
+                        }
+
+                        if (out_item.state_count >= out_item.state_cap) {
+                            out_item.state_cap = out_item.state_cap ? out_item.state_cap * 2 : 4;
+                            out_item.states = xrealloc(out_item.states, out_item.state_cap * sizeof(StateOverride));
+                        }
+                        out_item.states[out_item.state_count++] = ov;
+                    }
                 }
 
                 page_add_item(page, out_item);
@@ -746,6 +821,294 @@ static double now_sec_monotonic(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
+
+typedef struct {
+    char *entity_id;
+    char *state; // e.g. "on", "off", "23.4"
+    char *unit;  // optional unit_of_measurement
+} HaEntityState;
+
+typedef struct {
+    HaEntityState *items;
+    size_t len;
+    size_t cap;
+} HaStateMap;
+
+static void ha_state_map_free(HaStateMap *m) {
+    if (!m) return;
+    for (size_t i = 0; i < m->len; i++) {
+        free(m->items[i].entity_id);
+        free(m->items[i].state);
+        free(m->items[i].unit);
+    }
+    free(m->items);
+    memset(m, 0, sizeof(*m));
+}
+
+static HaEntityState *ha_state_get_mut(HaStateMap *m, const char *entity_id) {
+    if (!m || !entity_id || !entity_id[0]) return NULL;
+    for (size_t i = 0; i < m->len; i++) {
+        if (m->items[i].entity_id && strcmp(m->items[i].entity_id, entity_id) == 0) return &m->items[i];
+    }
+    if (m->len >= m->cap) {
+        m->cap = m->cap ? m->cap * 2 : 32;
+        m->items = xrealloc(m->items, m->cap * sizeof(HaEntityState));
+    }
+    HaEntityState *e = &m->items[m->len++];
+    memset(e, 0, sizeof(*e));
+    e->entity_id = xstrdup(entity_id);
+    e->state = NULL;
+    e->unit = NULL;
+    return e;
+}
+
+static int json_tok_eq(const char *json, const jsmntok_t *t, const char *s) {
+    if (!json || !t || !s) return 0;
+    size_t sl = strlen(s);
+    size_t tl = (size_t)(t->end - t->start);
+    if (sl != tl) return 0;
+    return strncmp(json + t->start, s, sl) == 0;
+}
+
+static char *json_tok_strdup(const char *json, const jsmntok_t *t) {
+    if (!json || !t) return NULL;
+    int n = t->end - t->start;
+    if (n <= 0) return xstrdup("");
+    char *out = malloc((size_t)n + 1);
+    if (!out) die_errno("malloc");
+    memcpy(out, json + t->start, (size_t)n);
+    out[n] = 0;
+    return out;
+}
+
+static int jsmn_skip_subtree(const jsmntok_t *toks, int tok_count, int idx) {
+    int i = idx;
+    int remaining = 1;
+    while (remaining > 0 && i < tok_count) {
+        const jsmntok_t *t = &toks[i];
+        remaining--;
+        if (t->type == JSMN_OBJECT) remaining += t->size * 2;
+        else if (t->type == JSMN_ARRAY) remaining += t->size;
+        i++;
+    }
+    return i;
+}
+
+static int json_find_object_value(const char *json, const jsmntok_t *toks, int tok_count, int obj_idx, const char *key) {
+    if (!json || !toks || tok_count <= 0 || !key) return -1;
+    if (obj_idx < 0 || obj_idx >= tok_count) return -1;
+    const jsmntok_t *obj = &toks[obj_idx];
+    if (obj->type != JSMN_OBJECT) return -1;
+
+    int i = obj_idx + 1;
+    for (int pair = 0; pair < obj->size; pair++) {
+        if (i + 1 >= tok_count) return -1;
+        const jsmntok_t *k = &toks[i];
+        if (k->type == JSMN_STRING && json_tok_eq(json, k, key)) return i + 1;
+        // Move to next pair: skip key + skip value subtree.
+        i = jsmn_skip_subtree(toks, tok_count, i + 1);
+    }
+    return -1;
+}
+
+static int parse_ha_state_json(const char *json, char **out_state, char **out_unit) {
+    if (!json || !out_state || !out_unit) return -1;
+    *out_state = NULL;
+    *out_unit = NULL;
+
+    jsmn_parser p;
+    jsmn_init(&p);
+    jsmntok_t toks[512];
+    int rc = jsmn_parse(&p, json, strlen(json), toks, (int)(sizeof(toks) / sizeof(toks[0])));
+    if (rc < 0) return -1;
+    int tok_count = rc;
+    if (tok_count <= 0 || toks[0].type != JSMN_OBJECT) return -1;
+
+    int state_idx = json_find_object_value(json, toks, tok_count, 0, "state");
+    if (state_idx >= 0 && state_idx < tok_count && toks[state_idx].type == JSMN_STRING) {
+        *out_state = json_tok_strdup(json, &toks[state_idx]);
+    }
+
+    int attrs_idx = json_find_object_value(json, toks, tok_count, 0, "attributes");
+    if (attrs_idx >= 0 && attrs_idx < tok_count && toks[attrs_idx].type == JSMN_OBJECT) {
+        int unit_idx = json_find_object_value(json, toks, tok_count, attrs_idx, "unit_of_measurement");
+        if (unit_idx >= 0 && unit_idx < tok_count && toks[unit_idx].type == JSMN_STRING) {
+            *out_unit = json_tok_strdup(json, &toks[unit_idx]);
+        }
+    }
+
+    if (!*out_state) *out_state = xstrdup("");
+    return 0;
+}
+
+static void ha_state_update_from_json(HaStateMap *m, const char *entity_id, const char *json_state) {
+    if (!m || !entity_id || !entity_id[0] || !json_state) return;
+    char *st = NULL;
+    char *unit = NULL;
+    if (parse_ha_state_json(json_state, &st, &unit) != 0) {
+        free(st);
+        free(unit);
+        return;
+    }
+    HaEntityState *e = ha_state_get_mut(m, entity_id);
+    if (!e) { free(st); free(unit); return; }
+    free(e->state);
+    free(e->unit);
+    e->state = st;
+    e->unit = unit;
+}
+
+static void ha_state_update_from_get_reply(HaStateMap *m, const char *entity_id, const char *reply_line) {
+    // reply: "ok {json_state}" or "err ..."
+    if (!m || !entity_id || !reply_line) return;
+    if (strncmp(reply_line, "ok", 2) != 0) return;
+    const char *p = reply_line + 2;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p != '{') return;
+    ha_state_update_from_json(m, entity_id, p);
+}
+
+static void ha_format_value_text(const HaStateMap *m, const char *entity_id, char *out, size_t cap) {
+    if (!out || cap == 0) return;
+    out[0] = 0;
+    if (!m || !entity_id) return;
+    for (size_t i = 0; i < m->len; i++) {
+        const HaEntityState *e = &m->items[i];
+        if (!e->entity_id || strcmp(e->entity_id, entity_id) != 0) continue;
+        const char *s = e->state ? e->state : "";
+        const char *u = e->unit ? e->unit : "";
+        if (s[0] == 0) { snprintf(out, cap, "..."); return; }
+        if (u[0]) snprintf(out, cap, "%s %s", s, u);
+        else snprintf(out, cap, "%s", s);
+        return;
+    }
+}
+
+typedef struct {
+    char *entity_id;
+    int sub_id;
+} HaSub;
+
+typedef struct {
+    HaSub *items;
+    size_t len;
+    size_t cap;
+} HaSubs;
+
+static void ha_subs_free(HaSubs *s) {
+    if (!s) return;
+    for (size_t i = 0; i < s->len; i++) free(s->items[i].entity_id);
+    free(s->items);
+    memset(s, 0, sizeof(*s));
+}
+
+static void ha_subs_clear_no_unsub(HaSubs *s) {
+    if (!s) return;
+    for (size_t i = 0; i < s->len; i++) free(s->items[i].entity_id);
+    s->len = 0;
+}
+
+static int write_all_fd(int fd, const char *buf, size_t len) {
+    size_t off = 0;
+    while (off < len) {
+        ssize_t n = write(fd, buf + off, len - off);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        off += (size_t)n;
+    }
+    return 0;
+}
+
+static int ha_send_line_fd(int fd, const char *line) {
+    if (fd < 0 || !line) return -1;
+    size_t n = strlen(line);
+    if (write_all_fd(fd, line, n) != 0) return -1;
+    if (n == 0 || line[n - 1] != '\n') {
+        if (write_all_fd(fd, "\n", 1) != 0) return -1;
+    }
+    return 0;
+}
+
+static int read_line_from_fd(int fd, char *out, size_t out_cap, char *buf, size_t *inlen) {
+    if (!out || out_cap == 0 || !buf || !inlen) return -1;
+    out[0] = 0;
+
+    for (;;) {
+        // Check for a full line.
+        for (size_t i = 0; i < *inlen; i++) {
+            if (buf[i] == '\n') {
+                size_t n = i + 1;
+                if (n >= out_cap) n = out_cap - 1;
+                memcpy(out, buf, n);
+                out[n] = 0;
+                trim(out);
+                // Consume from buffer.
+                memmove(buf, buf + i + 1, *inlen - (i + 1));
+                *inlen -= (i + 1);
+                return 1;
+            }
+        }
+
+        // Need more data.
+        ssize_t r = read(fd, buf + *inlen, 8192 - *inlen);
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+            return -1;
+        }
+        if (r == 0) return -1;
+        *inlen += (size_t)r;
+        if (*inlen >= 8192) {
+            // Too long line; drop buffer.
+            *inlen = 0;
+            return -1;
+        }
+    }
+}
+
+static int set_nonblocking_fd(int fd);
+
+static int send_line_and_read_one_line(const char *sock_path, const char *line, char *out, size_t out_cap, int timeout_ms) {
+    if (!sock_path || !line || !out || out_cap == 0) return -1;
+    out[0] = 0;
+    int fd = unix_connect(sock_path);
+    if (fd < 0) return -1;
+    (void)set_nonblocking_fd(fd);
+
+    if (ha_send_line_fd(fd, line) != 0) {
+        close(fd);
+        return -1;
+    }
+
+    char buf[8192];
+    size_t inlen = 0;
+    double start = now_sec_monotonic();
+    for (;;) {
+        char linebuf[8192];
+        int lr = read_line_from_fd(fd, linebuf, sizeof(linebuf), buf, &inlen);
+        if (lr == 1) {
+            snprintf(out, out_cap, "%.*s", (int)(out_cap - 1), linebuf);
+            close(fd);
+            return 0;
+        }
+        if (lr < 0) {
+            close(fd);
+            return -1;
+        }
+        int elapsed_ms = (int)((now_sec_monotonic() - start) * 1000.0);
+        if (timeout_ms >= 0 && elapsed_ms >= timeout_ms) {
+            close(fd);
+            return -1;
+        }
+        int remain = timeout_ms < 0 ? 250 : (timeout_ms - elapsed_ms);
+        if (remain > 250) remain = 250;
+        if (remain < 0) remain = 0;
+        struct pollfd pfd[1] = {{.fd = fd, .events = POLLIN}};
+        (void)poll(pfd, 1, remain);
+    }
 }
 
 static int generate_icon_pipeline(const Options *opt, const Preset *preset, const Item *it, const char *out_png) {
@@ -930,24 +1293,61 @@ static void append_preset_sig(char *dst, size_t cap, size_t *len, const Preset *
     if (n > 0 && (size_t)n < cap - *len) *len += (size_t)n;
 }
 
-static bool cached_or_generated_into(const Options *opt, const Config *cfg, const char *page, size_t item_index, const Item *it,
-                                     char *out_path, size_t out_cap) {
-    if (!it) return false;
-    const char *ic = it->icon ? it->icon : "";
-    const char *tx = it->text ? it->text : "";
-    const char *pr = it->preset ? it->preset : "";
-    if (ic[0] == 0 && tx[0] == 0) return false; // empty => no cache
+static void sanitize_suffix(const char *in, char *out, size_t cap) {
+    if (!out || cap == 0) return;
+    out[0] = 0;
+    if (!in) return;
+    size_t w = 0;
+    for (size_t i = 0; in[i] && w + 1 < cap; i++) {
+        unsigned char c = (unsigned char)in[i];
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.') {
+            out[w++] = (char)c;
+        } else {
+            out[w++] = '_';
+        }
+    }
+    out[w] = 0;
+}
 
-    const Preset *preset = config_get_preset(cfg, pr);
+static uint32_t item_file_hash(const char *page, size_t item_index, const Item *it) {
+    // Stable per button; style changes are handled by the .meta signature.
+    const char *pg = page ? page : "";
+    const char *nm = (it && it->name) ? it->name : "";
+    const char *eid = (it && it->entity_id) ? it->entity_id : "";
+    const char *act = (it && it->tap_action) ? it->tap_action : "";
+    const char *dat = (it && it->tap_data) ? it->tap_data : "";
+    const char *pr = (it && it->preset) ? it->preset : "";
+    char key[2048];
+    snprintf(key, sizeof(key), "page:%s\nidx:%zu\nname:%s\nentity:%s\naction:%s\ndata:%s\npreset:%s\n", pg, item_index, nm, eid, act, dat, pr);
+    return fnv1a32(key, strlen(key));
+}
+
+static bool cached_or_generated_into_state(const Options *opt, const Config *cfg, const char *page, size_t item_index, const Item *it,
+                                           const char *icon_override, const char *text_override, const char *preset_override,
+                                           const char *suffix, char *out_path, size_t out_cap) {
+    if (!it) return false;
+    const char *pr_name = (preset_override && preset_override[0]) ? preset_override : (it->preset ? it->preset : "default");
+    const Preset *preset = config_get_preset(cfg, pr_name);
     if (!preset) preset = config_get_preset(cfg, "default");
 
-    char key[4096];
-    size_t key_len = 0;
-    int n = snprintf(key + key_len, sizeof(key) - key_len, "page:%s\nidx:%zu\nicon:%s\ntext:%s\n", page, item_index, ic, tx);
-    if (n < 0 || (size_t)n >= sizeof(key) - key_len) return false;
-    key_len += (size_t)n;
-    append_preset_sig(key, sizeof(key), &key_len, preset);
-    uint32_t h = fnv1a32(key, strlen(key));
+    const char *ic = (icon_override && icon_override[0]) ? icon_override :
+                     (it->icon && it->icon[0]) ? it->icon :
+                     (preset && preset->icon) ? preset->icon : "";
+    const char *tx = (text_override && text_override[0]) ? text_override :
+                     (it->text && it->text[0]) ? it->text :
+                     (preset && preset->text) ? preset->text : "";
+
+    if (ic[0] == 0 && tx[0] == 0) return false; // empty => no cache
+
+    // Signature: actual render inputs (including preset style).
+    char sig_key[4096];
+    size_t sig_len = 0;
+    int n = snprintf(sig_key + sig_len, sizeof(sig_key) - sig_len, "page:%s\nidx:%zu\nicon:%s\ntext:%s\npreset:%s\nsuffix:%s\n",
+                     page ? page : "", item_index, ic, tx, pr_name, suffix ? suffix : "");
+    if (n < 0 || (size_t)n >= sizeof(sig_key) - sig_len) return false;
+    sig_len += (size_t)n;
+    append_preset_sig(sig_key, sizeof(sig_key), &sig_len, preset);
+    uint32_t sig_h = fnv1a32(sig_key, strlen(sig_key));
 
     if (page && strcmp(page, "_sys") == 0) {
         const char *sys_name = "sys";
@@ -958,27 +1358,60 @@ static bool cached_or_generated_into(const Options *opt, const Config *cfg, cons
         char meta[PATH_MAX];
         snprintf(meta, sizeof(meta), "%s/%s.meta", opt->sys_pregen_dir, sys_name);
         uint32_t prev = 0;
-        if (file_exists(out_path) && read_hex_u32_file(meta, &prev) == 0 && prev == h) return true;
-        if (generate_icon_pipeline(opt, preset, it, out_path) != 0) {
+        if (file_exists(out_path) && read_hex_u32_file(meta, &prev) == 0 && prev == sig_h) return true;
+
+        Item tmp = *it;
+        tmp.icon = (char *)ic;
+        tmp.text = (char *)tx;
+        tmp.preset = (char *)pr_name;
+        if (generate_icon_pipeline(opt, preset, &tmp, out_path) != 0) {
             (void)copy_file(opt->error_icon, out_path);
         }
-        write_hex_u32_file(meta, h);
+        write_hex_u32_file(meta, sig_h);
         return true;
-    } else {
-        snprintf(out_path, out_cap, "%s/%s/item%zu_%08x.png", opt->cache_root, page, item_index + 1, h);
     }
 
-    if (file_exists(out_path)) return true;
+    uint32_t file_h = item_file_hash(page, item_index, it);
+    char suf[128] = {0};
+    if (suffix && suffix[0]) sanitize_suffix(suffix, suf, sizeof(suf));
 
-    if (generate_icon_pipeline(opt, preset, it, out_path) != 0) {
+    if (suf[0]) snprintf(out_path, out_cap, "%s/%s/item%zu_%08x_%s.png", opt->cache_root, page, item_index + 1, file_h, suf);
+    else snprintf(out_path, out_cap, "%s/%s/item%zu_%08x.png", opt->cache_root, page, item_index + 1, file_h);
+    char meta[PATH_MAX];
+    if (suf[0]) snprintf(meta, sizeof(meta), "%s/%s/item%zu_%08x_%s.meta", opt->cache_root, page, item_index + 1, file_h, suf);
+    else snprintf(meta, sizeof(meta), "%s/%s/item%zu_%08x.meta", opt->cache_root, page, item_index + 1, file_h);
+
+    uint32_t prev = 0;
+    if (file_exists(out_path) && read_hex_u32_file(meta, &prev) == 0 && prev == sig_h) return true;
+
+    ensure_dir_parent(out_path);
+    Item tmp = *it;
+    tmp.icon = (char *)ic;
+    tmp.text = (char *)tx;
+    tmp.preset = (char *)pr_name;
+    if (generate_icon_pipeline(opt, preset, &tmp, out_path) != 0) {
         (void)copy_file(opt->error_icon, out_path);
     }
+    write_hex_u32_file(meta, sig_h);
     return true;
+}
+
+static bool cached_or_generated_into(const Options *opt, const Config *cfg, const char *page, size_t item_index, const Item *it,
+                                     char *out_path, size_t out_cap) {
+    return cached_or_generated_into_state(opt, cfg, page, item_index, it, NULL, NULL, NULL, NULL, out_path, out_cap);
 }
 
 static const Item *page_item_at(const Page *p, size_t idx) {
     if (!p || idx >= p->count) return NULL;
     return &p->items[idx];
+}
+
+static const StateOverride *item_find_state_override(const Item *it, const char *state) {
+    if (!it || !state || !state[0] || it->state_count == 0) return NULL;
+    for (size_t i = 0; i < it->state_count; i++) {
+        if (it->states[i].key && strcmp(it->states[i].key, state) == 0) return &it->states[i];
+    }
+    return NULL;
 }
 
 typedef struct {
@@ -1063,6 +1496,23 @@ static bool is_action_goto(const char *a) {
     return strcmp(a, "$page.go_to") == 0;
 }
 
+static void make_device_label(const char *src, char *out, size_t out_cap) {
+    if (!out || out_cap == 0) return;
+    out[0] = 0;
+    if (!src || !src[0]) return;
+    size_t w = 0;
+    for (size_t i = 0; src[i] && w + 1 < out_cap; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') c = '_';
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.') {
+            out[w++] = (char)c;
+        } else {
+            out[w++] = '_';
+        }
+    }
+    out[w] = 0;
+}
+
 static void appendf_dyn(char **buf, size_t *len, size_t *cap, const char *fmt, ...) {
     if (!buf || !len || !cap || !fmt) return;
     va_list ap;
@@ -1087,8 +1537,10 @@ static void appendf_dyn(char **buf, size_t *len, size_t *cap, const char *fmt, .
     *len += (size_t)need;
 }
 
+static void state_dir(const Options *opt, char *out, size_t cap);
+
 static void render_and_send(const Options *opt, const Config *cfg, const char *page_name, size_t offset,
-                            char *blank_png, char *last_sig, size_t last_sig_cap) {
+                            const HaStateMap *ha_map, char *blank_png, char *last_sig, size_t last_sig_cap) {
     const Page *p = config_get_page((Config *)cfg, page_name);
     if (!p) {
         log_msg("unknown page '%s' (render skipped)", page_name);
@@ -1140,28 +1592,86 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
     for (int pos = 1; pos <= 13 && item_i < p->count; pos++) {
         if (reserved[pos]) continue;
         const Item *it = page_item_at(p, item_i);
+        const char *label_src = (it && it->name && it->name[0]) ? it->name : NULL;
         char tmp[PATH_MAX];
-        if (cached_or_generated_into(opt, cfg, page_name, item_i, it, tmp, sizeof(tmp))) {
-            snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp);
-            btn_set[pos] = true;
-        } else {
-            // empty => keep blank, no cache
-            snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", blank_png);
-            btn_set[pos] = true;
-        }
-        // name is the device label (no spaces supported by daemon's argv parser)
-        if (it && it->name && it->name[0]) {
-            size_t w = 0;
-            for (size_t i = 0; it->name[i] && w + 1 < sizeof(btn_label[pos]); i++) {
-                unsigned char c = (unsigned char)it->name[i];
-                if (c == ' ' || c == '\t' || c == '\n' || c == '\r') c = '_';
-                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.' ) {
-                    btn_label[pos][w++] = (char)c;
-                } else {
-                    btn_label[pos][w++] = '_';
+        bool have_icon = false;
+
+        // HA-driven states: pick state variant if known.
+        if (it && it->entity_id && it->entity_id[0] && it->state_count > 0 && ha_map) {
+            const char *cur_state = NULL;
+            for (size_t si = 0; si < ha_map->len; si++) {
+                if (ha_map->items[si].entity_id && strcmp(ha_map->items[si].entity_id, it->entity_id) == 0) {
+                    cur_state = ha_map->items[si].state;
+                    break;
                 }
             }
-            btn_label[pos][w] = 0;
+            if (cur_state && cur_state[0]) {
+                const StateOverride *ov = item_find_state_override(it, cur_state);
+                if (ov) {
+                    const char *preset_ov = (ov->preset && ov->preset[0]) ? ov->preset : NULL;
+                    const char *icon_ov = (ov->icon && ov->icon[0]) ? ov->icon : NULL;
+                    const char *text_ov = (ov->text && ov->text[0]) ? ov->text : NULL;
+                    if (cached_or_generated_into_state(opt, cfg, page_name, item_i, it, icon_ov, text_ov, preset_ov, cur_state, tmp, sizeof(tmp))) {
+                        snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp);
+                        btn_set[pos] = true;
+                        have_icon = true;
+                    }
+
+                    // Label override (states) if provided.
+                    if (ov->name && ov->name[0]) label_src = ov->name;
+                }
+            }
+        }
+
+        // HA entity value display (sensor, etc): if no states are defined, show HA state as text (unless config already sets text).
+        if (!have_icon && it && it->entity_id && it->entity_id[0] && it->state_count == 0 && ha_map) {
+            char value_text[128] = {0};
+            ha_format_value_text(ha_map, it->entity_id, value_text, sizeof(value_text));
+            const char *pr_name = (it->preset && it->preset[0]) ? it->preset : "default";
+            const Preset *pr = config_get_preset(cfg, pr_name);
+            if (!pr) pr = config_get_preset(cfg, "default");
+            const char *eff_icon = (it->icon && it->icon[0]) ? it->icon : (pr && pr->icon) ? pr->icon : NULL;
+            const char *eff_text = (it->text && it->text[0]) ? it->text : value_text;
+
+            if ((eff_icon && eff_icon[0]) || (eff_text && eff_text[0])) {
+                // Render into a runtime file (no cache to avoid infinite variants).
+                char dir[PATH_MAX];
+                state_dir(opt, dir, sizeof(dir));
+                char rt[PATH_MAX];
+                snprintf(rt, sizeof(rt), "%s/runtime", dir);
+                ensure_dir(rt);
+                char outpng[PATH_MAX];
+                char page_tag[96];
+                sanitize_suffix(page_name, page_tag, sizeof(page_tag));
+                if (page_tag[0] == 0) snprintf(page_tag, sizeof(page_tag), "page");
+                snprintf(outpng, sizeof(outpng), "%s/%s_pos%d.png", rt, page_tag, pos);
+
+                Item tmp_it = *it;
+                tmp_it.icon = (char *)(eff_icon ? eff_icon : "");
+                tmp_it.text = (char *)(eff_text ? eff_text : "");
+                if (generate_icon_pipeline(opt, pr, &tmp_it, outpng) != 0) {
+                    (void)copy_file(opt->error_icon, outpng);
+                }
+                snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", outpng);
+                btn_set[pos] = true;
+                have_icon = true;
+            }
+        }
+
+        if (!have_icon) {
+            if (cached_or_generated_into(opt, cfg, page_name, item_i, it, tmp, sizeof(tmp))) {
+                snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp);
+                btn_set[pos] = true;
+            } else {
+                // empty => keep blank, no cache
+                snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", blank_png);
+                btn_set[pos] = true;
+            }
+        }
+
+        // name is the device label (no spaces supported by daemon's argv parser)
+        if (label_src && label_src[0]) {
+            make_device_label(label_src, btn_label[pos], sizeof(btn_label[pos]));
             if (btn_label[pos][0]) label_set[pos] = true;
         }
         item_i++;
@@ -1287,12 +1797,377 @@ static int load_last_page(const Options *opt, char *out_page, size_t out_page_ca
     return 0;
 }
 
+static int set_nonblocking_fd(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return -1;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+static int ha_connect_events(const Options *opt) {
+    if (!opt || !opt->ha_sock) return -1;
+    int fd = unix_connect(opt->ha_sock);
+    if (fd < 0) return -1;
+    (void)set_nonblocking_fd(fd);
+    return fd;
+}
+
+static void ha_handle_line(HaStateMap *ha_map, const char *line) {
+    if (!line) return;
+    if (strncmp(line, "evt connected", 13) == 0) {
+        log_msg("ha: connected");
+        return;
+    }
+    if (strncmp(line, "evt disconnected", 16) == 0) {
+        log_msg("ha: disconnected");
+        return;
+    }
+    if (strncmp(line, "evt state ", 10) == 0) {
+        const char *p = line + 10;
+        while (*p == ' ' || *p == '\t') p++;
+        char entity[256] = {0};
+        size_t w = 0;
+        while (*p && *p != ' ' && *p != '\t' && w + 1 < sizeof(entity)) entity[w++] = *p++;
+        entity[w] = 0;
+        while (*p == ' ' || *p == '\t') p++;
+        if (entity[0] && *p == '{') {
+            ha_state_update_from_json(ha_map, entity, p);
+        }
+        return;
+    }
+}
+
+static int ha_send_and_wait_reply(int ha_fd, char *ha_buf, size_t *ha_len, HaStateMap *ha_map, const char *cmd,
+                                  char *out_line, size_t out_cap, int timeout_ms) {
+    if (!out_line || out_cap == 0) return -1;
+    out_line[0] = 0;
+    if (ha_fd < 0 || !cmd) return -1;
+    if (ha_send_line_fd(ha_fd, cmd) != 0) return -1;
+
+    double start = now_sec_monotonic();
+    for (;;) {
+        // Try to extract already buffered lines first.
+        char line[8192];
+        int lr = read_line_from_fd(ha_fd, line, sizeof(line), ha_buf, ha_len);
+        if (lr == 1) {
+            if (strncmp(line, "ok", 2) == 0 || strncmp(line, "err", 3) == 0) {
+                snprintf(out_line, out_cap, "%.*s", (int)(out_cap - 1), line);
+                return 0;
+            }
+            ha_handle_line(ha_map, line);
+            continue;
+        }
+        if (lr < 0) return -1;
+
+        // Wait for more data.
+        int elapsed_ms = (int)((now_sec_monotonic() - start) * 1000.0);
+        if (timeout_ms >= 0 && elapsed_ms >= timeout_ms) return -1;
+        int remain = timeout_ms < 0 ? 250 : (timeout_ms - elapsed_ms);
+        if (remain > 250) remain = 250;
+        if (remain < 0) remain = 0;
+        struct pollfd pfd[1] = {{.fd = ha_fd, .events = POLLIN}};
+        (void)poll(pfd, 1, remain);
+    }
+}
+
+static void ha_unsubscribe_all(int *ha_fd, char *ha_buf, size_t *ha_len, HaStateMap *ha_map, HaSubs *subs) {
+    if (!subs) return;
+    if (!ha_fd || *ha_fd < 0) {
+        ha_subs_clear_no_unsub(subs);
+        return;
+    }
+    for (size_t i = 0; i < subs->len; i++) {
+        if (subs->items[i].sub_id <= 0) continue;
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "unsub %d", subs->items[i].sub_id);
+        char reply[256];
+        (void)ha_send_and_wait_reply(*ha_fd, ha_buf, ha_len, ha_map, cmd, reply, sizeof(reply), 1000);
+    }
+    ha_subs_clear_no_unsub(subs);
+}
+
+static int ha_subscribe_entity(int *ha_fd, char *ha_buf, size_t *ha_len, HaStateMap *ha_map, HaSubs *subs, const char *entity_id) {
+    if (!ha_fd || !ha_buf || !ha_len || !ha_map || !subs || !entity_id || !entity_id[0]) return -1;
+    for (size_t i = 0; i < subs->len; i++) {
+        if (subs->items[i].entity_id && strcmp(subs->items[i].entity_id, entity_id) == 0) return 0;
+    }
+    if (*ha_fd < 0) return -1;
+
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "sub-state %s", entity_id);
+    char reply[256];
+    if (ha_send_and_wait_reply(*ha_fd, ha_buf, ha_len, ha_map, cmd, reply, sizeof(reply), 1500) != 0) return -1;
+    if (strncmp(reply, "ok", 2) != 0) return -1;
+
+    int sub_id = 0;
+    const char *p = strstr(reply, "sub_id=");
+    if (p) sub_id = atoi(p + 7);
+    if (sub_id <= 0) return -1;
+
+    if (subs->len >= subs->cap) {
+        subs->cap = subs->cap ? subs->cap * 2 : 32;
+        subs->items = xrealloc(subs->items, subs->cap * sizeof(HaSub));
+    }
+    subs->items[subs->len].entity_id = xstrdup(entity_id);
+    subs->items[subs->len].sub_id = sub_id;
+    subs->len++;
+    return 0;
+}
+
+static int ha_get_entity_fd(int *ha_fd, char *ha_buf, size_t *ha_len, HaStateMap *ha_map, const char *entity_id) {
+    if (!ha_fd || *ha_fd < 0 || !ha_buf || !ha_len || !ha_map || !entity_id || !entity_id[0]) return -1;
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "get %s", entity_id);
+    char reply[2048];
+    if (ha_send_and_wait_reply(*ha_fd, ha_buf, ha_len, ha_map, cmd, reply, sizeof(reply), 1500) != 0) return -1;
+    ha_state_update_from_get_reply(ha_map, entity_id, reply);
+    return 0;
+}
+
+static void precache_state_icons(const Options *opt, const Config *cfg) {
+    if (!opt || !cfg) return;
+    for (size_t pi = 0; pi < cfg->page_count; pi++) {
+        const Page *p = &cfg->pages[pi];
+        if (!p->name || strcmp(p->name, "_sys") == 0) continue;
+        for (size_t ii = 0; ii < p->count; ii++) {
+            const Item *it = &p->items[ii];
+            if (!it || it->state_count == 0) continue;
+            for (size_t si = 0; si < it->state_count; si++) {
+                const StateOverride *ov = &it->states[si];
+                char tmp[PATH_MAX];
+                (void)cached_or_generated_into_state(opt, cfg, p->name, ii, it,
+                                                     (ov->icon && ov->icon[0]) ? ov->icon : NULL,
+                                                     (ov->text && ov->text[0]) ? ov->text : NULL,
+                                                     (ov->preset && ov->preset[0]) ? ov->preset : NULL,
+                                                     (ov->key && ov->key[0]) ? ov->key : NULL,
+                                                     tmp, sizeof(tmp));
+            }
+        }
+    }
+}
+
+static void ha_enter_page(const Options *opt, const Config *cfg, const char *page_name,
+                          int *ha_fd, char *ha_buf, size_t *ha_len, HaStateMap *ha_map, HaSubs *subs) {
+    if (!opt || !cfg || !page_name || !ha_fd || !ha_buf || !ha_len || !ha_map || !subs) return;
+
+    ha_unsubscribe_all(ha_fd, ha_buf, ha_len, ha_map, subs);
+
+    const Page *p = config_get_page((Config *)cfg, page_name);
+    if (!p) return;
+
+    // Only connect to ha_demon if this page needs it.
+    bool needs_ha = false;
+    for (size_t i = 0; i < p->count; i++) {
+        if (p->items[i].entity_id && p->items[i].entity_id[0]) { needs_ha = true; break; }
+    }
+    if (!needs_ha) return;
+
+    if (*ha_fd < 0) {
+        *ha_fd = ha_connect_events(opt);
+        if (*ha_fd >= 0) log_msg("ha socket: %s", opt->ha_sock);
+        else log_msg("ha socket not available: %s (ha integration disabled)", opt->ha_sock);
+    }
+    if (*ha_fd < 0) return;
+
+    for (size_t i = 0; i < p->count; i++) {
+        const Item *it = &p->items[i];
+        if (!it->entity_id || !it->entity_id[0]) continue;
+        (void)ha_subscribe_entity(ha_fd, ha_buf, ha_len, ha_map, subs, it->entity_id);
+        (void)ha_get_entity_fd(ha_fd, ha_buf, ha_len, ha_map, it->entity_id);
+    }
+}
+
+static void ulanzi_send_partial(const Options *opt, int pos, const char *png_path, const char *label_src) {
+    if (!opt || !opt->ulanzi_sock || pos < 1 || pos > 13 || !png_path || !png_path[0]) return;
+    char label[64] = {0};
+    if (label_src && label_src[0]) make_device_label(label_src, label, sizeof(label));
+
+    char cmd[PATH_MAX + 256];
+    if (label[0]) snprintf(cmd, sizeof(cmd), "set-partial-explicit --button-%d=%s --label-%d=%s", pos, png_path, pos, label);
+    else snprintf(cmd, sizeof(cmd), "set-partial-explicit --button-%d=%s", pos, png_path);
+
+    char reply[128] = {0};
+    if (send_line_and_read_reply(opt->ulanzi_sock, cmd, reply, sizeof(reply)) != 0) {
+        log_msg("partial send failed (pos=%d)", pos);
+        return;
+    }
+    if (reply[0]) log_msg("partial resp='%s'", reply);
+}
+
+static void ha_partial_update_visible(const Options *opt, const Config *cfg, const char *page_name, size_t offset,
+                                      const HaStateMap *ha_map, const char *blank_png, const char *changed_entity_id) {
+    if (!opt || !cfg || !page_name || !ha_map || !blank_png || !changed_entity_id) return;
+    const Page *p = config_get_page((Config *)cfg, page_name);
+    if (!p) return;
+
+    bool show_back = strcmp(page_name, "$root") != 0;
+    SheetLayout sheet = compute_sheet_layout(p->count, show_back, offset);
+    offset = sheet.start;
+
+    bool reserved_back = show_back;
+    bool reserved_prev = sheet.show_prev;
+    bool reserved_next = sheet.show_next;
+    int back_pos = cfg->pos_back;
+    int prev_pos = cfg->pos_prev;
+    int next_pos = cfg->pos_next;
+
+    size_t item_i = offset;
+    for (int pos = 1; pos <= 13; pos++) {
+        bool reserved = false;
+        if (reserved_back && pos == back_pos) reserved = true;
+        if (reserved_prev && pos == prev_pos) reserved = true;
+        if (reserved_next && pos == next_pos) reserved = true;
+        if (reserved) continue;
+        if (item_i >= p->count) break;
+
+        const Item *it = page_item_at(p, item_i);
+        if (it && it->entity_id && strcmp(it->entity_id, changed_entity_id) == 0) {
+            const char *label_src = (it->name && it->name[0]) ? it->name : NULL;
+            char icon_path[PATH_MAX];
+            bool have_icon = false;
+
+            // State variants (only if the state exists in config states mapping).
+            if (it->state_count > 0) {
+                const char *cur_state = NULL;
+                for (size_t si = 0; si < ha_map->len; si++) {
+                    if (ha_map->items[si].entity_id && strcmp(ha_map->items[si].entity_id, it->entity_id) == 0) {
+                        cur_state = ha_map->items[si].state;
+                        break;
+                    }
+                }
+                if (cur_state && cur_state[0]) {
+                    const StateOverride *ov = item_find_state_override(it, cur_state);
+                    if (ov) {
+                        if (ov->name && ov->name[0]) label_src = ov->name;
+                        (void)cached_or_generated_into_state(opt, cfg, page_name, item_i, it,
+                                                             (ov->icon && ov->icon[0]) ? ov->icon : NULL,
+                                                             (ov->text && ov->text[0]) ? ov->text : NULL,
+                                                             (ov->preset && ov->preset[0]) ? ov->preset : NULL,
+                                                             cur_state, icon_path, sizeof(icon_path));
+                        if (file_exists(icon_path)) have_icon = true;
+                    }
+                }
+            }
+
+            // Value display.
+            if (!have_icon && it->state_count == 0) {
+                char value_text[128] = {0};
+                ha_format_value_text(ha_map, it->entity_id, value_text, sizeof(value_text));
+                const char *pr_name = (it->preset && it->preset[0]) ? it->preset : "default";
+                const Preset *pr = config_get_preset(cfg, pr_name);
+                if (!pr) pr = config_get_preset(cfg, "default");
+                const char *eff_icon = (it->icon && it->icon[0]) ? it->icon : (pr && pr->icon) ? pr->icon : NULL;
+                const char *eff_text = (it->text && it->text[0]) ? it->text : value_text;
+                if ((eff_icon && eff_icon[0]) || (eff_text && eff_text[0])) {
+                    char dir[PATH_MAX];
+                    state_dir(opt, dir, sizeof(dir));
+                    char rt[PATH_MAX];
+                    snprintf(rt, sizeof(rt), "%s/runtime", dir);
+                    ensure_dir(rt);
+                    char outpng[PATH_MAX];
+                    char page_tag[96];
+                    sanitize_suffix(page_name, page_tag, sizeof(page_tag));
+                    if (page_tag[0] == 0) snprintf(page_tag, sizeof(page_tag), "page");
+                    snprintf(outpng, sizeof(outpng), "%s/%s_pos%d.png", rt, page_tag, pos);
+                    Item tmp_it = *it;
+                    tmp_it.icon = (char *)(eff_icon ? eff_icon : "");
+                    tmp_it.text = (char *)(eff_text ? eff_text : "");
+                    if (generate_icon_pipeline(opt, pr, &tmp_it, outpng) != 0) {
+                        (void)copy_file(opt->error_icon, outpng);
+                    }
+                    snprintf(icon_path, sizeof(icon_path), "%s", outpng);
+                    have_icon = true;
+                }
+            }
+
+            // Fallback to existing rendering/cached icon.
+            if (!have_icon) {
+                if (cached_or_generated_into(opt, cfg, page_name, item_i, it, icon_path, sizeof(icon_path))) {
+                    have_icon = true;
+                } else {
+                    snprintf(icon_path, sizeof(icon_path), "%s", blank_png);
+                    have_icon = true;
+                }
+            }
+
+            if (have_icon) ulanzi_send_partial(opt, pos, icon_path, label_src);
+        }
+        item_i++;
+    }
+}
+
+static int ha_call_from_item(const Options *opt, const Item *it) {
+    if (!opt || !it || !it->tap_action || !it->tap_action[0]) return -1;
+    if (it->tap_action[0] == '$') return -1; // paging/internal
+    if (!opt->ha_sock || !opt->ha_sock[0]) return -1;
+
+    const char *action = it->tap_action;
+    const char *dot = strchr(action, '.');
+    if (!dot || dot == action || !dot[1]) return -1;
+
+    char domain[64] = {0};
+    char service[64] = {0};
+    char json_buf[4096] = {0};
+    const char *json = NULL;
+
+    // Special case: "script.<entity>" means "call script turn_on {entity_id: script.<entity>}"
+    // unless the suffix is a known service.
+    if (strncmp(action, "script.", 7) == 0) {
+        const char *suffix = dot + 1;
+        if (strcmp(suffix, "turn_on") == 0 || strcmp(suffix, "turn_off") == 0 || strcmp(suffix, "toggle") == 0) {
+            snprintf(domain, sizeof(domain), "script");
+            snprintf(service, sizeof(service), "%s", suffix);
+        } else {
+            snprintf(domain, sizeof(domain), "script");
+            snprintf(service, sizeof(service), "turn_on");
+            snprintf(json_buf, sizeof(json_buf), "{\"entity_id\":\"%s\"}", action);
+            json = json_buf;
+        }
+    }
+
+    if (domain[0] == 0) {
+        snprintf(domain, sizeof(domain), "%.*s", (int)(dot - action), action);
+        snprintf(service, sizeof(service), "%s", dot + 1);
+    }
+
+    if (!json) {
+        const char *data = (it->tap_data && it->tap_data[0]) ? it->tap_data : NULL;
+        if (data && (data[0] == '{' || data[0] == '[')) {
+            if (it->entity_id && it->entity_id[0] && data[0] == '{' && strstr(data, "\"entity_id\"") == NULL) {
+                // Inject entity_id into an object.
+                const char *inner = data + 1;
+                while (*inner == ' ' || *inner == '\t' || *inner == '\n' || *inner == '\r') inner++;
+                if (*inner == '}') {
+                    snprintf(json_buf, sizeof(json_buf), "{\"entity_id\":\"%s\"}", it->entity_id);
+                } else {
+                    snprintf(json_buf, sizeof(json_buf), "{\"entity_id\":\"%s\",%s", it->entity_id, inner);
+                }
+                json = json_buf;
+            } else {
+                json = data;
+            }
+        } else if (it->entity_id && it->entity_id[0]) {
+            snprintf(json_buf, sizeof(json_buf), "{\"entity_id\":\"%s\"}", it->entity_id);
+            json = json_buf;
+        } else {
+            json = "{}";
+        }
+    }
+
+    char cmd[8192];
+    snprintf(cmd, sizeof(cmd), "call %s %s %s", domain, service, json);
+    char reply[512] = {0};
+    if (send_line_and_read_one_line(opt->ha_sock, cmd, reply, sizeof(reply), 1500) != 0) return -1;
+    if (reply[0]) log_msg("ha call resp='%s'", reply);
+    return (strncmp(reply, "ok", 2) == 0) ? 0 : -1;
+}
+
 int main(int argc, char **argv) {
     Options opt;
     memset(&opt, 0, sizeof(opt));
     opt.config_path = xstrdup("config/configuration.yml");
     opt.ulanzi_sock = xstrdup("/tmp/ulanzi_device.sock");
     opt.control_sock = xstrdup("/tmp/goofydeck_pagging_control.sock");
+    opt.ha_sock = xstrdup("/tmp/goofydeck_ha.sock");
     opt.cache_root = xstrdup(".cache");
     opt.error_icon = xstrdup("assets/pregen/error.png");
     opt.sys_pregen_dir = xstrdup("assets/pregen");
@@ -1313,6 +2188,9 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--control-sock") == 0 && i + 1 < argc) {
             free(opt.control_sock);
             opt.control_sock = xstrdup(argv[++i]);
+        } else if (strcmp(argv[i], "--ha-sock") == 0 && i + 1 < argc) {
+            free(opt.ha_sock);
+            opt.ha_sock = xstrdup(argv[++i]);
         } else if (strcmp(argv[i], "--cache") == 0 && i + 1 < argc) {
             free(opt.cache_root);
             opt.cache_root = xstrdup(argv[++i]);
@@ -1325,7 +2203,7 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--dump-config") == 0) {
             dump_config = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            printf("Usage: %s [--config path] [--ulanzi-sock path] [--control-sock path] [--cache dir]\n", argv[0]);
+            printf("Usage: %s [--config path] [--ulanzi-sock path] [--control-sock path] [--ha-sock path] [--cache dir]\n", argv[0]);
             return 0;
         } else {
             fprintf(stderr, "Unknown arg: %s\n", argv[i]);
@@ -1339,11 +2217,13 @@ int main(int argc, char **argv) {
     char *err_abs = resolve_path(opt.root_dir, opt.error_icon);
     char *sys_abs = resolve_path(opt.root_dir, opt.sys_pregen_dir);
     char *ctl_abs = resolve_path(opt.root_dir, opt.control_sock);
+    char *ha_abs = resolve_path(opt.root_dir, opt.ha_sock);
     free(opt.config_path); opt.config_path = cfg_abs;
     free(opt.cache_root); opt.cache_root = cache_abs;
     free(opt.error_icon); opt.error_icon = err_abs;
     free(opt.sys_pregen_dir); opt.sys_pregen_dir = sys_abs;
     free(opt.control_sock); opt.control_sock = ctl_abs;
+    free(opt.ha_sock); opt.ha_sock = ha_abs;
 
     ensure_dir(opt.cache_root);
     ensure_dir_parent(opt.error_icon);
@@ -1408,6 +2288,9 @@ int main(int argc, char **argv) {
         snprintf(blank_png, sizeof(blank_png), "%s", opt.error_icon);
     }
 
+    // Best-effort pre-generation of all declared state icons at daemon start.
+    precache_state_icons(&opt, &cfg);
+
     // Subscribe to button events.
     int rb_fd = unix_connect(opt.ulanzi_sock);
     if (rb_fd < 0) die_errno("connect ulanzi socket");
@@ -1419,6 +2302,15 @@ int main(int argc, char **argv) {
     int ctl_fd = make_unix_listen_socket(opt.control_sock);
     if (ctl_fd < 0) die_errno("control listen socket");
     log_msg("control socket: %s", opt.control_sock);
+
+    // Home Assistant integration (optional; only used on pages with entity_id).
+    int ha_fd = -1;
+    char ha_buf[8192];
+    size_t ha_len = 0;
+    HaStateMap ha_map;
+    memset(&ha_map, 0, sizeof(ha_map));
+    HaSubs ha_subs;
+    memset(&ha_subs, 0, sizeof(ha_subs));
 
     char cur_page[256] = "$root";
     size_t offset = 0;
@@ -1446,22 +2338,27 @@ int main(int argc, char **argv) {
         }
     }
 
+    // Initial HA subscriptions for $root (usually none).
+    ha_enter_page(&opt, &cfg, cur_page, &ha_fd, ha_buf, &ha_len, &ha_map, &ha_subs);
+
     // Initial render once.
-    render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
+    render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
     persist_last_page(&opt, cur_page, offset);
 
     char inbuf[4096];
     size_t inlen = 0;
 
     while (g_running) {
-        struct pollfd fds[2];
+        struct pollfd fds[3];
         memset(fds, 0, sizeof(fds));
         fds[0].fd = rb_fd;
         fds[0].events = POLLIN;
         fds[1].fd = ctl_fd;
         fds[1].events = POLLIN;
+        fds[2].fd = ha_fd;
+        fds[2].events = (ha_fd >= 0) ? POLLIN : 0;
 
-        int pr = poll(fds, 2, 100);
+        int pr = poll(fds, (ha_fd >= 0) ? 3 : 2, 100);
         if (pr < 0) {
             if (errno == EINTR) continue;
             die_errno("poll");
@@ -1525,7 +2422,8 @@ int main(int argc, char **argv) {
                             snprintf(cur_page, sizeof(cur_page), "%s", lp);
                             offset = lo;
                             last_sig[0] = 0; // force render
-                            render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
+                            ha_enter_page(&opt, &cfg, cur_page, &ha_fd, ha_buf, &ha_len, &ha_map, &ha_subs);
+                            render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
                             persist_last_page(&opt, cur_page, offset);
                         } else {
                             resp = "err\n";
@@ -1540,6 +2438,38 @@ int main(int argc, char **argv) {
                 }
                 (void)write(cfd, resp, strlen(resp));
                 close(cfd);
+            }
+        }
+
+        // HA events (push)
+        if (ha_fd >= 0 && (fds[2].revents & (POLLIN | POLLHUP | POLLERR))) {
+            for (;;) {
+                char line[8192];
+                int lr = read_line_from_fd(ha_fd, line, sizeof(line), ha_buf, &ha_len);
+                if (lr == 1) {
+                    if (strncmp(line, "evt state ", 10) == 0) {
+                        const char *p = line + 10;
+                        while (*p == ' ' || *p == '\t') p++;
+                        char entity[256] = {0};
+                        size_t w = 0;
+                        while (*p && *p != ' ' && *p != '\t' && w + 1 < sizeof(entity)) entity[w++] = *p++;
+                        entity[w] = 0;
+                        ha_handle_line(&ha_map, line);
+                        if (entity[0]) {
+                            ha_partial_update_visible(&opt, &cfg, cur_page, offset, &ha_map, blank_png, entity);
+                        }
+                    } else {
+                        ha_handle_line(&ha_map, line);
+                    }
+                    continue;
+                }
+                if (lr == 0) break;
+                // disconnected
+                close(ha_fd);
+                ha_fd = -1;
+                ha_len = 0;
+                ha_subs_clear_no_unsub(&ha_subs);
+                break;
             }
         }
 
@@ -1626,7 +2556,7 @@ int main(int argc, char **argv) {
                         log_msg("start-control (forced by button 14 LONGHOLD)");
                         control_enabled = true;
                         last_sig[0] = 0; // force refresh
-                        render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
+                        render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
                         persist_last_page(&opt, cur_page, offset);
                     }
                     continue;
@@ -1665,20 +2595,21 @@ int main(int argc, char **argv) {
                     }
                     if (changed) {
                         offset = 0;
-                        render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
+                        ha_enter_page(&opt, &cfg, cur_page, &ha_fd, ha_buf, &ha_len, &ha_map, &ha_subs);
+                        render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
                         persist_last_page(&opt, cur_page, offset);
                     }
                     continue;
                 }
                 if (reserved_prev && btn == prev_pos) {
                     offset = sheet.prev_start;
-                    render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
+                    render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
                     persist_last_page(&opt, cur_page, offset);
                     continue;
                 }
                 if (reserved_next && btn == next_pos) {
                     offset = sheet.next_start;
-                    render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
+                    render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
                     persist_last_page(&opt, cur_page, offset);
                     continue;
                 }
@@ -1706,8 +2637,14 @@ int main(int argc, char **argv) {
                         }
                         snprintf(cur_page, sizeof(cur_page), "%s", it->tap_data);
                         offset = 0;
-                        render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
+                        ha_enter_page(&opt, &cfg, cur_page, &ha_fd, ha_buf, &ha_len, &ha_map, &ha_subs);
+                        render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
                         persist_last_page(&opt, cur_page, offset);
+                    } else if (it && it->tap_action && it->tap_action[0] && it->tap_action[0] != '$') {
+                        // Home Assistant call (domain.service or script.<entity> shortcut).
+                        if (ha_call_from_item(&opt, it) != 0) {
+                            log_msg("ha call failed (action='%s')", it->tap_action ? it->tap_action : "");
+                        }
                     }
                 }
             }
@@ -1726,10 +2663,15 @@ int main(int argc, char **argv) {
     unlink(opt.control_sock);
     // blank_png points to a shared, persistent asset (assets/pregen/empty.png or error.png fallback).
     // Do not unlink it.
+    ha_unsubscribe_all(&ha_fd, ha_buf, &ha_len, &ha_map, &ha_subs);
+    if (ha_fd >= 0) close(ha_fd);
+    ha_state_map_free(&ha_map);
+    ha_subs_free(&ha_subs);
     config_free(&cfg);
     free(opt.config_path);
     free(opt.ulanzi_sock);
     free(opt.control_sock);
+    free(opt.ha_sock);
     free(opt.cache_root);
     free(opt.error_icon);
     free(opt.sys_pregen_dir);

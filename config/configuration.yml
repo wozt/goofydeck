@@ -44,6 +44,45 @@ presets:
     text_font: ""
     text_size: 48
     text_offset: 0,0
+  base_button:
+    icon_color: "transparent"
+    icon_background_color: "333333"
+    icon_size: 128
+    icon_border_radius: 12
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+  light_off:
+    icon: mdi:lightbulb-outline
+    icon_background_color: "transparent"
+    icon_size: 128
+    icon_border_radius: 12
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_color: "transparent"
+  light_on:
+    icon: mdi:lightbulb
+    icon_background_color: "FFD700"
+    icon_size: 128
+    icon_border_radius: 12
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_color: "transparent"
+  screen_off:
+    icon: mdi:monitor-off
+    icon_background_color: "8b0000"
+    icon_size: 128
+    icon_border_radius: 12
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_color: "transparent"
+  screen_on:
+    icon: mdi:monitor
+    icon_background_color: "1e90ff"
+    icon_size: 128
+    icon_border_radius: 12
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_color: "transparent"
   p01:
     icon_background_color: "241f31"
     icon_border_radius: 12
@@ -544,13 +583,6 @@ presets:
 pages:
   $root:
     buttons:
-      - name: "Scripts"
-        presets: [dir1]
-        icon: mdi:folder-outline
-        text: "SCRIPTS"
-        tap_action:
-          action: $page.go_to
-          data: "scripts"
       - name: "Salon"
         presets: [dir2]
         icon: mdi:folder-star-outline
@@ -558,6 +590,13 @@ pages:
         tap_action:
           action: $page.go_to
           data: "salon"
+      - name: "Scripts"
+        presets: [dir1]
+        icon: mdi:folder-outline
+        text: "SCRIPTS"
+        tap_action:
+          action: $page.go_to
+          data: "scripts"
       - name: "Settings"
         presets: [dir3]
         icon: mdi:folder-multiple-outline
@@ -679,21 +718,57 @@ pages:
 
   salon:
     buttons:
-      - name: "Music"
-        presets: [p29]
-        icon: mdi:music-note-outline
-        text: "MUS"
+      - name: "Lampe droite"
+        entity_id: light.lampe_droite
+        presets: [base_button]
         tap_action:
-          action: $page.go_to
-          data: "scripts_deep"
-      - name: "Map"
-        presets: [p28]
-        icon: mdi:map-outline
-        text: "MAP"
-      - name: "Map"
-        presets: [p28]
-        icon: mdi:map-outline
-        text: "MAP"
+          action: light.toggle
+        states:
+          "on":
+            name: "LD ON"
+            presets: [light_on]
+          "off":
+            name: "LD OFF"
+            presets: [light_off]
+      - name: "Lampe gauche"
+        entity_id: light.lampe_gauche
+        presets: [base_button]
+        tap_action:
+          action: light.toggle
+        states:
+          "on":
+            name: "LG ON"
+            presets: [light_on]
+          "off":
+            name: "LG OFF"
+            presets: [light_off]
+      - name: "Lampe escalier"
+        entity_id: light.lampe_escalier
+        presets: [base_button]
+        tap_action:
+          action: light.toggle
+        states:
+          "on":
+            name: "LE ON"
+            presets: [light_on]
+          "off":
+            name: "LE OFF"
+            presets: [light_off]
+      - name: "Écrans Salon"
+        entity_id: script.eteint_les_ecrans_du_salon
+        presets: [base_button]
+        tap_action:
+          action: script.eteint_les_ecrans_du_salon
+        states:
+          "on":
+            name: "Écrans éteints"
+            presets: [screen_on]
+          "off":
+            name: "Écrans allumés"
+            presets: [screen_off]
+      - name: "Temperature"
+        entity_id: sensor.tz3000_utwgoauk_snzb_02_temperature
+        presets: [base_button]
 
 
   settings:

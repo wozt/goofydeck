@@ -7,6 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_PATH="${ROOT}/config/configuration.yml"
 ULANZI_SOCK="/tmp/ulanzi_device.sock"
 PAGING_SOCK="/tmp/goofydeck_paging.sock"
+HA_SOCK="/tmp/goofydeck_ha.sock"
 TMUX_BASE="goofydeck"
 TMUX_SESSION="${TMUX_BASE}"
 
@@ -58,6 +59,7 @@ kill_all() {
     extra_pids=()
     while IFS= read -r p; do extra_pids+=("$p"); done < <(pgrep -f "${ROOT}/ulanzi_d200_demon" 2>/dev/null || true)
     while IFS= read -r p; do extra_pids+=("$p"); done < <(pgrep -f "${ROOT}/pagging_demon" 2>/dev/null || true)
+    while IFS= read -r p; do extra_pids+=("$p"); done < <(pgrep -f "${ROOT}/ha_demon" 2>/dev/null || true)
 
     # De-dup + exclude ourselves
     uniq_pids=()
@@ -87,12 +89,18 @@ kill_all() {
 start_background() {
   [ -x "${ROOT}/ulanzi_d200_demon" ] || { echo "Missing ${ROOT}/ulanzi_d200_demon (run: make all)" >&2; exit 1; }
   [ -x "${ROOT}/lib/pagging_demon" ] || { echo "Missing ${ROOT}/lib/pagging_demon (run: make all)" >&2; exit 1; }
+  [ -x "${ROOT}/lib/ha_demon" ] || { echo "Missing ${ROOT}/lib/ha_demon (run: make all)" >&2; exit 1; }
   [ -f "${CONFIG_PATH}" ] || { echo "Missing config: ${CONFIG_PATH}" >&2; exit 1; }
 
   echo "[launch] Starting ulanzi_d200_demon..."
   rm -f "${ULANZI_SOCK}" 2>/dev/null || true
   ("${ROOT}/ulanzi_d200_demon") &
   echo $! >"${PID_DIR}/ulanzi_d200_demon.pid"
+
+  echo "[launch] Starting ha_demon..."
+  rm -f "${HA_SOCK}" 2>/dev/null || true
+  ("${ROOT}/lib/ha_demon") &
+  echo $! >"${PID_DIR}/ha_demon.pid"
 
   echo "[launch] Sleeping 10s before starting paging..."
   sleep 10
@@ -111,6 +119,7 @@ start_byobu() {
   [ -n "${mux_bin}" ] || { echo "byobu-tmux not found (install byobu)" >&2; exit 1; }
   [ -x "${ROOT}/ulanzi_d200_demon" ] || { echo "Missing ${ROOT}/ulanzi_d200_demon (run: make all)" >&2; exit 1; }
   [ -x "${ROOT}/lib/pagging_demon" ] || { echo "Missing ${ROOT}/lib/pagging_demon (run: make all)" >&2; exit 1; }
+  [ -x "${ROOT}/lib/ha_demon" ] || { echo "Missing ${ROOT}/lib/ha_demon (run: make all)" >&2; exit 1; }
   [ -f "${CONFIG_PATH}" ] || { echo "Missing config: ${CONFIG_PATH}" >&2; exit 1; }
 
   if "${mux_bin}" has-session -t "${TMUX_SESSION}" >/dev/null 2>&1; then
@@ -119,8 +128,9 @@ start_byobu() {
   fi
 
   rm -f "${ULANZI_SOCK}" 2>/dev/null || true
+  rm -f "${HA_SOCK}" 2>/dev/null || true
 
-  echo "[launch] Starting byobu session ${TMUX_SESSION} (2 panes)..."
+  echo "[launch] Starting byobu session ${TMUX_SESSION} (3 panes)..."
   "${mux_bin}" new-session -d -s "${TMUX_SESSION}" -n stack
   "${mux_bin}" set-option -t "${TMUX_SESSION}" -g mouse on >/dev/null 2>&1 || true
 
@@ -128,10 +138,14 @@ start_byobu() {
   "${mux_bin}" send-keys -t "${TMUX_SESSION}:stack.0" "cd \"${ROOT}\"; echo \\$\\$ >\"${PID_DIR}/ulanzi_d200_demon.pid\"; exec ./ulanzi_d200_demon" C-m
 
   # Pane 1: pagging daemon (delayed)
-  "${mux_bin}" split-window -t "${TMUX_SESSION}:stack.0" -v
+  "${mux_bin}" split-window -t "${TMUX_SESSION}:stack.0" -h
   "${mux_bin}" send-keys -t "${TMUX_SESSION}:stack.1" "cd \"${ROOT}\"; echo \\$\\$ >\"${PID_DIR}/pagging_demon.pid\"; echo '[launch] sleep 10s before paging...' >&2; sleep 10; exec ./lib/pagging_demon" C-m
 
-  "${mux_bin}" select-layout -t "${TMUX_SESSION}:stack" tiled
+  # Pane 2: ha_demon
+  "${mux_bin}" split-window -t "${TMUX_SESSION}:stack.1" -h
+  "${mux_bin}" send-keys -t "${TMUX_SESSION}:stack.2" "cd \"${ROOT}\"; echo \\$\\$ >\"${PID_DIR}/ha_demon.pid\"; exec ./lib/ha_demon" C-m
+
+  "${mux_bin}" select-layout -t "${TMUX_SESSION}:stack" even-horizontal
   "${mux_bin}" select-pane -t "${TMUX_SESSION}:stack.0"
   echo "[launch] Attaching..."
   exec byobu-tmux attach -t "${TMUX_SESSION}"
@@ -151,7 +165,8 @@ Options:
 
 Starts:
   1) ./ulanzi_d200_demon
-  2) ./lib/pagging_demon
+  2) ./lib/ha_demon
+  3) ./lib/pagging_demon
 
 Stop:
   ./launch_stack.sh --kill
