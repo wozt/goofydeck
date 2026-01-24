@@ -498,6 +498,21 @@ static int load_config(const char *path, Config *out) {
 
         if (strcmp(section, "pages") == 0) {
             if (ind == 2 && t[strlen(t) - 1] == ':') {
+                // Switching page: flush any pending item into the previous page.
+                if (have_item && cur_page[0]) {
+                    Page *p = config_get_page(&cfg, cur_page);
+                    if (p) page_add_item(p, cur_item);
+                    else {
+                        free(cur_item.name);
+                        free(cur_item.icon);
+                        free(cur_item.preset);
+                        free(cur_item.text);
+                        free(cur_item.tap_action);
+                        free(cur_item.tap_data);
+                    }
+                    memset(&cur_item, 0, sizeof(cur_item));
+                    have_item = false;
+                }
                 snprintf(cur_page, sizeof(cur_page), "%.*s", (int)strlen(t) - 1, t);
                 if (!config_get_page(&cfg, cur_page)) config_add_page(&cfg, cur_page);
                 in_buttons = false;
@@ -815,7 +830,7 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
 
     // draw_optimize (mandatory)
     {
-        char *argv[] = { draw_opt_bin, (char *)"-c", (char *)"16", (char *)out_png, NULL };
+        char *argv[] = { draw_opt_bin, (char *)"-c", (char *)"8", (char *)out_png, NULL };
         if (run_exec(argv) != 0) return -1;
     }
 
@@ -852,7 +867,7 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
         if (rc != 0) return -1;
 
         // RE draw_optimize
-        char *argv2[] = { draw_opt_bin, (char *)"-c", (char *)"16", (char *)out_png, NULL };
+        char *argv2[] = { draw_opt_bin, (char *)"-c", (char *)"8", (char *)out_png, NULL };
         if (run_exec(argv2) != 0) return -1;
     }
 
@@ -1045,6 +1060,30 @@ static bool is_action_goto(const char *a) {
     return strcmp(a, "$page.go_to") == 0;
 }
 
+static void appendf_dyn(char **buf, size_t *len, size_t *cap, const char *fmt, ...) {
+    if (!buf || !len || !cap || !fmt) return;
+    va_list ap;
+    va_start(ap, fmt);
+    va_list ap2;
+    va_copy(ap2, ap);
+    int need = vsnprintf(NULL, 0, fmt, ap2);
+    va_end(ap2);
+    if (need < 0) {
+        va_end(ap);
+        die_errno("vsnprintf");
+    }
+    size_t required = *len + (size_t)need + 1;
+    if (required > *cap) {
+        size_t new_cap = (*cap == 0) ? 1024u : *cap;
+        while (new_cap < required) new_cap *= 2u;
+        *buf = xrealloc(*buf, new_cap);
+        *cap = new_cap;
+    }
+    vsnprintf(*buf + *len, *cap - *len, fmt, ap);
+    va_end(ap);
+    *len += (size_t)need;
+}
+
 static void render_and_send(const Options *opt, const Config *cfg, const char *page_name, size_t offset,
                             char *blank_png, char *last_sig, size_t last_sig_cap) {
     const Page *p = config_get_page((Config *)cfg, page_name);
@@ -1152,24 +1191,27 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
     }
 
     // Build command
-    char cmd[8192];
+    char *cmd = NULL;
     size_t w = 0;
-    w += (size_t)snprintf(cmd + w, sizeof(cmd) - w, "set-buttons-explicit");
+    size_t cap = 0;
+    appendf_dyn(&cmd, &w, &cap, "set-buttons-explicit");
     for (int pos = 1; pos <= 13; pos++) {
         if (!btn_set[pos]) snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", blank_png);
-        w += (size_t)snprintf(cmd + w, sizeof(cmd) - w, " --button-%d=%s", pos, btn_path[pos]);
+        appendf_dyn(&cmd, &w, &cap, " --button-%d=%s", pos, btn_path[pos]);
         if (label_set[pos]) {
-            w += (size_t)snprintf(cmd + w, sizeof(cmd) - w, " --label-%d=%s", pos, btn_label[pos]);
+            appendf_dyn(&cmd, &w, &cap, " --label-%d=%s", pos, btn_label[pos]);
         }
-        if (w >= sizeof(cmd)) break;
     }
-    cmd[sizeof(cmd) - 1] = 0;
+    if (!cmd) return;
+    if (w > 8000) log_msg("send cmd_len=%zu (was previously truncated at 8192)", w);
 
     char reply[64] = {0};
     if (send_line_and_read_reply(opt->ulanzi_sock, cmd, reply, sizeof(reply)) != 0) {
+        free(cmd);
         log_msg("send failed: connect/write");
         return;
     }
+    free(cmd);
     log_msg("send resp='%s'", reply[0] ? reply : "<empty>");
 }
 
@@ -1181,6 +1223,7 @@ int main(int argc, char **argv) {
     opt.cache_root = xstrdup(".cache");
     opt.error_icon = xstrdup("assets/pregen/error.png");
     opt.sys_pregen_dir = xstrdup("assets/pregen");
+    bool dump_config = false;
 
     // root_dir: cwd at startup
     char cwd[PATH_MAX];
@@ -1203,6 +1246,8 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--sys-pregen-dir") == 0 && i + 1 < argc) {
             free(opt.sys_pregen_dir);
             opt.sys_pregen_dir = xstrdup(argv[++i]);
+        } else if (strcmp(argv[i], "--dump-config") == 0) {
+            dump_config = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printf("Usage: %s [--config path] [--ulanzi-sock path] [--cache dir]\n", argv[0]);
             return 0;
@@ -1235,6 +1280,31 @@ int main(int argc, char **argv) {
     if (!config_get_page(&cfg, "$root")) {
         log_msg("config missing $root page");
         return 1;
+    }
+    if (dump_config) {
+        fprintf(stderr, "[pagging] dump-config: pages=%zu presets=%zu\n", cfg.page_count, cfg.preset_count);
+        for (size_t i = 0; i < cfg.page_count; i++) {
+            const Page *p = &cfg.pages[i];
+            fprintf(stderr, "[pagging] page '%s' items=%zu\n", p->name ? p->name : "<null>", p->count);
+            for (size_t j = 0; j < p->count && j < 20; j++) {
+                const Item *it = &p->items[j];
+                fprintf(stderr, "  - name='%s' preset='%s' icon='%s' text='%s' action='%s' data='%s'\n",
+                        it->name ? it->name : "",
+                        it->preset ? it->preset : "",
+                        it->icon ? it->icon : "",
+                        it->text ? it->text : "",
+                        it->tap_action ? it->tap_action : "",
+                        it->tap_data ? it->tap_data : "");
+            }
+        }
+        config_free(&cfg);
+        free(opt.config_path);
+        free(opt.ulanzi_sock);
+        free(opt.cache_root);
+        free(opt.error_icon);
+        free(opt.sys_pregen_dir);
+        free(opt.root_dir);
+        return 0;
     }
 
     // Use a stable pre-generated empty icon when a button is undefined/empty.
@@ -1366,7 +1436,8 @@ int main(int argc, char **argv) {
     }
 
     fclose(rb);
-    unlink(blank_png);
+    // blank_png points to a shared, persistent asset (assets/pregen/empty.png or error.png fallback).
+    // Do not unlink it.
     config_free(&cfg);
     free(opt.config_path);
     free(opt.ulanzi_sock);

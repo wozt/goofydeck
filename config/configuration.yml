@@ -122,7 +122,7 @@ presets:
     text_color: "000000"
     text_align: "center"
     text_font: "DejaVuSans.ttf"
-    text_size: 18
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 10
     icon_border_color: "000000"
@@ -584,7 +584,7 @@ pages:
         icon: mdi:numeric-0-circle
       - name: "Item 11"
         presets: [p11]
-        icon: mdi:star-outline
+        icon: mdi:star
       - name: "Item 12"
         presets: [p12]
         icon: mdi:heart-outline
@@ -645,21 +645,36 @@ pages:
 
   scripts:
     buttons:
+      - name: "Tool 2"
+        presets: [p12]
+        icon: mdi:dev-to
+        text: "HA"
+      - name: "Tool 2"
+        presets: [p12]
+        icon: mdi:dev-to
+        text: "HA"
       - name: "Deep"
-        presets: [dir1]
-        icon: mdi:folder-outline
+        presets: [p30]
+        icon: mdi:dev-to
         text: "DEEP"
         tap_action:
           action: $page.go_to
           data: "scripts_deep"
-      - name: "Tool 1"
-        presets: [p11]
-        icon: mdi:wrench-outline
-        text: "WRENCH"
       - name: "Tool 2"
         presets: [p12]
-        icon: mdi:hammer-screwdriver
-        text: "HAM"
+        icon: mdi:dev-to
+        text: "HA"
+      - name: "Tool 2"
+        presets: [p12]
+        icon: mdi:dev-to
+        text: "HA"
+      - name: "Deep"
+        presets: [p30]
+        icon: mdi:dev-to
+        text: "DEEP"
+        tap_action:
+          action: $page.go_to
+          data: "scripts_deep"
 
   scripts_deep:
     buttons:
@@ -678,10 +693,32 @@ pages:
         presets: [p29]
         icon: mdi:music-note-outline
         text: "MUS"
+        tap_action:
+          action: $page.go_to
+          data: "scripts_deep"
       - name: "Map"
         presets: [p28]
         icon: mdi:map-outline
         text: "MAP"
+      - name: "Map"
+        presets: [p28]
+        icon: mdi:map-outline
+        text: "MAP"
+      - name: "Tool 2"
+        presets: [p12]
+        icon: mdi:dev-to
+        text: "HA"
+      - name: "Tool 2"
+        presets: [p12]
+        icon: mdi:dev-to
+        text: "HA"
+      - name: "Deep"
+        presets: [p30]
+        icon: mdi:dev-to
+        text: "DEEP"
+        tap_action:
+          action: $page.go_to
+          data: "scripts_deep"
 
   settings:
     buttons:
@@ -693,3 +730,26 @@ pages:
         presets: [p20]
         icon: mdi:cloud-outline
         text: "CLD"
+      - name: "Map"
+        presets: [p28]
+        icon: mdi:map-outline
+        text: "MAP"
+      - name: "Map"
+        presets: [p28]
+        icon: mdi:map-outline
+        text: "MAP"
+      - name: "Tool 2"
+        presets: [p12]
+        icon: mdi:dev-to
+        text: "HA"
+      - name: "Tool 2"
+        presets: [p12]
+        icon: mdi:dev-to
+        text: "HA"
+      - name: "Deep"
+        presets: [p30]
+        icon: mdi:dev-to
+        text: "DEEP"
+        tap_action:
+          action: $page.go_to
+          data: "scripts_deep"
