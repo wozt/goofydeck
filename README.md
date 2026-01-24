@@ -1,6 +1,7 @@
 # GoofyDeck
 
 GoofyDeck is a comprehensive project for managing the Ulanzi D200 device, including a C daemon, utilities, and scripts to control the screen and buttons.
+/!\ this project is still under construction, not all function are implemented yet /!\
 
 ## 📋 Table of Contents
 

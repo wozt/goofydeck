@@ -10,10 +10,13 @@ PAGING_SOCK="/tmp/goofydeck_paging.sock"
 TMUX_BASE="goofydeck"
 TMUX_SESSION="${TMUX_BASE}"
 
-LOG_DIR="${ROOT}/.cache/logs"
-mkdir -p "${LOG_DIR}"
-PID_DIR="${ROOT}/.cache/pids"
-mkdir -p "${PID_DIR}"
+PID_DIR_DEFAULT="/dev/shm/goofydeck/pids"
+PID_DIR="${PID_DIR:-${PID_DIR_DEFAULT}}"
+if ! mkdir -p "${PID_DIR}" 2>/dev/null; then
+  PID_DIR="${ROOT}/.cache/pids"
+  mkdir -p "${PID_DIR}"
+  echo "[launch] WARN: unable to use ${PID_DIR_DEFAULT}; using ${PID_DIR} instead" >&2
+fi
 
 kill_all() {
   self_pid="$$"
@@ -88,14 +91,14 @@ start_background() {
 
   echo "[launch] Starting ulanzi_d200_demon..."
   rm -f "${ULANZI_SOCK}" 2>/dev/null || true
-  ("${ROOT}/ulanzi_d200_demon" >"${LOG_DIR}/ulanzi_d200_demon.log" 2>&1) &
+  ("${ROOT}/ulanzi_d200_demon") &
   echo $! >"${PID_DIR}/ulanzi_d200_demon.pid"
 
   echo "[launch] Sleeping 10s before starting paging..."
   sleep 10
 
   echo "[launch] Starting pagging_demon..."
-  ("${ROOT}/lib/pagging_demon" >"${LOG_DIR}/pagging_demon.log" 2>&1) &
+  ("${ROOT}/lib/pagging_demon") &
   echo $! >"${PID_DIR}/pagging_demon.pid"
 
   echo "[launch] Running."
@@ -122,11 +125,11 @@ start_byobu() {
   "${mux_bin}" set-option -t "${TMUX_SESSION}" -g mouse on >/dev/null 2>&1 || true
 
   # Pane 0: ulanzi daemon
-  "${mux_bin}" send-keys -t "${TMUX_SESSION}:stack.0" "cd \"${ROOT}\"; exec ./ulanzi_d200_demon" C-m
+  "${mux_bin}" send-keys -t "${TMUX_SESSION}:stack.0" "cd \"${ROOT}\"; echo \\$\\$ >\"${PID_DIR}/ulanzi_d200_demon.pid\"; exec ./ulanzi_d200_demon" C-m
 
   # Pane 1: pagging daemon (delayed)
   "${mux_bin}" split-window -t "${TMUX_SESSION}:stack.0" -v
-  "${mux_bin}" send-keys -t "${TMUX_SESSION}:stack.1" "cd \"${ROOT}\"; echo '[launch] sleep 10s before paging...' >&2; sleep 10; ./lib/pagging_demon; echo \"[launch] pagging_demon exited rc=\\$?\" >&2; sleep 999999" C-m
+  "${mux_bin}" send-keys -t "${TMUX_SESSION}:stack.1" "cd \"${ROOT}\"; echo \\$\\$ >\"${PID_DIR}/pagging_demon.pid\"; echo '[launch] sleep 10s before paging...' >&2; sleep 10; exec ./lib/pagging_demon" C-m
 
   "${mux_bin}" select-layout -t "${TMUX_SESSION}:stack" tiled
   "${mux_bin}" select-pane -t "${TMUX_SESSION}:stack.0"
