@@ -56,7 +56,7 @@ static int write_chunk(FILE *f, const char *type, const unsigned char *data, siz
     return 0;
 }
 
-// PNG reader (expects 8-bit RGBA)
+// PNG reader (expects 8-bit RGB/RGBA)
 typedef struct {
     uint32_t width, height;
     unsigned char *pixels; // RGBA pixels, size width*height*4
@@ -64,8 +64,7 @@ typedef struct {
 
 static int read_be32u(const unsigned char *p) { return (p[0]<<24)|(p[1]<<16)|(p[2]<<8)|p[3]; }
 
-static int png_unfilter(uint8_t *dest, const uint8_t *src, uint32_t w, uint32_t h) {
-    const uint32_t bpp = 4;
+static int png_unfilter(uint8_t *dest, const uint8_t *src, uint32_t w, uint32_t h, uint32_t bpp) {
     uint32_t stride = bpp * w;
     const uint8_t *prev = NULL;
     for (uint32_t y=0; y<h; y++) {
@@ -127,6 +126,7 @@ static int load_png_rgba(const char *path, PngRaw *out) {
     unsigned char sig[8];
     if (fread(sig,1,8,f)!=8 || memcmp(sig,"\x89PNG\r\n\x1a\n",8)!=0) { fclose(f); return -1; }
     uint32_t w=0,h=0; int ok=0;
+    uint8_t color_type = 0;
     unsigned char *idat=NULL; size_t idat_len=0;
     while (1) {
         unsigned char lenb[4], type[4];
@@ -141,7 +141,8 @@ static int load_png_rgba(const char *path, PngRaw *out) {
         fseek(f,4,SEEK_CUR); // skip CRC
         if (memcmp(type,"IHDR",4)==0) {
             w = read_be32u(buf); h = read_be32u(buf+4);
-            if (buf[8]!=8 || buf[9]!=6) { free(buf); free(idat); fclose(f); return -1; } // require 8-bit RGBA
+            color_type = buf[9];
+            if (buf[8]!=8 || !(color_type==6 || color_type==2)) { free(buf); free(idat); fclose(f); return -1; } // 8-bit RGB/RGBA
             ok=1;
         } else if (memcmp(type,"IDAT",4)==0) {
             unsigned char *nb = realloc(idat, idat_len + len);
@@ -156,7 +157,8 @@ static int load_png_rgba(const char *path, PngRaw *out) {
     }
     fclose(f);
     if (!ok || w==0 || h==0 || !idat) { free(idat); return -1; }
-    size_t scan_cap = (1 + 4*w) * h;
+    uint32_t bpp = (color_type == 6) ? 4u : 3u;
+    size_t scan_cap = (size_t)(1 + bpp*w) * h;
     unsigned char *scan = malloc(scan_cap);
     if (!scan) { free(idat); return -1; }
     z_stream zs; memset(&zs,0,sizeof(zs));
@@ -168,10 +170,23 @@ static int load_png_rgba(const char *path, PngRaw *out) {
     size_t scan_len = scan_cap - zs.avail_out;
     free(idat);
     if (ret != Z_STREAM_END || scan_len != scan_cap) { free(scan); return -1; }
-    unsigned char *pixels = malloc(w * h * 4);
-    if (!pixels) { free(scan); return -1; }
-    if (png_unfilter(pixels, scan, w, h)!=0) { free(scan); free(pixels); return -1; }
+    unsigned char *raw = malloc((size_t)w * h * bpp);
+    if (!raw) { free(scan); return -1; }
+    if (png_unfilter(raw, scan, w, h, bpp)!=0) { free(scan); free(raw); return -1; }
     free(scan);
+    unsigned char *pixels = malloc((size_t)w * h * 4);
+    if (!pixels) { free(raw); return -1; }
+    if (bpp == 4) {
+        memcpy(pixels, raw, (size_t)w * h * 4);
+    } else {
+        for (size_t i = 0, j = 0; i < (size_t)w * h; i++) {
+            pixels[j++] = raw[i*3 + 0];
+            pixels[j++] = raw[i*3 + 1];
+            pixels[j++] = raw[i*3 + 2];
+            pixels[j++] = 255;
+        }
+    }
+    free(raw);
     out->width = w; out->height = h; out->pixels = pixels;
     return 0;
 }

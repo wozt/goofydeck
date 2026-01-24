@@ -823,6 +823,9 @@ static double now_sec_monotonic(void) {
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 
+static void state_dir(const Options *opt, char *out, size_t cap);
+static void sanitize_suffix(const char *in, char *out, size_t cap);
+
 typedef struct {
     char *entity_id;
     char *state; // e.g. "on", "off", "23.4"
@@ -1069,48 +1072,6 @@ static int read_line_from_fd(int fd, char *out, size_t out_cap, char *buf, size_
     }
 }
 
-static int set_nonblocking_fd(int fd);
-
-static int send_line_and_read_one_line(const char *sock_path, const char *line, char *out, size_t out_cap, int timeout_ms) {
-    if (!sock_path || !line || !out || out_cap == 0) return -1;
-    out[0] = 0;
-    int fd = unix_connect(sock_path);
-    if (fd < 0) return -1;
-    (void)set_nonblocking_fd(fd);
-
-    if (ha_send_line_fd(fd, line) != 0) {
-        close(fd);
-        return -1;
-    }
-
-    char buf[8192];
-    size_t inlen = 0;
-    double start = now_sec_monotonic();
-    for (;;) {
-        char linebuf[8192];
-        int lr = read_line_from_fd(fd, linebuf, sizeof(linebuf), buf, &inlen);
-        if (lr == 1) {
-            snprintf(out, out_cap, "%.*s", (int)(out_cap - 1), linebuf);
-            close(fd);
-            return 0;
-        }
-        if (lr < 0) {
-            close(fd);
-            return -1;
-        }
-        int elapsed_ms = (int)((now_sec_monotonic() - start) * 1000.0);
-        if (timeout_ms >= 0 && elapsed_ms >= timeout_ms) {
-            close(fd);
-            return -1;
-        }
-        int remain = timeout_ms < 0 ? 250 : (timeout_ms - elapsed_ms);
-        if (remain > 250) remain = 250;
-        if (remain < 0) remain = 0;
-        struct pollfd pfd[1] = {{.fd = fd, .events = POLLIN}};
-        (void)poll(pfd, 1, remain);
-    }
-}
-
 static int generate_icon_pipeline(const Options *opt, const Preset *preset, const Item *it, const char *out_png) {
     // Base: draw_square, optional borders, optional mdi, optimize, optional text, optimize
     if (!it) return -1;
@@ -1240,57 +1201,101 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
     return 0;
 }
 
-static int read_hex_u32_file(const char *path, uint32_t *out) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return -1;
-    char buf[64] = {0};
-    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
-    fclose(f);
-    if (n == 0) return -1;
-    buf[n] = 0;
-    trim(buf);
-    uint32_t v = 0;
-    if (sscanf(buf, "%x", &v) != 1) return -1;
-    *out = v;
+static int write_text_overlay_png(const Options *opt, const Preset *preset, const char *text, const char *out_png) {
+    if (!opt || !text || !out_png) return -1;
+    ensure_dir_parent(out_png);
+
+    char draw_square_bin[PATH_MAX];
+    char draw_text_bin[PATH_MAX];
+    char draw_opt_bin[PATH_MAX];
+    snprintf(draw_square_bin, sizeof(draw_square_bin), "%s/icons/draw_square", opt->root_dir);
+    snprintf(draw_text_bin, sizeof(draw_text_bin), "%s/icons/draw_text", opt->root_dir);
+    snprintf(draw_opt_bin, sizeof(draw_opt_bin), "%s/icons/draw_optimize", opt->root_dir);
+    if (access(draw_square_bin, X_OK) != 0) return -1;
+    if (access(draw_text_bin, X_OK) != 0) return -1;
+    if (access(draw_opt_bin, X_OK) != 0) return -1;
+
+    // 1) draw_square transparent
+    char *argv_sq[] = { draw_square_bin, (char *)"transparent", (char *)"--size=196", (char *)out_png, NULL };
+    if (run_exec(argv_sq) != 0) return -1;
+
+    const char *tc = (preset && preset->text_color && preset->text_color[0]) ? preset->text_color : "FFFFFF";
+    const char *ta = (preset && preset->text_align && preset->text_align[0]) ? preset->text_align : "bottom";
+    const char *tf = (preset && preset->text_font) ? preset->text_font : "";
+    int ts = preset ? clamp_int(preset->text_size, 1, 64) : 16;
+    int tox = preset ? preset->text_offset_x : 0;
+    int toy = preset ? preset->text_offset_y : 0;
+
+    char text_arg[768];
+    snprintf(text_arg, sizeof(text_arg), "--text=%s", text);
+    char tc_arg[64];
+    snprintf(tc_arg, sizeof(tc_arg), "--text_color=%s", tc);
+    char ta_arg[64];
+    snprintf(ta_arg, sizeof(ta_arg), "--text_align=%s", ta);
+    char ts_arg[64];
+    snprintf(ts_arg, sizeof(ts_arg), "--text_size=%d", ts);
+    char to_arg[64];
+    snprintf(to_arg, sizeof(to_arg), "--text_offset=%d,%d", tox, toy);
+
+    int rc = 0;
+    if (tf && tf[0]) {
+        char tf_arg[PATH_MAX];
+        snprintf(tf_arg, sizeof(tf_arg), "--text_font=%s", tf);
+        char *argv[] = { draw_text_bin, text_arg, tc_arg, ta_arg, tf_arg, ts_arg, to_arg, (char *)out_png, NULL };
+        rc = run_exec(argv);
+    } else {
+        char *argv[] = { draw_text_bin, text_arg, tc_arg, ta_arg, ts_arg, to_arg, (char *)out_png, NULL };
+        rc = run_exec(argv);
+    }
+    if (rc != 0) return -1;
+
+    // 2) draw_optimize mandatory after draw_text
+    char *argv_opt[] = { draw_opt_bin, (char *)"-c", (char *)"4", (char *)out_png, NULL };
+    if (run_exec(argv_opt) != 0) return -1;
     return 0;
 }
 
-static void write_hex_u32_file(const char *path, uint32_t v) {
-    ensure_dir_parent(path);
-    FILE *f = fopen(path, "wb");
-    if (!f) return;
-    fprintf(f, "%08x\n", v);
-    fclose(f);
-}
+static int render_value_over_base_tmp(const Options *opt, const Preset *preset, const char *page_name, int pos,
+                                      const char *base_png, const char *text, char *out_tmp_png, size_t out_cap) {
+    if (!opt || !preset || !page_name || !base_png || !text || !out_tmp_png || out_cap == 0) return -1;
+    out_tmp_png[0] = 0;
+    if (!file_exists(base_png)) return -1;
 
-static void append_preset_sig(char *dst, size_t cap, size_t *len, const Preset *p) {
-    if (!dst || !cap || !len) return;
-    if (!p) {
-        int n = snprintf(dst + *len, cap - *len, "preset:<none>\n");
-        if (n > 0 && (size_t)n < cap - *len) *len += (size_t)n;
-        return;
-    }
-    int n = snprintf(
-        dst + *len, cap - *len,
-        "preset:%s\nbg:%s\nrad:%d\nbw:%d\nbc:%s\nisz:%d\npad:%d\noff:%d,%d\nbri:%d\nic:%s\n"
-        "tc:%s\nta:%s\ntf:%s\nts:%d\nto:%d,%d\n",
-        p->name ? p->name : "",
-        p->icon_background_color ? p->icon_background_color : "",
-        p->icon_border_radius,
-        p->icon_border_width,
-        p->icon_border_color ? p->icon_border_color : "",
-        p->icon_size,
-        p->icon_padding,
-        p->icon_offset_x, p->icon_offset_y,
-        p->icon_brightness,
-        p->icon_color ? p->icon_color : "",
-        p->text_color ? p->text_color : "",
-        p->text_align ? p->text_align : "",
-        p->text_font ? p->text_font : "",
-        p->text_size,
-        p->text_offset_x, p->text_offset_y
-    );
-    if (n > 0 && (size_t)n < cap - *len) *len += (size_t)n;
+    char dir[PATH_MAX];
+    state_dir(opt, dir, sizeof(dir));
+    char tmpdir[PATH_MAX];
+    snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", dir);
+    ensure_dir(tmpdir);
+
+    char page_tag[96];
+    sanitize_suffix(page_name, page_tag, sizeof(page_tag));
+    if (page_tag[0] == 0) snprintf(page_tag, sizeof(page_tag), "page");
+
+    long t = (long)time(NULL);
+    pid_t pid = getpid();
+    char overlay[PATH_MAX];
+    char outpng[PATH_MAX];
+    snprintf(overlay, sizeof(overlay), "%s/overlay_%s_%d_%ld_%d.png", tmpdir, page_tag, (int)pid, t, pos);
+    snprintf(outpng, sizeof(outpng), "%s/out_%s_%d_%ld_%d.png", tmpdir, page_tag, (int)pid, t, pos);
+
+    if (copy_file(base_png, outpng) != 0) return -1;
+    if (write_text_overlay_png(opt, preset, text, overlay) != 0) { unlink(outpng); unlink(overlay); return -1; }
+
+    char draw_over_bin[PATH_MAX];
+    char draw_opt_bin[PATH_MAX];
+    snprintf(draw_over_bin, sizeof(draw_over_bin), "%s/icons/draw_over", opt->root_dir);
+    snprintf(draw_opt_bin, sizeof(draw_opt_bin), "%s/icons/draw_optimize", opt->root_dir);
+    if (access(draw_over_bin, X_OK) != 0) { unlink(outpng); unlink(overlay); return -1; }
+    if (access(draw_opt_bin, X_OK) != 0) { unlink(outpng); unlink(overlay); return -1; }
+
+    char *argv_over[] = { draw_over_bin, overlay, outpng, NULL };
+    if (run_exec(argv_over) != 0) { unlink(outpng); unlink(overlay); return -1; }
+    char *argv_opt[] = { draw_opt_bin, (char *)"-c", (char *)"4", outpng, NULL };
+    if (run_exec(argv_opt) != 0) { unlink(outpng); unlink(overlay); return -1; }
+
+    unlink(overlay);
+    snprintf(out_tmp_png, out_cap, "%s", outpng);
+    return 0;
 }
 
 static void sanitize_suffix(const char *in, char *out, size_t cap) {
@@ -1310,79 +1315,46 @@ static void sanitize_suffix(const char *in, char *out, size_t cap) {
 }
 
 static uint32_t item_file_hash(const char *page, size_t item_index, const Item *it) {
-    // Stable per button; style changes are handled by the .meta signature.
+    (void)it;
+    // Short hash based only on <page name> + <button number> (stable, no meta).
     const char *pg = page ? page : "";
-    const char *nm = (it && it->name) ? it->name : "";
-    const char *eid = (it && it->entity_id) ? it->entity_id : "";
-    const char *act = (it && it->tap_action) ? it->tap_action : "";
-    const char *dat = (it && it->tap_data) ? it->tap_data : "";
-    const char *pr = (it && it->preset) ? it->preset : "";
-    char key[2048];
-    snprintf(key, sizeof(key), "page:%s\nidx:%zu\nname:%s\nentity:%s\naction:%s\ndata:%s\npreset:%s\n", pg, item_index, nm, eid, act, dat, pr);
+    int btn = (int)item_index + 1;
+    char key[512];
+    snprintf(key, sizeof(key), "page:%s\nbutton:%d\n", pg, btn);
     return fnv1a32(key, strlen(key));
 }
 
 static bool cached_or_generated_into_state(const Options *opt, const Config *cfg, const char *page, size_t item_index, const Item *it,
                                            const char *icon_override, const char *text_override, const char *preset_override,
-                                           const char *suffix, char *out_path, size_t out_cap) {
+                                           const char *variant, char *out_path, size_t out_cap) {
     if (!it) return false;
     const char *pr_name = (preset_override && preset_override[0]) ? preset_override : (it->preset ? it->preset : "default");
     const Preset *preset = config_get_preset(cfg, pr_name);
     if (!preset) preset = config_get_preset(cfg, "default");
 
-    const char *ic = (icon_override && icon_override[0]) ? icon_override :
+    const char *ic = (icon_override != NULL) ? icon_override :
                      (it->icon && it->icon[0]) ? it->icon :
                      (preset && preset->icon) ? preset->icon : "";
-    const char *tx = (text_override && text_override[0]) ? text_override :
+    const char *tx = (text_override != NULL) ? text_override :
                      (it->text && it->text[0]) ? it->text :
                      (preset && preset->text) ? preset->text : "";
 
-    if (ic[0] == 0 && tx[0] == 0) return false; // empty => no cache
-
-    // Signature: actual render inputs (including preset style).
-    char sig_key[4096];
-    size_t sig_len = 0;
-    int n = snprintf(sig_key + sig_len, sizeof(sig_key) - sig_len, "page:%s\nidx:%zu\nicon:%s\ntext:%s\npreset:%s\nsuffix:%s\n",
-                     page ? page : "", item_index, ic, tx, pr_name, suffix ? suffix : "");
-    if (n < 0 || (size_t)n >= sizeof(sig_key) - sig_len) return false;
-    sig_len += (size_t)n;
-    append_preset_sig(sig_key, sizeof(sig_key), &sig_len, preset);
-    uint32_t sig_h = fnv1a32(sig_key, strlen(sig_key));
-
-    if (page && strcmp(page, "_sys") == 0) {
-        const char *sys_name = "sys";
-        if (item_index == 1000) sys_name = "page_back";
-        else if (item_index == 1001) sys_name = "page_prev";
-        else if (item_index == 1002) sys_name = "page_next";
-        snprintf(out_path, out_cap, "%s/%s.png", opt->sys_pregen_dir, sys_name);
-        char meta[PATH_MAX];
-        snprintf(meta, sizeof(meta), "%s/%s.meta", opt->sys_pregen_dir, sys_name);
-        uint32_t prev = 0;
-        if (file_exists(out_path) && read_hex_u32_file(meta, &prev) == 0 && prev == sig_h) return true;
-
-        Item tmp = *it;
-        tmp.icon = (char *)ic;
-        tmp.text = (char *)tx;
-        tmp.preset = (char *)pr_name;
-        if (generate_icon_pipeline(opt, preset, &tmp, out_path) != 0) {
-            (void)copy_file(opt->error_icon, out_path);
-        }
-        write_hex_u32_file(meta, sig_h);
-        return true;
+    bool is_defined = (it->icon && it->icon[0]) || (it->text && it->text[0]) || (it->preset && it->preset[0]) ||
+                      (it->entity_id && it->entity_id[0]) || (it->tap_action && it->tap_action[0]) || (it->state_count > 0);
+    if (!is_defined) return false; // empty/unconfigured => no cache
+    if (ic[0] == 0 && tx[0] == 0 && it->state_count == 0 && !(it->entity_id && it->entity_id[0])) {
+        return false; // plain empty
     }
 
     uint32_t file_h = item_file_hash(page, item_index, it);
     char suf[128] = {0};
-    if (suffix && suffix[0]) sanitize_suffix(suffix, suf, sizeof(suf));
+    if (variant && variant[0]) sanitize_suffix(variant, suf, sizeof(suf));
+    int btn = (int)item_index + 1;
 
-    if (suf[0]) snprintf(out_path, out_cap, "%s/%s/item%zu_%08x_%s.png", opt->cache_root, page, item_index + 1, file_h, suf);
-    else snprintf(out_path, out_cap, "%s/%s/item%zu_%08x.png", opt->cache_root, page, item_index + 1, file_h);
-    char meta[PATH_MAX];
-    if (suf[0]) snprintf(meta, sizeof(meta), "%s/%s/item%zu_%08x_%s.meta", opt->cache_root, page, item_index + 1, file_h, suf);
-    else snprintf(meta, sizeof(meta), "%s/%s/item%zu_%08x.meta", opt->cache_root, page, item_index + 1, file_h);
+    if (suf[0]) snprintf(out_path, out_cap, "%s/%s/%d-%08x-%s.png", opt->cache_root, page, btn, file_h, suf);
+    else snprintf(out_path, out_cap, "%s/%s/%d-%08x.png", opt->cache_root, page, btn, file_h);
 
-    uint32_t prev = 0;
-    if (file_exists(out_path) && read_hex_u32_file(meta, &prev) == 0 && prev == sig_h) return true;
+    if (file_exists(out_path)) return true;
 
     ensure_dir_parent(out_path);
     Item tmp = *it;
@@ -1392,7 +1364,6 @@ static bool cached_or_generated_into_state(const Options *opt, const Config *cfg
     if (generate_icon_pipeline(opt, preset, &tmp, out_path) != 0) {
         (void)copy_file(opt->error_icon, out_path);
     }
-    write_hex_u32_file(meta, sig_h);
     return true;
 }
 
@@ -1496,6 +1467,31 @@ static bool is_action_goto(const char *a) {
     return strcmp(a, "$page.go_to") == 0;
 }
 
+static int ensure_sys_icon(const Options *opt, const Config *cfg, const char *name, const char *mdi_icon, char *out, size_t cap) {
+    if (!opt || !cfg || !name || !mdi_icon || !out || cap == 0) return -1;
+    snprintf(out, cap, "%s/%s.png", opt->sys_pregen_dir, name);
+    if (file_exists(out)) return 0;
+
+    const Preset *preset = config_get_preset(cfg, "$nav");
+    if (!preset) preset = config_get_preset(cfg, "default");
+    Item it;
+    memset(&it, 0, sizeof(it));
+    it.icon = (char *)mdi_icon;
+    it.preset = (char *)"$nav";
+    it.text = NULL;
+    it.tap_action = NULL;
+    it.tap_data = NULL;
+    it.entity_id = NULL;
+    it.states = NULL;
+    it.state_count = 0;
+    it.state_cap = 0;
+
+    if (generate_icon_pipeline(opt, preset, &it, out) != 0) {
+        (void)copy_file(opt->error_icon, out);
+    }
+    return file_exists(out) ? 0 : -1;
+}
+
 static void make_device_label(const char *src, char *out, size_t out_cap) {
     if (!out || out_cap == 0) return;
     out[0] = 0;
@@ -1537,8 +1533,6 @@ static void appendf_dyn(char **buf, size_t *len, size_t *cap, const char *fmt, .
     *len += (size_t)need;
 }
 
-static void state_dir(const Options *opt, char *out, size_t cap);
-
 static void render_and_send(const Options *opt, const Config *cfg, const char *page_name, size_t offset,
                             const HaStateMap *ha_map, char *blank_png, char *last_sig, size_t last_sig_cap) {
     const Page *p = config_get_page((Config *)cfg, page_name);
@@ -1574,6 +1568,7 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
     bool btn_set[14] = {0};
     char btn_label[14][64];
     bool label_set[14] = {0};
+    bool cleanup_tmp[14] = {0};
     for (int i = 1; i <= 13; i++) {
         snprintf(btn_path[i], sizeof(btn_path[i]), "%s", blank_png);
         btn_set[i] = true;
@@ -1616,9 +1611,22 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
                         btn_set[pos] = true;
                         have_icon = true;
                     }
-
-                    // Label override (states) if provided.
                     if (ov->name && ov->name[0]) label_src = ov->name;
+                }
+                // Unknown/missing override => fallback to base.
+                if (!have_icon) {
+                    if (cached_or_generated_into_state(opt, cfg, page_name, item_i, it, NULL, NULL, NULL, "base", tmp, sizeof(tmp))) {
+                        snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp);
+                        btn_set[pos] = true;
+                        have_icon = true;
+                    }
+                }
+            } else {
+                // No known state yet => show base.
+                if (cached_or_generated_into_state(opt, cfg, page_name, item_i, it, NULL, NULL, NULL, "base", tmp, sizeof(tmp))) {
+                    snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp);
+                    btn_set[pos] = true;
+                    have_icon = true;
                 }
             }
         }
@@ -1634,27 +1642,21 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
             const char *eff_text = (it->text && it->text[0]) ? it->text : value_text;
 
             if ((eff_icon && eff_icon[0]) || (eff_text && eff_text[0])) {
-                // Render into a runtime file (no cache to avoid infinite variants).
-                char dir[PATH_MAX];
-                state_dir(opt, dir, sizeof(dir));
-                char rt[PATH_MAX];
-                snprintf(rt, sizeof(rt), "%s/runtime", dir);
-                ensure_dir(rt);
-                char outpng[PATH_MAX];
-                char page_tag[96];
-                sanitize_suffix(page_name, page_tag, sizeof(page_tag));
-                if (page_tag[0] == 0) snprintf(page_tag, sizeof(page_tag), "page");
-                snprintf(outpng, sizeof(outpng), "%s/%s_pos%d.png", rt, page_tag, pos);
-
+                // Generate a stable base icon in cache, then overlay the current value into a /dev/shm temp and send it.
                 Item tmp_it = *it;
                 tmp_it.icon = (char *)(eff_icon ? eff_icon : "");
-                tmp_it.text = (char *)(eff_text ? eff_text : "");
-                if (generate_icon_pipeline(opt, pr, &tmp_it, outpng) != 0) {
-                    (void)copy_file(opt->error_icon, outpng);
+                tmp_it.text = (char *)""; // base icon has no dynamic value text
+
+                char base_png[PATH_MAX];
+                if (cached_or_generated_into_state(opt, cfg, page_name, item_i, &tmp_it, NULL, (const char *)"", pr_name, NULL, base_png, sizeof(base_png))) {
+                    char tmp_out[PATH_MAX];
+                    if (render_value_over_base_tmp(opt, pr, page_name, pos, base_png, eff_text, tmp_out, sizeof(tmp_out)) == 0) {
+                        snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp_out);
+                        btn_set[pos] = true;
+                        cleanup_tmp[pos] = true;
+                        have_icon = true;
+                    }
                 }
-                snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", outpng);
-                btn_set[pos] = true;
-                have_icon = true;
             }
         }
 
@@ -1679,25 +1681,22 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
 
     // System icons (only if visible)
     if (show_back && back_pos >= 1 && back_pos <= 13) {
-        Item it = {.name = NULL, .icon = "mdi:arrow-left", .preset = "$nav", .tap_action = "$page_back", .tap_data = NULL};
         char tmp[PATH_MAX];
-        if (cached_or_generated_into(opt, cfg, "_sys", 1000, &it, tmp, sizeof(tmp))) {
+        if (ensure_sys_icon(opt, cfg, "page_back", "mdi:arrow-left", tmp, sizeof(tmp)) == 0) {
             snprintf(btn_path[back_pos], sizeof(btn_path[back_pos]), "%s", tmp);
             btn_set[back_pos] = true;
         }
     }
     if (show_prev && prev_pos >= 1 && prev_pos <= 13) {
-        Item it = {.name = NULL, .icon = "mdi:chevron-left", .preset = "$nav", .tap_action = "$page_prev", .tap_data = NULL};
         char tmp[PATH_MAX];
-        if (cached_or_generated_into(opt, cfg, "_sys", 1001, &it, tmp, sizeof(tmp))) {
+        if (ensure_sys_icon(opt, cfg, "page_prev", "mdi:chevron-left", tmp, sizeof(tmp)) == 0) {
             snprintf(btn_path[prev_pos], sizeof(btn_path[prev_pos]), "%s", tmp);
             btn_set[prev_pos] = true;
         }
     }
     if (show_next && next_pos >= 1 && next_pos <= 13) {
-        Item it = {.name = NULL, .icon = "mdi:chevron-right", .preset = "$nav", .tap_action = "$page_next", .tap_data = NULL};
         char tmp[PATH_MAX];
-        if (cached_or_generated_into(opt, cfg, "_sys", 1002, &it, tmp, sizeof(tmp))) {
+        if (ensure_sys_icon(opt, cfg, "page_next", "mdi:chevron-right", tmp, sizeof(tmp)) == 0) {
             snprintf(btn_path[next_pos], sizeof(btn_path[next_pos]), "%s", tmp);
             btn_set[next_pos] = true;
         }
@@ -1721,11 +1720,21 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
     char reply[64] = {0};
     if (send_line_and_read_reply(opt->ulanzi_sock, cmd, reply, sizeof(reply)) != 0) {
         free(cmd);
+        for (int pos = 1; pos <= 13; pos++) {
+            if (cleanup_tmp[pos]) unlink(btn_path[pos]);
+        }
         log_msg("send failed: connect/write");
         return;
     }
     free(cmd);
     log_msg("send resp='%s'", reply[0] ? reply : "<empty>");
+
+    // Cleanup any temporary per-render images created in /dev/shm.
+    for (int pos = 1; pos <= 13; pos++) {
+        if (cleanup_tmp[pos]) {
+            unlink(btn_path[pos]);
+        }
+    }
 }
 
 static void state_dir(const Options *opt, char *out, size_t cap) {
@@ -1819,6 +1828,10 @@ static void ha_handle_line(HaStateMap *ha_map, const char *line) {
     }
     if (strncmp(line, "evt disconnected", 16) == 0) {
         log_msg("ha: disconnected");
+        return;
+    }
+    if (strncmp(line, "err ", 4) == 0) {
+        log_msg("ha: %s", line);
         return;
     }
     if (strncmp(line, "evt state ", 10) == 0) {
@@ -1930,16 +1943,30 @@ static void precache_state_icons(const Options *opt, const Config *cfg) {
         if (!p->name || strcmp(p->name, "_sys") == 0) continue;
         for (size_t ii = 0; ii < p->count; ii++) {
             const Item *it = &p->items[ii];
-            if (!it || it->state_count == 0) continue;
-            for (size_t si = 0; si < it->state_count; si++) {
-                const StateOverride *ov = &it->states[si];
+            if (!it) continue;
+
+            // Always generate a base icon for configured buttons (including HA value-only buttons).
+            {
                 char tmp[PATH_MAX];
-                (void)cached_or_generated_into_state(opt, cfg, p->name, ii, it,
-                                                     (ov->icon && ov->icon[0]) ? ov->icon : NULL,
-                                                     (ov->text && ov->text[0]) ? ov->text : NULL,
-                                                     (ov->preset && ov->preset[0]) ? ov->preset : NULL,
-                                                     (ov->key && ov->key[0]) ? ov->key : NULL,
-                                                     tmp, sizeof(tmp));
+                if (it->state_count > 0) {
+                    (void)cached_or_generated_into_state(opt, cfg, p->name, ii, it, NULL, NULL, NULL, "base", tmp, sizeof(tmp));
+                } else {
+                    (void)cached_or_generated_into_state(opt, cfg, p->name, ii, it, NULL, (const char *)"", NULL, NULL, tmp, sizeof(tmp));
+                }
+            }
+
+            // State variants
+            if (it->state_count > 0) {
+                for (size_t si = 0; si < it->state_count; si++) {
+                    const StateOverride *ov = &it->states[si];
+                    char tmp[PATH_MAX];
+                    (void)cached_or_generated_into_state(opt, cfg, p->name, ii, it,
+                                                         (ov->icon && ov->icon[0]) ? ov->icon : NULL,
+                                                         (ov->text && ov->text[0]) ? ov->text : NULL,
+                                                         (ov->preset && ov->preset[0]) ? ov->preset : NULL,
+                                                         (ov->key && ov->key[0]) ? ov->key : NULL,
+                                                         tmp, sizeof(tmp));
+                }
             }
         }
     }
@@ -2024,6 +2051,7 @@ static void ha_partial_update_visible(const Options *opt, const Config *cfg, con
             const char *label_src = (it->name && it->name[0]) ? it->name : NULL;
             char icon_path[PATH_MAX];
             bool have_icon = false;
+            bool sent = false;
 
             // State variants (only if the state exists in config states mapping).
             if (it->state_count > 0) {
@@ -2045,6 +2073,13 @@ static void ha_partial_update_visible(const Options *opt, const Config *cfg, con
                                                              cur_state, icon_path, sizeof(icon_path));
                         if (file_exists(icon_path)) have_icon = true;
                     }
+                    if (!have_icon) {
+                        (void)cached_or_generated_into_state(opt, cfg, page_name, item_i, it, NULL, NULL, NULL, "base", icon_path, sizeof(icon_path));
+                        if (file_exists(icon_path)) have_icon = true;
+                    }
+                } else {
+                    (void)cached_or_generated_into_state(opt, cfg, page_name, item_i, it, NULL, NULL, NULL, "base", icon_path, sizeof(icon_path));
+                    if (file_exists(icon_path)) have_icon = true;
                 }
             }
 
@@ -2058,25 +2093,25 @@ static void ha_partial_update_visible(const Options *opt, const Config *cfg, con
                 const char *eff_icon = (it->icon && it->icon[0]) ? it->icon : (pr && pr->icon) ? pr->icon : NULL;
                 const char *eff_text = (it->text && it->text[0]) ? it->text : value_text;
                 if ((eff_icon && eff_icon[0]) || (eff_text && eff_text[0])) {
-                    char dir[PATH_MAX];
-                    state_dir(opt, dir, sizeof(dir));
-                    char rt[PATH_MAX];
-                    snprintf(rt, sizeof(rt), "%s/runtime", dir);
-                    ensure_dir(rt);
-                    char outpng[PATH_MAX];
-                    char page_tag[96];
-                    sanitize_suffix(page_name, page_tag, sizeof(page_tag));
-                    if (page_tag[0] == 0) snprintf(page_tag, sizeof(page_tag), "page");
-                    snprintf(outpng, sizeof(outpng), "%s/%s_pos%d.png", rt, page_tag, pos);
                     Item tmp_it = *it;
                     tmp_it.icon = (char *)(eff_icon ? eff_icon : "");
-                    tmp_it.text = (char *)(eff_text ? eff_text : "");
-                    if (generate_icon_pipeline(opt, pr, &tmp_it, outpng) != 0) {
-                        (void)copy_file(opt->error_icon, outpng);
+                    tmp_it.text = (char *)"";
+                    char base_png[PATH_MAX];
+                    if (cached_or_generated_into_state(opt, cfg, page_name, item_i, &tmp_it, NULL, (const char *)"", pr_name, NULL, base_png, sizeof(base_png))) {
+                        char tmp_out[PATH_MAX];
+                        if (render_value_over_base_tmp(opt, pr, page_name, pos, base_png, eff_text, tmp_out, sizeof(tmp_out)) == 0) {
+                            snprintf(icon_path, sizeof(icon_path), "%s", tmp_out);
+                            ulanzi_send_partial(opt, pos, icon_path, label_src);
+                            unlink(icon_path);
+                            sent = true;
+                        }
                     }
-                    snprintf(icon_path, sizeof(icon_path), "%s", outpng);
-                    have_icon = true;
                 }
+            }
+
+            if (sent) {
+                item_i++;
+                continue;
             }
 
             // Fallback to existing rendering/cached icon.
@@ -2095,7 +2130,7 @@ static void ha_partial_update_visible(const Options *opt, const Config *cfg, con
     }
 }
 
-static int ha_call_from_item(const Options *opt, const Item *it) {
+static int ha_call_from_item(const Options *opt, int ha_fd, const Item *it) {
     if (!opt || !it || !it->tap_action || !it->tap_action[0]) return -1;
     if (it->tap_action[0] == '$') return -1; // paging/internal
     if (!opt->ha_sock || !opt->ha_sock[0]) return -1;
@@ -2155,10 +2190,20 @@ static int ha_call_from_item(const Options *opt, const Item *it) {
 
     char cmd[8192];
     snprintf(cmd, sizeof(cmd), "call %s %s %s", domain, service, json);
-    char reply[512] = {0};
-    if (send_line_and_read_one_line(opt->ha_sock, cmd, reply, sizeof(reply), 1500) != 0) return -1;
-    if (reply[0]) log_msg("ha call resp='%s'", reply);
-    return (strncmp(reply, "ok", 2) == 0) ? 0 : -1;
+    log_msg("ha tx: %s", cmd);
+
+    // Prefer the persistent HA session socket if available.
+    int fd = ha_fd;
+    bool close_fd = false;
+    if (fd < 0) {
+        fd = unix_connect(opt->ha_sock);
+        if (fd < 0) return -1;
+        close_fd = true;
+    }
+    // Fire-and-forget: do not wait for ok/err to keep UI responsive. HA state changes will drive UI.
+    int rc = ha_send_line_fd(fd, cmd);
+    if (close_fd) close(fd);
+    return (rc == 0) ? 0 : -1;
 }
 
 int main(int argc, char **argv) {
@@ -2642,7 +2687,7 @@ int main(int argc, char **argv) {
                         persist_last_page(&opt, cur_page, offset);
                     } else if (it && it->tap_action && it->tap_action[0] && it->tap_action[0] != '$') {
                         // Home Assistant call (domain.service or script.<entity> shortcut).
-                        if (ha_call_from_item(&opt, it) != 0) {
+                        if (ha_call_from_item(&opt, ha_fd, it) != 0) {
                             log_msg("ha call failed (action='%s')", it->tap_action ? it->tap_action : "");
                         }
                     }

@@ -156,7 +156,7 @@ Home Assistant bindings (optional):
   - If `tap_action.data` is omitted, `pagging_demon` sends `{"entity_id":"<entity_id>"}`.
   - If `tap_action.data` is present and is a JSON object/array, it is forwarded as HA service data (and `entity_id` is injected if missing and `entity_id:` is set).
 - Script shortcut: `tap_action.action: script.<script_entity>` calls `script.turn_on` with `{"entity_id":"script.<script_entity>"}`.
-- Button `states:` can map HA state strings (e.g. `"on"`, `"off"`) to display overrides; when the state matches, the daemon uses a cached icon variant named `itemN_<hash>_<state>.png` and updates the button via partial updates.
+- Button `states:` can map HA state strings (e.g. `"on"`, `"off"`) to display overrides; when the state matches, the daemon uses a cached icon variant named `<button>-<hash>-<state>.png` (and `<button>-<hash>-base.png` as fallback) and updates the button via partial updates.
 
 ### Home Assistant (ha_demon)
 

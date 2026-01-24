@@ -3,7 +3,7 @@ brightness: 100
 sleep:
   dim_brightness: 10
   dim_timeout: 10
-  sleep_timeout: 60
+  sleep_timeout: 3600
 
 system_buttons:
   $page.back:
@@ -45,44 +45,28 @@ presets:
     text_size: 48
     text_offset: 0,0
   base_button:
-    icon_color: "transparent"
     icon_background_color: "333333"
     icon_size: 128
     icon_border_radius: 12
-    icon_border_width: 1
-    icon_border_color: "FFFFFF"
+    icon_color: "FFFFFF"
   light_off:
     icon: mdi:lightbulb-outline
-    icon_background_color: "transparent"
-    icon_size: 128
-    icon_border_radius: 12
-    icon_border_width: 1
-    icon_border_color: "FFFFFF"
-    icon_color: "transparent"
+    icon_background_color: "333333"
   light_on:
     icon: mdi:lightbulb
     icon_background_color: "FFD700"
-    icon_size: 128
-    icon_border_radius: 12
-    icon_border_width: 1
-    icon_border_color: "FFFFFF"
-    icon_color: "transparent"
   screen_off:
     icon: mdi:monitor-off
     icon_background_color: "8b0000"
-    icon_size: 128
-    icon_border_radius: 12
-    icon_border_width: 1
-    icon_border_color: "FFFFFF"
-    icon_color: "transparent"
   screen_on:
     icon: mdi:monitor
     icon_background_color: "1e90ff"
+  room_folder:
+    icon_border_width: 4
+    icon_border_color: "FFFFFF"
+    icon_background_color: "b9003e"
     icon_size: 128
     icon_border_radius: 12
-    icon_border_width: 1
-    icon_border_color: "FFFFFF"
-    icon_color: "transparent"
   p01:
     icon_background_color: "241f31"
     icon_border_radius: 12
@@ -584,8 +568,8 @@ pages:
   $root:
     buttons:
       - name: "Salon"
-        presets: [dir2]
-        icon: mdi:folder-star-outline
+        presets: [room_folder]
+        icon: mdi:sofa
         text: "SALON"
         tap_action:
           action: $page.go_to
