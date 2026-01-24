@@ -22,7 +22,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
   $nav:
     icon_background_color: "1a5fb4"
@@ -37,7 +37,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "center"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
   p01:
     icon_background_color: "241f31"
@@ -62,7 +62,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 8
     icon_border_color: "FFFFFF"
@@ -77,7 +77,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "center"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 8
     icon_border_color: "000000"
@@ -92,7 +92,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,-4
     icon_border_width: 12
     icon_border_color: "FFFFFF"
@@ -107,7 +107,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -137,7 +137,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -152,7 +152,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "top"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,12
     icon_border_width: 8
     icon_border_color: "transparent"
@@ -167,7 +167,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -182,7 +182,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 10
     icon_border_color: "FFFFFF"
@@ -197,7 +197,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -212,7 +212,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -227,7 +227,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -242,7 +242,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 8
     icon_border_color: "FFFFFF"
@@ -257,7 +257,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 8
     icon_border_color: "000000"
@@ -272,7 +272,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -287,7 +287,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -302,7 +302,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -317,7 +317,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -332,7 +332,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -347,7 +347,7 @@ presets:
     text_color: "000000"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -362,7 +362,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -377,7 +377,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -392,7 +392,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -407,7 +407,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -422,7 +422,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -437,7 +437,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -452,7 +452,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -467,7 +467,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -482,7 +482,7 @@ presets:
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
-    text_size: 16
+    text_size: 48
     text_offset: 0,0
     icon_border_width: 1
     icon_border_color: "FFFFFF"
@@ -490,21 +490,76 @@ presets:
     icon_offset: 0,0
     icon_brightness: 99
 
+  dir1:
+    icon_background_color: "1a5fb4"
+    icon_border_radius: 20
+    icon_border_width: 8
+    icon_border_color: "FFFFFF"
+    icon_size: 128
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+  dir2:
+    icon_background_color: "813d9c"
+    icon_border_radius: 20
+    icon_border_width: 8
+    icon_border_color: "FFFFFF"
+    icon_size: 128
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+  dir3:
+    icon_background_color: "c01c28"
+    icon_border_radius: 20
+    icon_border_width: 8
+    icon_border_color: "FFFFFF"
+    icon_size: 128
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+
 pages:
   $root:
     buttons:
-      - name: "Item 01"
-        presets: [p01]
-        icon: mdi:numeric-1-circle
-        text: "ONE"
-      - name: "Item 02"
-        presets: [p02]
-        icon: mdi:numeric-2-circle
-        text: "BORDER"
-      - name: "Item 03"
-        presets: [p03]
-        icon: mdi:numeric-3-circle
-        text: "CENTER"
+      - name: "Scripts"
+        presets: [dir1]
+        icon: mdi:folder-outline
+        text: "SCRIPTS"
+        tap_action:
+          action: $page.go_to
+          data: "scripts"
+      - name: "Salon"
+        presets: [dir2]
+        icon: mdi:folder-star-outline
+        text: "SALON"
+        tap_action:
+          action: $page.go_to
+          data: "salon"
+      - name: "Settings"
+        presets: [dir3]
+        icon: mdi:folder-multiple-outline
+        text: "SETTINGS"
+        tap_action:
+          action: $page.go_to
+          data: "settings"
       - name: "Item 04"
         presets: [p04]
         icon: mdi:numeric-4-circle
@@ -587,3 +642,54 @@ pages:
       - name: "Item 30"
         presets: [p30]
         icon: mdi:power
+
+  scripts:
+    buttons:
+      - name: "Deep"
+        presets: [dir1]
+        icon: mdi:folder-outline
+        text: "DEEP"
+        tap_action:
+          action: $page.go_to
+          data: "scripts_deep"
+      - name: "Tool 1"
+        presets: [p11]
+        icon: mdi:wrench-outline
+        text: "WRENCH"
+      - name: "Tool 2"
+        presets: [p12]
+        icon: mdi:hammer-screwdriver
+        text: "HAM"
+
+  scripts_deep:
+    buttons:
+      - name: "Leaf"
+        presets: [dir1]
+        icon: mdi:leaf
+        text: "LEAF"
+      - name: "Up"
+        presets: [dir1]
+        icon: mdi:arrow-up-bold
+        text: "UP"
+
+  salon:
+    buttons:
+      - name: "Music"
+        presets: [p29]
+        icon: mdi:music-note-outline
+        text: "MUS"
+      - name: "Map"
+        presets: [p28]
+        icon: mdi:map-outline
+        text: "MAP"
+
+  settings:
+    buttons:
+      - name: "Home"
+        presets: [p13]
+        icon: mdi:home-outline
+        text: "HOME"
+      - name: "Cloud"
+        presets: [p20]
+        icon: mdi:cloud-outline
+        text: "CLD"

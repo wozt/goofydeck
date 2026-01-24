@@ -815,7 +815,7 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
 
     // draw_optimize (mandatory)
     {
-        char *argv[] = { draw_opt_bin, (char *)out_png, NULL };
+        char *argv[] = { draw_opt_bin, (char *)"-c", (char *)"16", (char *)out_png, NULL };
         if (run_exec(argv) != 0) return -1;
     }
 
@@ -852,7 +852,7 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
         if (rc != 0) return -1;
 
         // RE draw_optimize
-        char *argv2[] = { draw_opt_bin, (char *)out_png, NULL };
+        char *argv2[] = { draw_opt_bin, (char *)"-c", (char *)"16", (char *)out_png, NULL };
         if (run_exec(argv2) != 0) return -1;
     }
 
@@ -1042,7 +1042,7 @@ static SheetLayout compute_sheet_layout(size_t total_items, bool show_back, size
 
 static bool is_action_goto(const char *a) {
     if (!a) return false;
-    return strcmp(a, "$page.go_to") == 0 || strcmp(a, "$page.goto") == 0 || strcmp(a, "$page_goto") == 0;
+    return strcmp(a, "$page.go_to") == 0;
 }
 
 static void render_and_send(const Options *opt, const Config *cfg, const char *page_name, size_t offset,
@@ -1271,6 +1271,8 @@ int main(int argc, char **argv) {
     char cur_page[256] = "$root";
     size_t offset = 0;
     char last_sig[256] = {0};
+    char page_stack[64][256];
+    int page_stack_len = 0;
 
     // Initial render once.
     render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
@@ -1305,9 +1307,20 @@ int main(int argc, char **argv) {
 
         // System button presses
         if (reserved_back && btn == back_pos) {
-            const char *par = parent_page(cur_page);
-            if (strcmp(par, cur_page) != 0) {
-                snprintf(cur_page, sizeof(cur_page), "%s", par);
+            bool changed = false;
+            if (page_stack_len > 0) {
+                page_stack_len--;
+                snprintf(cur_page, sizeof(cur_page), "%s", page_stack[page_stack_len]);
+                changed = true;
+            } else {
+                // Legacy fallback: parent by path segment.
+                const char *par = parent_page(cur_page);
+                if (strcmp(par, cur_page) != 0) {
+                    snprintf(cur_page, sizeof(cur_page), "%s", par);
+                    changed = true;
+                }
+            }
+            if (changed) {
                 offset = 0;
                 render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
             }
@@ -1341,6 +1354,10 @@ int main(int argc, char **argv) {
         if (pressed_item != (size_t)-1) {
             const Item *it = page_item_at(p, pressed_item);
             if (it && is_action_goto(it->tap_action) && it->tap_data && it->tap_data[0]) {
+                if (page_stack_len < (int)(sizeof(page_stack) / sizeof(page_stack[0]))) {
+                    snprintf(page_stack[page_stack_len], sizeof(page_stack[page_stack_len]), "%s", cur_page);
+                    page_stack_len++;
+                }
                 snprintf(cur_page, sizeof(cur_page), "%s", it->tap_data);
                 offset = 0;
                 render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));

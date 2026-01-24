@@ -37,7 +37,8 @@
 #define SOCK_PATH "/tmp/ulanzi_device.sock"
 
 static int running = 1;
-static const int MAX_PADDING_RETRIES = 4096; // max bytes to pad before force-patch
+// static const int MAX_PADDING_RETRIES = 4096; // max bytes to pad before force-patch
+static const int MAX_PADDING_RETRIES = 8192; // max bytes to pad before force-patch in fast mode
 static uint64_t TOTAL_BYTES_PATCHED = 0;
 static const int KEEPALIVE_INTERVAL = 24;  // seconds
 static uint64_t TOTAL_BYTES_SENT = 0;
