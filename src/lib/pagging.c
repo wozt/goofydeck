@@ -963,6 +963,83 @@ static const Item *page_item_at(const Page *p, size_t idx) {
     return &p->items[idx];
 }
 
+typedef struct {
+    size_t start;      // item index
+    size_t cap;        // number of content slots for this sheet
+    bool show_prev;    // prev system button visible on this sheet
+    bool show_next;    // next system button visible on this sheet
+    size_t prev_start; // start of previous sheet (if show_prev)
+    size_t next_start; // start of next sheet (if show_next)
+} SheetLayout;
+
+static SheetLayout compute_sheet_layout(size_t total_items, bool show_back, size_t desired_offset) {
+    SheetLayout out;
+    memset(&out, 0, sizeof(out));
+
+    size_t base_slots = 13 - (show_back ? 1u : 0u);
+    if (base_slots == 0) base_slots = 1;
+
+    // No pagination: all content slots available.
+    if (total_items <= base_slots) {
+        out.start = 0;
+        out.cap = base_slots;
+        out.show_prev = false;
+        out.show_next = false;
+        out.prev_start = 0;
+        out.next_start = 0;
+        return out;
+    }
+
+    // Build variable-capacity sheets:
+    // - First sheet: no prev; next shown => reserve 1 slot for next => cap = base_slots - 1
+    // - Middle sheets: prev+next shown => reserve 2 slots => cap = base_slots - 2
+    // - Last sheet: prev shown, next hidden => reserve 1 slot => cap = base_slots - 1
+    size_t starts[256];
+    size_t caps[256];
+    bool prevs[256];
+    bool nexts[256];
+    size_t count = 0;
+
+    size_t start = 0;
+    size_t idx = 0;
+    while (start < total_items && count < (sizeof(starts) / sizeof(starts[0]))) {
+        bool prev = (idx > 0);
+        size_t cap_last = base_slots - (prev ? 1u : 0u);
+        if (cap_last == 0) cap_last = 1;
+        size_t cap_next = base_slots - (prev ? 1u : 0u) - 1u;
+        if (cap_next == 0) cap_next = 1;
+
+        bool next = (start + cap_last < total_items);
+        size_t cap = next ? cap_next : cap_last;
+
+        starts[count] = start;
+        caps[count] = cap;
+        prevs[count] = prev;
+        nexts[count] = next;
+        count++;
+
+        start += cap;
+        idx++;
+    }
+
+    // Find sheet by matching start or by containment.
+    size_t sel = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (starts[i] == desired_offset) { sel = i; break; }
+        if (desired_offset >= starts[i] && (i + 1 == count || desired_offset < starts[i + 1])) {
+            sel = i;
+        }
+    }
+
+    out.start = starts[sel];
+    out.cap = caps[sel];
+    out.show_prev = prevs[sel];
+    out.show_next = nexts[sel];
+    out.prev_start = (sel > 0) ? starts[sel - 1] : starts[sel];
+    out.next_start = (sel + 1 < count) ? starts[sel + 1] : starts[sel];
+    return out;
+}
+
 static bool is_action_goto(const char *a) {
     if (!a) return false;
     return strcmp(a, "$page.go_to") == 0 || strcmp(a, "$page.goto") == 0 || strcmp(a, "$page_goto") == 0;
@@ -983,16 +1060,11 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
 
     size_t base_item_slots = 13 - (show_back ? 1u : 0u);
     bool need_pagination = p->count > base_item_slots;
-    size_t item_slots = base_item_slots - (need_pagination ? 2u : 0u);
-    if (item_slots == 0) item_slots = 1;
-    size_t max_offset = 0;
-    if (p->count > 0) {
-        max_offset = ((p->count - 1) / item_slots) * item_slots;
-    }
-    if (offset > max_offset) offset = max_offset;
-
-    bool show_prev = need_pagination && offset > 0;
-    bool show_next = need_pagination && offset < max_offset;
+    SheetLayout sheet = compute_sheet_layout(p->count, show_back, offset);
+    offset = sheet.start;
+    size_t item_slots = sheet.cap;
+    bool show_prev = sheet.show_prev;
+    bool show_next = sheet.show_next;
 
     char sig[256];
     snprintf(sig, sizeof(sig), "%s|%zu|%zu|%d|%d|%d|%d|%d", page_name, offset, item_slots,
@@ -1018,8 +1090,8 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
     // Reserve back/prev/next
     bool reserved[14] = {0};
     if (show_back && back_pos >= 1 && back_pos <= 13) reserved[back_pos] = true;
-    if (need_pagination && prev_pos >= 1 && prev_pos <= 13) reserved[prev_pos] = true;
-    if (need_pagination && next_pos >= 1 && next_pos <= 13) reserved[next_pos] = true;
+    if (show_prev && prev_pos >= 1 && prev_pos <= 13) reserved[prev_pos] = true;
+    if (show_next && next_pos >= 1 && next_pos <= 13) reserved[next_pos] = true;
 
     // Fill items
     size_t item_i = offset;
@@ -1062,24 +1134,20 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
             btn_set[back_pos] = true;
         }
     }
-    if (need_pagination && prev_pos >= 1 && prev_pos <= 13) {
-        if (show_prev) {
-            Item it = {.name = NULL, .icon = "mdi:chevron-left", .preset = "$nav", .tap_action = "$page_prev", .tap_data = NULL};
-            char tmp[PATH_MAX];
-            if (cached_or_generated_into(opt, cfg, "_sys", 1001, &it, tmp, sizeof(tmp))) {
-                snprintf(btn_path[prev_pos], sizeof(btn_path[prev_pos]), "%s", tmp);
-                btn_set[prev_pos] = true;
-            }
+    if (show_prev && prev_pos >= 1 && prev_pos <= 13) {
+        Item it = {.name = NULL, .icon = "mdi:chevron-left", .preset = "$nav", .tap_action = "$page_prev", .tap_data = NULL};
+        char tmp[PATH_MAX];
+        if (cached_or_generated_into(opt, cfg, "_sys", 1001, &it, tmp, sizeof(tmp))) {
+            snprintf(btn_path[prev_pos], sizeof(btn_path[prev_pos]), "%s", tmp);
+            btn_set[prev_pos] = true;
         }
     }
-    if (need_pagination && next_pos >= 1 && next_pos <= 13) {
-        if (show_next) {
-            Item it = {.name = NULL, .icon = "mdi:chevron-right", .preset = "$nav", .tap_action = "$page_next", .tap_data = NULL};
-            char tmp[PATH_MAX];
-            if (cached_or_generated_into(opt, cfg, "_sys", 1002, &it, tmp, sizeof(tmp))) {
-                snprintf(btn_path[next_pos], sizeof(btn_path[next_pos]), "%s", tmp);
-                btn_set[next_pos] = true;
-            }
+    if (show_next && next_pos >= 1 && next_pos <= 13) {
+        Item it = {.name = NULL, .icon = "mdi:chevron-right", .preset = "$nav", .tap_action = "$page_next", .tap_data = NULL};
+        char tmp[PATH_MAX];
+        if (cached_or_generated_into(opt, cfg, "_sys", 1002, &it, tmp, sizeof(tmp))) {
+            snprintf(btn_path[next_pos], sizeof(btn_path[next_pos]), "%s", tmp);
+            btn_set[next_pos] = true;
         }
     }
 
@@ -1225,13 +1293,12 @@ int main(int argc, char **argv) {
         const Page *p = config_get_page(&cfg, cur_page);
         if (!p) { snprintf(cur_page, sizeof(cur_page), "$root"); offset = 0; p = config_get_page(&cfg, cur_page); }
         bool show_back = strcmp(cur_page, "$root") != 0;
-        size_t base_item_slots = 13 - (show_back ? 1u : 0u);
-        bool need_pagination = p->count > base_item_slots;
-        size_t item_slots = base_item_slots - (need_pagination ? 2u : 0u);
-        if (item_slots == 0) item_slots = 1;
+        SheetLayout sheet = compute_sheet_layout(p->count, show_back, offset);
+        offset = sheet.start;
 
         bool reserved_back = show_back;
-        bool reserved_pn = need_pagination;
+        bool reserved_prev = sheet.show_prev;
+        bool reserved_next = sheet.show_next;
         int back_pos = cfg.pos_back;
         int prev_pos = cfg.pos_prev;
         int next_pos = cfg.pos_next;
@@ -1246,19 +1313,14 @@ int main(int argc, char **argv) {
             }
             continue;
         }
-        if (reserved_pn && btn == prev_pos) {
-            if (offset >= item_slots) {
-                offset -= item_slots;
-                render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
-            }
+        if (reserved_prev && btn == prev_pos) {
+            offset = sheet.prev_start;
+            render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
             continue;
         }
-        if (reserved_pn && btn == next_pos) {
-            size_t max_offset = (p->count > 0) ? ((p->count - 1) / item_slots) * item_slots : 0;
-            if (offset + item_slots <= max_offset) {
-                offset += item_slots;
-                render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
-            }
+        if (reserved_next && btn == next_pos) {
+            offset = sheet.next_start;
+            render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
             continue;
         }
 
@@ -1268,7 +1330,8 @@ int main(int argc, char **argv) {
         for (int pos = 1; pos <= 13; pos++) {
             bool reserved = false;
             if (reserved_back && pos == back_pos) reserved = true;
-            if (reserved_pn && (pos == prev_pos || pos == next_pos)) reserved = true;
+            if (reserved_prev && pos == prev_pos) reserved = true;
+            if (reserved_next && pos == next_pos) reserved = true;
             if (reserved) continue;
             if (item_i >= p->count) break;
             if (pos == btn) { pressed_item = item_i; break; }
