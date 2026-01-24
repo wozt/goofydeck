@@ -1,6 +1,6 @@
 // Render an MDI SVG tinted to a given color and composite it centered onto the given PNG.
 // Depends on cairo + librsvg + pkg-config for compilation.
-// Usage: draw_mdi <mdi:name|name> <hexcolor> [--size=N<=196] <filename.png>
+// Usage: draw_mdi <mdi:name|name> <hexcolor|transparent> [--size=N<=196] [--offset=x,y] [--brightness=1..200] <filename.png>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -208,19 +208,61 @@ static void colorize_surface(cairo_surface_t *surf, uint8_t r, uint8_t g, uint8_
     cairo_surface_mark_dirty(surf);
 }
 
+static void apply_brightness(cairo_surface_t *surf, int brightness_percent) {
+    if (!surf) return;
+    if (brightness_percent == 100) return;
+    if (brightness_percent < 1) brightness_percent = 1;
+    if (brightness_percent > 200) brightness_percent = 200;
+
+    cairo_surface_flush(surf);
+    int w = cairo_image_surface_get_width(surf);
+    int h = cairo_image_surface_get_height(surf);
+    int stride = cairo_image_surface_get_stride(surf);
+    unsigned char *data = cairo_image_surface_get_data(surf);
+    if (!data) return;
+
+    for (int y = 0; y < h; y++) {
+        uint32_t *row = (uint32_t *)(data + y * stride);
+        for (int x = 0; x < w; x++) {
+            uint8_t *p = (uint8_t *)&row[x];
+            // Cairo uses BGRA on little-endian
+            uint8_t b = p[0], g = p[1], r = p[2], a = p[3];
+            if (a == 0) continue;
+            int rr = (int)r * brightness_percent / 100;
+            int gg = (int)g * brightness_percent / 100;
+            int bb = (int)b * brightness_percent / 100;
+            if (rr > 255) rr = 255;
+            if (gg > 255) gg = 255;
+            if (bb > 255) bb = 255;
+            p[2] = (uint8_t)rr;
+            p[1] = (uint8_t)gg;
+            p[0] = (uint8_t)bb;
+        }
+    }
+    cairo_surface_mark_dirty(surf);
+}
+
 int main(int argc, char **argv) {
     if (argc < 4) {
-        fprintf(stderr, "Usage: %s <mdi:name|name> <hexcolor|transparent> [--size=N<=196] <filename.png>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <mdi:name|name> <hexcolor|transparent> [--size=N<=196] [--offset=x,y] [--brightness=1..200] <filename.png>\n", argv[0]);
         return 1;
     }
 
     const char *icon_spec = argv[1];
     const char *color_str = argv[2];
     int size = 196;
+    int off_x = 0;
+    int off_y = 0;
+    int brightness = 100;
     const char *fname = NULL;
     for (int i = 3; i < argc; i++) {
         if (strncmp(argv[i], "--size=", 7) == 0) {
             size = atoi(argv[i] + 7);
+        } else if (strncmp(argv[i], "--offset=", 9) == 0) {
+            int x = 0, y = 0;
+            if (sscanf(argv[i] + 9, "%d,%d", &x, &y) == 2) { off_x = x; off_y = y; }
+        } else if (strncmp(argv[i], "--brightness=", 13) == 0) {
+            brightness = atoi(argv[i] + 13);
         } else {
             fname = argv[i];
         }
@@ -228,6 +270,8 @@ int main(int argc, char **argv) {
     if (!fname) { fprintf(stderr, "Filename required.\n"); return 1; }
     if (size < 1) size = 1;
     if (size > 196) size = 196;
+    if (brightness < 1) brightness = 1;
+    if (brightness > 100) brightness = 100;
 
     uint8_t r,g,b;
     int is_transparent = 0;
@@ -300,6 +344,7 @@ int main(int argc, char **argv) {
 
     // Colorize overlay
     colorize_surface(overlay, r, g, b, is_transparent);
+    if (!is_transparent) apply_brightness(overlay, brightness);
 
     // // Save debug overlay (tinted icon only)
     // const char *base = base_name(png_path);
@@ -307,9 +352,9 @@ int main(int argc, char **argv) {
     // snprintf_checked(debug_path, sizeof(debug_path), "debug_path", "%s.debug.png", png_path);
     // cairo_surface_write_to_png(overlay, debug_path);
 
-    // Composite centered
+    // Composite centered + offset
     cairo_t *ct = cairo_create(target);
-    cairo_set_source_surface(ct, overlay, (tw - size) / 2.0, (th - size) / 2.0);
+    cairo_set_source_surface(ct, overlay, (tw - size) / 2.0 + (double)off_x, (th - size) / 2.0 + (double)off_y);
     
     if (is_transparent) {
         // For transparent mode: use DstOut to cut out the icon shape from target

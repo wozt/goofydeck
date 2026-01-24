@@ -21,7 +21,7 @@ USAGES["draw_border"]="Usage: icons/draw_border <hexcolor|transparent> [--size=1
 USAGES["draw_square"]="Usage: icons/draw_square <hexcolor|transparent> [--size=196] <path.png>\nCreates the PNG exactly at the given path. If path is relative, it is resolved relative to the project root."
 USAGES["draw_text"]="Usage: icons/draw_text [--list-ttf] [--text=hello] [--text_color=00FF00] [--text_align=top|center|bottom] [--text_font=Roboto.ttf] [--text_size=16] [--text_offset=x,y] <path.png>\nEdits the PNG in place. If path is relative, it is resolved relative to the project root."
 USAGES["draw_optimize"]="Usage: icons/draw_optimize [-c|--color <n<=256>] <path.png>\nEdits the PNG in place. If path is relative, it is resolved relative to the project root."
-USAGES["draw_mdi"]="Usage: icons/draw_mdi <mdi:name> <hexcolor|transparent> [--size=128] <path.png>\nEdits/creates the target PNG. If path is relative, it is resolved relative to the project root."
+USAGES["draw_mdi"]="Usage: icons/draw_mdi <mdi:name> <hexcolor|transparent> [--size=128] [--offset=x,y] [--brightness=1..200] <path.png>\nEdits/creates the target PNG. If path is relative, it is resolved relative to the project root."
 USAGES["set_brightness.sh"]="Usage: set_brightness.sh [--socket <path>] <0-100>\nSet brightness via ulanzi_d200_demon (Unix socket daemon)."
 USAGES["keep_alive.sh"]="Usage: keep_alive.sh --start|--stop [--socket <path>]\nStart/stop a background ping every 24s using ping_alive.sh. Logs in /tmp/ulanzi_keep_alive.log."
 USAGES["ping_alive.sh"]="Usage: ping_alive.sh [--socket <path>] [--no-verbose]\nSend a single keep-alive ping to the daemon."

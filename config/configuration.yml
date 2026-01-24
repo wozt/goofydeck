@@ -12,227 +12,483 @@ presets:
   default:
     icon_background_color: "241f31"
     icon_border_radius: 12
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
     icon_size: 128
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 100
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
   $nav:
     icon_background_color: "1a5fb4"
     icon_border_radius: 50
+    icon_border_width: 10
+    icon_border_color: "FFFFFF"
     icon_size: 128
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 100
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "center"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
   p01:
     icon_background_color: "241f31"
     icon_border_radius: 12
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
-    text_size: 16
+    text_align: "bottom"
+    text_font: "DejaVuSansMono.ttf"
+    text_size: 18
+    text_offset: 0,-6
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p02:
     icon_background_color: "1c71d8"
     icon_border_radius: 12
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 8
+    icon_border_color: "FFFFFF"
+    icon_padding: 60
+    icon_offset: 0,0
+    icon_brightness: 99
   p03:
     icon_background_color: "813d9c"
     icon_border_radius: 12
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "center"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 8
+    icon_border_color: "000000"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p04:
     icon_background_color: "c01c28"
     icon_border_radius: 12
     icon_size: 128
-    icon_color: "FFFFFF"
+    icon_color: "transparent"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,-4
+    icon_border_width: 12
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p05:
     icon_background_color: "e66100"
     icon_border_radius: 12
-    icon_size: 128
+    icon_size: 160
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: -8,0
+    icon_brightness: 99
   p06:
     icon_background_color: "f6d32d"
     icon_border_radius: 12
-    icon_size: 128
+    icon_size: 0
     icon_color: "000000"
     text_color: "000000"
-    text_size: 16
+    text_align: "center"
+    text_font: "DejaVuSans.ttf"
+    text_size: 18
+    text_offset: 0,0
+    icon_border_width: 10
+    icon_border_color: "000000"
+    icon_padding: 24
+    icon_offset: 0,0
+    icon_brightness: 99
   p07:
     icon_background_color: "26a269"
     icon_border_radius: 12
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p08:
     icon_background_color: "3584e4"
     icon_border_radius: 18
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "top"
+    text_font: ""
     text_size: 16
+    text_offset: 0,12
+    icon_border_width: 8
+    icon_border_color: "transparent"
+    icon_padding: 0
+    icon_offset: 0,-8
+    icon_brightness: 99
   p09:
     icon_background_color: "5e5c64"
     icon_border_radius: 18
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p10:
     icon_background_color: "000000"
     icon_border_radius: 18
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 10
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p11:
     icon_background_color: "2ec27e"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p12:
     icon_background_color: "e01b24"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p13:
     icon_background_color: "1a5fb4"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p14:
     icon_background_color: "613583"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 8
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p15:
     icon_background_color: "c64600"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 8
+    icon_border_color: "000000"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p16:
     icon_background_color: "1f9e7a"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p17:
     icon_background_color: "2b6ea3"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p18:
     icon_background_color: "9141ac"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p19:
     icon_background_color: "a51d2d"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p20:
     icon_background_color: "c64600"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p21:
     icon_background_color: "e5a50a"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "000000"
     text_color: "000000"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p22:
     icon_background_color: "26a269"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p23:
     icon_background_color: "3584e4"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p24:
     icon_background_color: "5e5c64"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p25:
     icon_background_color: "241f31"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p26:
     icon_background_color: "1c71d8"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p27:
     icon_background_color: "813d9c"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p28:
     icon_background_color: "c01c28"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p29:
     icon_background_color: "e66100"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
   p30:
     icon_background_color: "26a269"
     icon_border_radius: 22
     icon_size: 128
     icon_color: "FFFFFF"
     text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
     text_size: 16
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
 
 pages:
   $root:
@@ -240,27 +496,31 @@ pages:
       - name: "Item 01"
         presets: [p01]
         icon: mdi:numeric-1-circle
+        text: "ONE"
       - name: "Item 02"
         presets: [p02]
         icon: mdi:numeric-2-circle
+        text: "BORDER"
       - name: "Item 03"
         presets: [p03]
         icon: mdi:numeric-3-circle
+        text: "CENTER"
       - name: "Item 04"
         presets: [p04]
         icon: mdi:numeric-4-circle
+        text: "CUTOUT"
       - name: "Item 05"
         presets: [p05]
         icon: mdi:numeric-5-circle
       - name: "Item 06"
         presets: [p06]
-        icon: mdi:numeric-6-circle
+        text: "TEXT_ONLY"
       - name: "Item 07"
         presets: [p07]
-        icon: mdi:numeric-7-circle
       - name: "Item 08"
         presets: [p08]
         icon: mdi:numeric-8-circle
+        text: "TOP"
       - name: "Item 09"
         presets: [p09]
         icon: mdi:numeric-9-circle
@@ -299,7 +559,7 @@ pages:
         icon: mdi:cloud-outline
       - name: "Item 21"
         presets: [p21]
-        icon: mdi:code-tags
+        icon: mdi:dev-to
       - name: "Item 22"
         presets: [p22]
         icon: mdi:database-outline

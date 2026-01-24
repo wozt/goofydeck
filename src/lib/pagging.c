@@ -40,6 +40,7 @@ typedef struct {
     char *name;
     char *icon;
     char *preset;
+    char *text;
     char *tap_action;
     char *tap_data;
 } Item;
@@ -48,10 +49,20 @@ typedef struct {
     char *name;
     char *icon_background_color; // "RRGGBB" or "transparent"
     int icon_border_radius;      // percent (0..50)
-    int icon_size;               // px (1..196)
+    int icon_border_width;       // px (0..98)
+    char *icon_border_color;     // "RRGGBB" or "transparent"
+    int icon_size;               // px (0..196), 0=auto
+    int icon_padding;            // px (>=0)
+    int icon_offset_x;           // px
+    int icon_offset_y;           // px
+    int icon_brightness;         // percent (1..200)
     char *icon_color;            // "RRGGBB" or "transparent"
     char *text_color;            // "RRGGBB" or "transparent"
+    char *text_align;            // top|center|bottom
+    char *text_font;             // font filename or system font name
     int text_size;               // px
+    int text_offset_x;           // px
+    int text_offset_y;           // px
 } Preset;
 
 typedef struct {
@@ -356,10 +367,20 @@ static void preset_init_defaults(Preset *p, const char *name) {
     p->name = xstrdup(name ? name : "default");
     p->icon_background_color = xstrdup("241f31");
     p->icon_border_radius = 12;
+    p->icon_border_width = 0;
+    p->icon_border_color = xstrdup("FFFFFF");
     p->icon_size = 128;
+    p->icon_padding = 0;
+    p->icon_offset_x = 0;
+    p->icon_offset_y = 0;
+    p->icon_brightness = 100;
     p->icon_color = xstrdup("FFFFFF");
     p->text_color = xstrdup("FFFFFF");
+    p->text_align = xstrdup("bottom");
+    p->text_font = xstrdup("");
     p->text_size = 16;
+    p->text_offset_x = 0;
+    p->text_offset_y = 0;
 }
 
 static Preset *config_get_preset_mut(Config *cfg, const char *name) {
@@ -393,8 +414,11 @@ static void config_free(Config *cfg) {
         Preset *p = &cfg->presets[i];
         free(p->name);
         free(p->icon_background_color);
+        free(p->icon_border_color);
         free(p->icon_color);
         free(p->text_color);
+        free(p->text_align);
+        free(p->text_font);
     }
     free(cfg->presets);
 
@@ -404,6 +428,7 @@ static void config_free(Config *cfg) {
             free(p->items[j].name);
             free(p->items[j].icon);
             free(p->items[j].preset);
+            free(p->items[j].text);
             free(p->items[j].tap_action);
             free(p->items[j].tap_data);
         }
@@ -525,6 +550,7 @@ static int load_config(const char *path, Config *out) {
 
             if (ind == 8 && strncmp(t, "name:", 5) == 0) { free(cur_item.name); cur_item.name = strip_quotes_dup(t + 5); continue; }
             if (ind == 8 && strncmp(t, "icon:", 5) == 0) { free(cur_item.icon); cur_item.icon = strip_quotes_dup(t + 5); continue; }
+            if (ind == 8 && strncmp(t, "text:", 5) == 0) { free(cur_item.text); cur_item.text = strip_quotes_dup(t + 5); continue; }
             if (ind == 8 && strncmp(t, "presets:", 8) == 0) {
                 // presets: [default, ...]  -> keep first preset name
                 const char *s = t + 8;
@@ -569,8 +595,30 @@ static int load_config(const char *path, Config *out) {
                 p->icon_border_radius = atoi(t + 19);
                 continue;
             }
+            if (ind >= 4 && strncmp(t, "icon_border_width:", 18) == 0) {
+                p->icon_border_width = atoi(t + 18);
+                continue;
+            }
+            if (ind >= 4 && strncmp(t, "icon_border_color:", 18) == 0) {
+                free(p->icon_border_color);
+                p->icon_border_color = strip_quotes_dup(t + 18);
+                continue;
+            }
             if (ind >= 4 && strncmp(t, "icon_size:", 10) == 0) {
                 p->icon_size = atoi(t + 10);
+                continue;
+            }
+            if (ind >= 4 && strncmp(t, "icon_padding:", 13) == 0) {
+                p->icon_padding = atoi(t + 13);
+                continue;
+            }
+            if (ind >= 4 && strncmp(t, "icon_offset:", 12) == 0) {
+                int x = 0, y = 0;
+                if (sscanf(t + 12, "%d,%d", &x, &y) == 2) { p->icon_offset_x = x; p->icon_offset_y = y; }
+                continue;
+            }
+            if (ind >= 4 && strncmp(t, "icon_brightness:", 15) == 0) {
+                p->icon_brightness = atoi(t + 15);
                 continue;
             }
             if (ind >= 4 && strncmp(t, "icon_color:", 11) == 0) {
@@ -583,8 +631,23 @@ static int load_config(const char *path, Config *out) {
                 p->text_color = strip_quotes_dup(t + 11);
                 continue;
             }
+            if (ind >= 4 && strncmp(t, "text_align:", 11) == 0) {
+                free(p->text_align);
+                p->text_align = strip_quotes_dup(t + 11);
+                continue;
+            }
+            if (ind >= 4 && strncmp(t, "text_font:", 10) == 0) {
+                free(p->text_font);
+                p->text_font = strip_quotes_dup(t + 10);
+                continue;
+            }
             if (ind >= 4 && strncmp(t, "text_size:", 10) == 0) {
                 p->text_size = atoi(t + 10);
+                continue;
+            }
+            if (ind >= 4 && strncmp(t, "text_offset:", 12) == 0) {
+                int x = 0, y = 0;
+                if (sscanf(t + 12, "%d,%d", &x, &y) == 2) { p->text_offset_x = x; p->text_offset_y = y; }
                 continue;
             }
         }
@@ -597,6 +660,7 @@ static int load_config(const char *path, Config *out) {
             free(cur_item.name);
             free(cur_item.icon);
             free(cur_item.preset);
+            free(cur_item.text);
             free(cur_item.tap_action);
             free(cur_item.tap_data);
         }
@@ -666,59 +730,130 @@ static int clamp_int(int v, int lo, int hi) {
     return v;
 }
 
-static int generate_icon_with_preset(const Options *opt, const Preset *preset,
-                                     const char *out_png, const char *name, const char *icon_spec) {
-    // Base: blank 196x196 (overwrite)
+static int generate_icon_pipeline(const Options *opt, const Preset *preset, const Item *it, const char *out_png) {
+    // Base: draw_square, optional borders, optional mdi, optimize, optional text, optimize
+    if (!it) return -1;
     ensure_dir_parent(out_png);
-    if (write_blank_png(out_png, 196, 196) != 0) return -1;
+    char draw_square_bin[PATH_MAX];
+    char draw_border_bin[PATH_MAX];
+    char draw_mdi_bin[PATH_MAX];
+    char draw_text_bin[PATH_MAX];
+    char draw_opt_bin[PATH_MAX];
+    snprintf(draw_square_bin, sizeof(draw_square_bin), "%s/icons/draw_square", opt->root_dir);
+    snprintf(draw_border_bin, sizeof(draw_border_bin), "%s/icons/draw_border", opt->root_dir);
+    snprintf(draw_mdi_bin, sizeof(draw_mdi_bin), "%s/icons/draw_mdi", opt->root_dir);
+    snprintf(draw_text_bin, sizeof(draw_text_bin), "%s/icons/draw_text", opt->root_dir);
+    snprintf(draw_opt_bin, sizeof(draw_opt_bin), "%s/icons/draw_optimize", opt->root_dir);
+    if (access(draw_square_bin, X_OK) != 0) return -1;
+    if (access(draw_text_bin, X_OK) != 0) return -1;
+    if (access(draw_opt_bin, X_OK) != 0) return -1;
 
-    // Background (rounded square) if configured
-    const char *bg = (preset && preset->icon_background_color) ? preset->icon_background_color : NULL;
-    if (bg && bg[0] && strcasecmp(bg, "transparent") != 0) {
-        int rad = preset ? clamp_int(preset->icon_border_radius, 0, 50) : 0;
-        char draw_border_bin[PATH_MAX];
-        snprintf(draw_border_bin, sizeof(draw_border_bin), "%s/icons/draw_border", opt->root_dir);
-        char size_arg[64];
-        char rad_arg[64];
-        snprintf(size_arg, sizeof(size_arg), "--size=196");
-        snprintf(rad_arg, sizeof(rad_arg), "--radius=%d", rad);
+    const char *bg = (preset && preset->icon_background_color && preset->icon_background_color[0]) ? preset->icon_background_color : "transparent";
+    const char *border_c = (preset && preset->icon_border_color && preset->icon_border_color[0]) ? preset->icon_border_color : "FFFFFF";
+    const char *ic_color = (preset && preset->icon_color && preset->icon_color[0]) ? preset->icon_color : "FFFFFF";
+    int rad = preset ? clamp_int(preset->icon_border_radius, 0, 50) : 0;
+    int bw = preset ? clamp_int(preset->icon_border_width, 0, 98) : 0;
+    int pad = preset ? clamp_int(preset->icon_padding, 0, 98) : 0;
+    int off_x = preset ? preset->icon_offset_x : 0;
+    int off_y = preset ? preset->icon_offset_y : 0;
+    int bright = preset ? clamp_int(preset->icon_brightness, 1, 99) : 99;
+
+    // Pipeline:
+    //   draw_square
+    //   draw_border (outer + inner) if border_width > 0
+    //   draw_mdi (optional)
+    //   draw_optimize (mandatory)
+    //   draw_text (optional)
+    //   draw_optimize (optional)
+
+    char sq_size[32];
+    snprintf(sq_size, sizeof(sq_size), "--size=196");
+
+    // If border is enabled, start from transparent square; borders will define outer + inner fill.
+    const char *sq_color = (bw > 0) ? "transparent" : bg;
+    {
+        char *argv[] = { draw_square_bin, (char *)sq_color, sq_size, (char *)out_png, NULL };
+        if (run_exec(argv) != 0) return -1;
+    }
+
+    if (bw > 0) {
         if (access(draw_border_bin, X_OK) != 0) return -1;
-        char *argv[] = { draw_border_bin, (char *)bg, size_arg, rad_arg, (char *)out_png, NULL };
-        int rc = run_exec(argv);
-        if (rc != 0) return -1;
+        char size_outer[32];
+        char rad_arg[32];
+        snprintf(size_outer, sizeof(size_outer), "--size=196");
+        snprintf(rad_arg, sizeof(rad_arg), "--radius=%d", rad);
+        char *argv_outer[] = { draw_border_bin, (char *)border_c, size_outer, rad_arg, (char *)out_png, NULL };
+        if (run_exec(argv_outer) != 0) return -1;
+
+        int inner = 196 - 2 * bw;
+        inner = clamp_int(inner, 1, 196);
+        char size_inner[32];
+        snprintf(size_inner, sizeof(size_inner), "--size=%d", inner);
+        char *argv_inner[] = { draw_border_bin, (char *)bg, size_inner, rad_arg, (char *)out_png, NULL };
+        if (run_exec(argv_inner) != 0) return -1;
     }
 
-    if (icon_spec && strncmp(icon_spec, "mdi:", 4) == 0) {
-        if (ensure_mdi_svg(opt, icon_spec) != 0) return -1;
-        char draw_mdi_bin[PATH_MAX];
-        snprintf(draw_mdi_bin, sizeof(draw_mdi_bin), "%s/icons/draw_mdi", opt->root_dir);
-
-        const char *ic_color = (preset && preset->icon_color && preset->icon_color[0]) ? preset->icon_color : "FFFFFF";
-        int ic_size = preset ? clamp_int(preset->icon_size, 1, 196) : 128;
-        char size_arg[64];
-        snprintf(size_arg, sizeof(size_arg), "--size=%d", ic_size);
-
+    // draw_mdi (optional)
+    if (it->icon && strncmp(it->icon, "mdi:", 4) == 0) {
         if (access(draw_mdi_bin, X_OK) != 0) return -1;
-        char *argv[] = { draw_mdi_bin, (char *)icon_spec, (char *)ic_color, size_arg, (char *)out_png, NULL };
-        int rc = run_exec(argv);
-        if (rc != 0) return -1;
+        if (ensure_mdi_svg(opt, it->icon) != 0) return -1;
+        int max_allowed = 196 - 2 * (bw + pad);
+        max_allowed = clamp_int(max_allowed, 1, 196);
+        int icon_size = preset ? preset->icon_size : 128;
+        if (icon_size <= 0) icon_size = max_allowed;
+        icon_size = clamp_int(icon_size, 1, 196);
+        if (icon_size > max_allowed) icon_size = max_allowed;
+        char size_arg[32];
+        snprintf(size_arg, sizeof(size_arg), "--size=%d", icon_size);
+        char off_arg[64];
+        snprintf(off_arg, sizeof(off_arg), "--offset=%d,%d", off_x, off_y);
+        char bri_arg[32];
+        snprintf(bri_arg, sizeof(bri_arg), "--brightness=%d", bright);
+        char *argv[] = { draw_mdi_bin, (char *)it->icon, (char *)ic_color, size_arg, off_arg, bri_arg, (char *)out_png, NULL };
+        if (run_exec(argv) != 0) return -1;
     }
 
-    if (name && name[0]) {
-        char draw_text_bin[PATH_MAX];
-        snprintf(draw_text_bin, sizeof(draw_text_bin), "%s/icons/draw_text", opt->root_dir);
-        char text_arg[512];
-        snprintf(text_arg, sizeof(text_arg), "--text=%s", name);
+    // draw_optimize (mandatory)
+    {
+        char *argv[] = { draw_opt_bin, (char *)out_png, NULL };
+        if (run_exec(argv) != 0) return -1;
+    }
+
+    // draw_text (optional)
+    if (it->text && it->text[0]) {
         const char *tc = (preset && preset->text_color && preset->text_color[0]) ? preset->text_color : "FFFFFF";
+        const char *ta = (preset && preset->text_align && preset->text_align[0]) ? preset->text_align : "bottom";
+        const char *tf = (preset && preset->text_font) ? preset->text_font : "";
         int ts = preset ? clamp_int(preset->text_size, 1, 64) : 16;
+        int tox = preset ? preset->text_offset_x : 0;
+        int toy = preset ? preset->text_offset_y : 0;
+
+        char text_arg[768];
+        snprintf(text_arg, sizeof(text_arg), "--text=%s", it->text);
         char tc_arg[64];
-        char ts_arg[64];
         snprintf(tc_arg, sizeof(tc_arg), "--text_color=%s", tc);
+        char ta_arg[64];
+        snprintf(ta_arg, sizeof(ta_arg), "--text_align=%s", ta);
+        char ts_arg[64];
         snprintf(ts_arg, sizeof(ts_arg), "--text_size=%d", ts);
-        if (access(draw_text_bin, X_OK) != 0) return -1;
-        char *argv[] = { draw_text_bin, text_arg, tc_arg, (char *)"--text_align=bottom", ts_arg, (char *)out_png, NULL };
-        int rc = run_exec(argv);
+        char to_arg[64];
+        snprintf(to_arg, sizeof(to_arg), "--text_offset=%d,%d", tox, toy);
+
+        int rc = 0;
+        if (tf && tf[0]) {
+            char tf_arg[PATH_MAX];
+            snprintf(tf_arg, sizeof(tf_arg), "--text_font=%s", tf);
+            char *argv[] = { draw_text_bin, text_arg, tc_arg, ta_arg, tf_arg, ts_arg, to_arg, (char *)out_png, NULL };
+            rc = run_exec(argv);
+        } else {
+            char *argv[] = { draw_text_bin, text_arg, tc_arg, ta_arg, ts_arg, to_arg, (char *)out_png, NULL };
+            rc = run_exec(argv);
+        }
         if (rc != 0) return -1;
+
+        // RE draw_optimize
+        char *argv2[] = { draw_opt_bin, (char *)out_png, NULL };
+        if (run_exec(argv2) != 0) return -1;
     }
 
     return 0;
@@ -747,17 +882,53 @@ static void write_hex_u32_file(const char *path, uint32_t v) {
     fclose(f);
 }
 
+static void append_preset_sig(char *dst, size_t cap, size_t *len, const Preset *p) {
+    if (!dst || !cap || !len) return;
+    if (!p) {
+        int n = snprintf(dst + *len, cap - *len, "preset:<none>\n");
+        if (n > 0 && (size_t)n < cap - *len) *len += (size_t)n;
+        return;
+    }
+    int n = snprintf(
+        dst + *len, cap - *len,
+        "preset:%s\nbg:%s\nrad:%d\nbw:%d\nbc:%s\nisz:%d\npad:%d\noff:%d,%d\nbri:%d\nic:%s\n"
+        "tc:%s\nta:%s\ntf:%s\nts:%d\nto:%d,%d\n",
+        p->name ? p->name : "",
+        p->icon_background_color ? p->icon_background_color : "",
+        p->icon_border_radius,
+        p->icon_border_width,
+        p->icon_border_color ? p->icon_border_color : "",
+        p->icon_size,
+        p->icon_padding,
+        p->icon_offset_x, p->icon_offset_y,
+        p->icon_brightness,
+        p->icon_color ? p->icon_color : "",
+        p->text_color ? p->text_color : "",
+        p->text_align ? p->text_align : "",
+        p->text_font ? p->text_font : "",
+        p->text_size,
+        p->text_offset_x, p->text_offset_y
+    );
+    if (n > 0 && (size_t)n < cap - *len) *len += (size_t)n;
+}
+
 static bool cached_or_generated_into(const Options *opt, const Config *cfg, const char *page, size_t item_index, const Item *it,
                                      char *out_path, size_t out_cap) {
     if (!it) return false;
-    const char *nm = it->name ? it->name : "";
     const char *ic = it->icon ? it->icon : "";
-    if (nm[0] == 0 && ic[0] == 0) return false; // empty => no cache
-
+    const char *tx = it->text ? it->text : "";
     const char *pr = it->preset ? it->preset : "";
-    char key[1024];
-    snprintf(key, sizeof(key), "%s\n%zu\n%s\n%s\n%s\n%s\n%s\n", page, item_index, nm, ic, pr,
-             it->tap_action ? it->tap_action : "", it->tap_data ? it->tap_data : "");
+    if (ic[0] == 0 && tx[0] == 0) return false; // empty => no cache
+
+    const Preset *preset = config_get_preset(cfg, pr);
+    if (!preset) preset = config_get_preset(cfg, "default");
+
+    char key[4096];
+    size_t key_len = 0;
+    int n = snprintf(key + key_len, sizeof(key) - key_len, "page:%s\nidx:%zu\nicon:%s\ntext:%s\n", page, item_index, ic, tx);
+    if (n < 0 || (size_t)n >= sizeof(key) - key_len) return false;
+    key_len += (size_t)n;
+    append_preset_sig(key, sizeof(key), &key_len, preset);
     uint32_t h = fnv1a32(key, strlen(key));
 
     if (page && strcmp(page, "_sys") == 0) {
@@ -770,9 +941,7 @@ static bool cached_or_generated_into(const Options *opt, const Config *cfg, cons
         snprintf(meta, sizeof(meta), "%s/%s.meta", opt->sys_pregen_dir, sys_name);
         uint32_t prev = 0;
         if (file_exists(out_path) && read_hex_u32_file(meta, &prev) == 0 && prev == h) return true;
-        const Preset *preset = config_get_preset(cfg, pr);
-        if (!preset) preset = config_get_preset(cfg, "default");
-        if (generate_icon_with_preset(opt, preset, out_path, nm, ic) != 0) {
+        if (generate_icon_pipeline(opt, preset, it, out_path) != 0) {
             (void)copy_file(opt->error_icon, out_path);
         }
         write_hex_u32_file(meta, h);
@@ -783,9 +952,7 @@ static bool cached_or_generated_into(const Options *opt, const Config *cfg, cons
 
     if (file_exists(out_path)) return true;
 
-    const Preset *preset = config_get_preset(cfg, pr);
-    if (!preset) preset = config_get_preset(cfg, "default");
-    if (generate_icon_with_preset(opt, preset, out_path, nm, ic) != 0) {
+    if (generate_icon_pipeline(opt, preset, it, out_path) != 0) {
         (void)copy_file(opt->error_icon, out_path);
     }
     return true;
@@ -839,9 +1006,13 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
 
     char btn_path[14][PATH_MAX];
     bool btn_set[14] = {0};
+    char btn_label[14][64];
+    bool label_set[14] = {0};
     for (int i = 1; i <= 13; i++) {
         snprintf(btn_path[i], sizeof(btn_path[i]), "%s", blank_png);
         btn_set[i] = true;
+        btn_label[i][0] = 0;
+        label_set[i] = false;
     }
 
     // Reserve back/prev/next
@@ -863,6 +1034,21 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
             // empty => keep blank, no cache
             snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", blank_png);
             btn_set[pos] = true;
+        }
+        // name is the device label (no spaces supported by daemon's argv parser)
+        if (it && it->name && it->name[0]) {
+            size_t w = 0;
+            for (size_t i = 0; it->name[i] && w + 1 < sizeof(btn_label[pos]); i++) {
+                unsigned char c = (unsigned char)it->name[i];
+                if (c == ' ' || c == '\t' || c == '\n' || c == '\r') c = '_';
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.' ) {
+                    btn_label[pos][w++] = (char)c;
+                } else {
+                    btn_label[pos][w++] = '_';
+                }
+            }
+            btn_label[pos][w] = 0;
+            if (btn_label[pos][0]) label_set[pos] = true;
         }
         item_i++;
     }
@@ -904,6 +1090,9 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
     for (int pos = 1; pos <= 13; pos++) {
         if (!btn_set[pos]) snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", blank_png);
         w += (size_t)snprintf(cmd + w, sizeof(cmd) - w, " --button-%d=%s", pos, btn_path[pos]);
+        if (label_set[pos]) {
+            w += (size_t)snprintf(cmd + w, sizeof(cmd) - w, " --label-%d=%s", pos, btn_label[pos]);
+        }
         if (w >= sizeof(cmd)) break;
     }
     cmd[sizeof(cmd) - 1] = 0;
@@ -980,11 +1169,26 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Blank image in /dev/shm (not cached).
+    // Use a stable pre-generated empty icon when a button is undefined/empty.
+    // If it's missing, create it once.
     char blank_png[PATH_MAX];
-    snprintf(blank_png, sizeof(blank_png), "/dev/shm/pagging_blank_%ld.png", (long)getpid());
-    if (write_blank_png(blank_png, 196, 196) != 0) {
-        // fallback to error icon if blank cannot be created
+    snprintf(blank_png, sizeof(blank_png), "%s/assets/pregen/empty.png", opt.root_dir);
+    if (!file_exists(blank_png)) {
+        ensure_dir_parent(blank_png);
+        // Prefer the C drawing binary (no Python, no shell scripts).
+        char draw_square_bin[PATH_MAX];
+        snprintf(draw_square_bin, sizeof(draw_square_bin), "%s/icons/draw_square", opt.root_dir);
+        if (access(draw_square_bin, X_OK) == 0) {
+            char *argv[] = { draw_square_bin, (char *)"transparent", (char *)"--size=196", blank_png, NULL };
+            if (run_exec(argv) != 0) {
+                (void)write_blank_png(blank_png, 196, 196);
+            }
+        } else {
+            (void)write_blank_png(blank_png, 196, 196);
+        }
+    }
+    if (!file_exists(blank_png)) {
+        // fallback to error icon if empty cannot be created
         snprintf(blank_png, sizeof(blank_png), "%s", opt.error_icon);
     }
 

@@ -50,7 +50,7 @@ PLAY VIDEO AFTER RENDER
 -rw-rw-r--  1 wozt wozt 1,9M 19 janv. 20:03 neige.png
 
 TEST PRERENDER VIDEO
-time ./lib/send_video_page_wrapper -r -q=32 ./test_video/skrillex_10s.mp4
+./lib/send_video_page_wrapper -r -q=32 ./test_video/skrillex_10s.mp4
 
 
 TEST VIDEO PLAYBACK INFINITLY
