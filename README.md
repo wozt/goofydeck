@@ -23,6 +23,7 @@ GoofyDeck is a comprehensive project for managing the Ulanzi D200 device, includ
 The installation script will automatically install:
 - **Build Tools**: gcc, make, pkg-config
 - **System Libraries**: hidapi, libusb, zlib, libpng, libyaml
+- **Crypto/TLS**: OpenSSL (for Home Assistant wss://)
 - **Multimedia**: ffmpeg, ImageMagick
 - **Graphics**: cairo, librsvg (optional)
 - **Utilities**: jq, bc, netcat, socat
@@ -73,7 +74,7 @@ If you prefer manual installation:
 ```bash
 sudo apt-get update
 sudo apt-get install -y build-essential pkg-config git \
-  libhidapi-dev libusb-1.0-0-dev zlib1g-dev libpng-dev libyaml-dev \
+  libhidapi-dev libusb-1.0-0-dev zlib1g-dev libpng-dev libyaml-dev libssl-dev \
   ffmpeg imagemagick librsvg2-bin librsvg2-dev libcairo2-dev \
   jq bc netcat-openbsd socat fonts-noto-core fonts-noto-color-emoji
 ```
@@ -81,7 +82,7 @@ sudo apt-get install -y build-essential pkg-config git \
 **Arch Linux:**
 ```bash
 sudo pacman -Sy --noconfirm base-devel pkgconf git \
-  hidapi libusb zlib libpng libyaml ffmpeg imagemagick \
+  hidapi libusb zlib libpng libyaml openssl ffmpeg imagemagick \
   librsvg cairo jq bc openbsd-netcat socat \
   noto-fonts noto-fonts-emoji
 ```
@@ -89,7 +90,7 @@ sudo pacman -Sy --noconfirm base-devel pkgconf git \
 **RedHat/Fedora:**
 ```bash
 sudo dnf install -y gcc gcc-c++ make pkgconf-pkg-config git \
-  hidapi hidapi-devel libusbx-devel zlib zlib-devel libpng-devel libyaml-devel \
+  hidapi hidapi-devel libusbx-devel zlib zlib-devel libpng-devel libyaml-devel openssl-devel \
   ffmpeg ffmpeg-devel ImageMagick librsvg2-tools \
   librsvg2-devel cairo-devel jq bc nmap-ncat socat \
   google-noto-emoji-color-fonts google-noto-sans-fonts
@@ -98,7 +99,7 @@ sudo dnf install -y gcc gcc-c++ make pkgconf-pkg-config git \
 **macOS (Homebrew):**
 ```bash
 brew update
-brew install git hidapi libusb zlib libpng libyaml ffmpeg \
+brew install git hidapi libusb zlib libpng libyaml openssl ffmpeg \
   imagemagick librsvg cairo jq bc netcat socat
 brew install --cask font-noto-sans font-noto-emoji
 ```
@@ -126,6 +127,7 @@ make all
 ```bash
 ./ulanzi_d200_demon
 ./lib/pagging_demon
+./lib/ha_demon
 ```
 
 `pagging_demon`:
@@ -147,6 +149,25 @@ Actions:
 - Navigation actions are internal/system: `$page_back`, `$page_prev`, `$page_next` (shown automatically when needed)
 
 The YAML is parsed using `libyaml` (no Python).
+
+### Home Assistant (ha_demon)
+
+`ha_demon` connects to Home Assistant via WebSocket and exposes a local unix socket for commands/events.
+
+Add to `.env`:
+
+```bash
+# "wss" = secure websocket, "ws" = normal websocket
+HA_HOST="ws://localhost:8123"
+# Long-lived access token: https://www.home-assistant.io/docs/authentication
+HA_ACCESS_TOKEN=""
+```
+
+Start:
+
+```bash
+./lib/ha_demon
+```
 
 ### Start the Ulanzi D200 Daemon
 

@@ -109,7 +109,7 @@ if [ -f /etc/os-release ]; then
 install_deps_debian() {
   local -a pkgs=(
     build-essential pkg-config git ca-certificates
-    libhidapi-dev libusb-1.0-0-dev zlib1g-dev libpng-dev libyaml-dev
+    libhidapi-dev libusb-1.0-0-dev zlib1g-dev libpng-dev libyaml-dev libssl-dev
     ffmpeg libavformat-dev libavcodec-dev libavutil-dev libswscale-dev
     imagemagick librsvg2-bin librsvg2-dev libcairo2-dev
     jq bc
@@ -124,7 +124,7 @@ install_deps_debian() {
 install_deps_arch() {
   local -a pkgs=(
     base-devel pkgconf pkg-config git ca-certificates
-    hidapi libusb zlib libpng libyaml
+    hidapi libusb zlib libpng libyaml openssl
     ffmpeg ffmpeg-devel
     imagemagick librsvg cairo
     jq bc
@@ -138,7 +138,7 @@ install_deps_arch() {
 install_deps_redhat() {
   local -a pkgs=(
     gcc gcc-c++ make pkgconf-pkg-config pkg-config git ca-certificates
-    hidapi hidapi-devel libusbx-devel zlib zlib-devel libpng-devel libyaml-devel
+    hidapi hidapi-devel libusbx-devel zlib zlib-devel libpng-devel libyaml-devel openssl-devel
     ffmpeg ffmpeg-devel
     ImageMagick ImageMagick-devel librsvg2-tools librsvg2-devel cairo-devel
     jq bc
@@ -161,7 +161,7 @@ install_deps_brew() {
   local -a pkgs=(
     git
     pkg-config
-    hidapi libusb zlib libpng libyaml
+    hidapi libusb zlib libpng libyaml openssl
     ffmpeg
     imagemagick librsvg cairo
     jq bc

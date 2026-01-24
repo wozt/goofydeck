@@ -8,6 +8,11 @@ PNG_LIBS := -lpng
 PTHREAD_LIBS := -lpthread
 MATH_LIBS := -lm
 HID_LIBS := -lhidapi-libusb
+OPENSSL_CFLAGS := $(shell pkg-config --cflags openssl 2>/dev/null)
+OPENSSL_LIBS := $(shell pkg-config --libs openssl 2>/dev/null)
+ifeq ($(strip $(OPENSSL_LIBS)),)
+OPENSSL_LIBS := -lssl -lcrypto
+endif
 YAML_CFLAGS := $(shell pkg-config --cflags yaml-0.1 2>/dev/null)
 YAML_LIBS := $(shell pkg-config --libs yaml-0.1 2>/dev/null)
 ifeq ($(strip $(YAML_LIBS)),)
@@ -36,10 +41,13 @@ daemon: ulanzi_d200_demon
 ulanzi_d200_demon: ulanzi_d200.c
 	$(CC) $(CFLAGS) -o $@ $< $(HID_LIBS) $(ZLIB_LIBS) $(PNG_LIBS)
 
-tools: lib/send_image_page lib/send_video_page_wrapper lib/pagging_demon
+tools: lib/send_image_page lib/send_video_page_wrapper lib/pagging_demon lib/ha_demon
 
 lib/pagging_demon: src/lib/pagging.c | dir_lib
 	$(CC) $(CFLAGS) $(YAML_CFLAGS) -o $@ $< $(PNG_LIBS) $(ZLIB_LIBS) $(YAML_LIBS)
+
+lib/ha_demon: src/lib/ha_demon.c | dir_lib
+	$(CC) $(CFLAGS) $(OPENSSL_CFLAGS) -o $@ $< $(PTHREAD_LIBS) $(OPENSSL_LIBS)
 
 lib/send_image_page: src/lib/send_image_page.c | dir_lib
 	$(CC) $(CFLAGS) -o $@ $< $(PNG_LIBS) $(PTHREAD_LIBS) $(MATH_LIBS)
@@ -83,6 +91,7 @@ dir_standalone:
 clean:
 	rm -f ulanzi_d200_demon
 	rm -f lib/pagging_demon
+	rm -f lib/ha_demon
 	rm -f lib/send_video_page_wrapper
 	rm -f lib/send_image_page
 	rm -f icons/draw_border icons/draw_mdi icons/draw_optimize icons/draw_over icons/draw_square icons/draw_text
