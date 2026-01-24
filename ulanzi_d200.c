@@ -130,6 +130,14 @@ static size_t patch_invalid_bytes(uint8_t *buf, size_t len) {
     return patched_count;
 }
 
+static uint16_t rd_le16(const uint8_t *p) {
+    return (uint16_t)p[0] | (uint16_t)((uint16_t)p[1] << 8);
+}
+
+static uint32_t rd_le32(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
 static uint8_t *prepare_zip_buffer(const uint8_t *buf, size_t len, size_t *out_len, int *did_patch, int *pad_used, size_t *patched_count) {
     *did_patch = 0;
     *pad_used = 0;
@@ -346,6 +354,104 @@ static int zw_finalize(ZipWriter *zw, uint8_t **out, size_t *out_len) {
     return 0;
 }
 
+typedef struct {
+    char *name;
+    const uint8_t *data;
+    size_t size;
+} ZipInEntry;
+
+static int zip_parse_local_entries(const uint8_t *buf, size_t len, ZipInEntry **out_entries, size_t *out_count) {
+    *out_entries = NULL;
+    *out_count = 0;
+    if (!buf || len < 30) return -1;
+
+    size_t cap = 0;
+    size_t count = 0;
+    ZipInEntry *entries = NULL;
+
+    size_t off = 0;
+    while (off + 30 <= len) {
+        uint32_t sig = rd_le32(buf + off);
+        if (sig != 0x04034b50u) break; // stop at central dir / EOCD
+
+        uint16_t flags = rd_le16(buf + off + 6);
+        uint16_t method = rd_le16(buf + off + 8);
+        uint32_t comp_size = rd_le32(buf + off + 18);
+        uint16_t name_len = rd_le16(buf + off + 26);
+        uint16_t extra_len = rd_le16(buf + off + 28);
+
+        if (flags != 0) return -1;    // data descriptor etc not supported here
+        if (method != 0) return -1;   // only store-only supported here
+        if (off + 30 + (size_t)name_len + (size_t)extra_len > len) return -1;
+
+        const uint8_t *namep = buf + off + 30;
+        size_t data_off = off + 30 + (size_t)name_len + (size_t)extra_len;
+        if (data_off + (size_t)comp_size > len) return -1;
+
+        char *name = malloc((size_t)name_len + 1);
+        if (!name) return -1;
+        memcpy(name, namep, name_len);
+        name[name_len] = '\0';
+
+        if (count >= cap) {
+            size_t nc = cap ? cap * 2 : 16;
+            ZipInEntry *tmp = realloc(entries, nc * sizeof(ZipInEntry));
+            if (!tmp) { free(name); return -1; }
+            entries = tmp;
+            cap = nc;
+        }
+        entries[count].name = name;
+        entries[count].data = buf + data_off;
+        entries[count].size = (size_t)comp_size;
+        count++;
+
+        off = data_off + (size_t)comp_size;
+    }
+
+    if (count == 0) {
+        free(entries);
+        return -1;
+    }
+    *out_entries = entries;
+    *out_count = count;
+    return 0;
+}
+
+static void zip_free_entries(ZipInEntry *entries, size_t count) {
+    if (!entries) return;
+    for (size_t i = 0; i < count; i++) free(entries[i].name);
+    free(entries);
+}
+
+static int build_zip_from_zipfile_with_dummy(const uint8_t *in_buf, size_t in_len, size_t dummy_len,
+                                             uint8_t **out_buf, size_t *out_len) {
+    ZipInEntry *entries = NULL;
+    size_t count = 0;
+    if (zip_parse_local_entries(in_buf, in_len, &entries, &count) != 0) return -1;
+
+    ZipWriter zw;
+    zw_init(&zw);
+    if (dummy_len > 0) {
+        uint8_t *dummy = malloc(dummy_len);
+        if (!dummy) { zip_free_entries(entries, count); zw_free(&zw); return -1; }
+        memset(dummy, 0x01, dummy_len); // avoid 0x00/0x7c
+        zw_add_entry(&zw, "dummy.txt", dummy, dummy_len);
+        free(dummy);
+    }
+    for (size_t i = 0; i < count; i++) {
+        zw_add_entry(&zw, entries[i].name, entries[i].data, entries[i].size);
+    }
+    zip_free_entries(entries, count);
+
+    uint8_t *zipbuf = NULL;
+    size_t ziplen = 0;
+    zw_finalize(&zw, &zipbuf, &ziplen);
+    zw_free(&zw);
+    *out_buf = zipbuf;
+    *out_len = ziplen;
+    return 0;
+}
+
 static int send_zip_buffer_cmd(hid_device *dev, const uint8_t *buf, size_t sz, uint16_t cmd, int pad_used, size_t patched_count) {
     uint8_t packet[PACKET_SIZE];
     size_t first_len = PACKET_SIZE - 8;
@@ -378,16 +484,48 @@ static int send_zip(hid_device *dev, const char *path) {
     if (fread(buf, 1, (size_t)sz, f) != (size_t)sz) { free(buf); fclose(f); return -1; }
     fclose(f);
 
-    size_t out_len = 0;
-    int did_patch = 0;
+    // Rebuild ZIP in-memory with dummy.txt first (same technique as build_zip_from_icons).
+    // This can shift invalid bytes even if they occur in the original manifest/header area.
+    uint8_t *zipbuf = NULL;
+    size_t ziplen = 0;
     int pad_used = 0;
     size_t patched_count = 0;
-    uint8_t *prepared = prepare_zip_buffer(buf, (size_t)sz, &out_len, &did_patch, &pad_used, &patched_count);
-    free(buf);
-    if (!prepared) return -1;
+    for (int pad = 0; pad <= MAX_PADDING_RETRIES; pad++) {
+        if (build_zip_from_zipfile_with_dummy(buf, (size_t)sz, (size_t)pad, &zipbuf, &ziplen) != 0 || !zipbuf) {
+            if (zipbuf) free(zipbuf);
+            zipbuf = NULL;
+            continue;
+        }
+        if (!has_invalid_bytes(zipbuf, ziplen)) {
+            pad_used = pad;
+            break;
+        }
+        if (pad == MAX_PADDING_RETRIES) {
+            patched_count = patch_invalid_bytes(zipbuf, ziplen);
+            pad_used = pad;
+            break;
+        }
+        free(zipbuf);
+        zipbuf = NULL;
+    }
 
-    int res = send_zip_buffer_cmd(dev, prepared, out_len, 0x0001, pad_used, patched_count);
-    free(prepared);
+    if (!zipbuf) {
+        // Fallback to legacy external padding if the ZIP couldn't be parsed/rebuilt.
+        size_t out_len = 0;
+        int did_patch = 0;
+        int legacy_pad = 0;
+        size_t legacy_patched = 0;
+        uint8_t *prepared = prepare_zip_buffer(buf, (size_t)sz, &out_len, &did_patch, &legacy_pad, &legacy_patched);
+        free(buf);
+        if (!prepared) return -1;
+        int res = send_zip_buffer_cmd(dev, prepared, out_len, 0x0001, legacy_pad, legacy_patched);
+        free(prepared);
+        return res;
+    }
+
+    free(buf);
+    int res = send_zip_buffer_cmd(dev, zipbuf, ziplen, 0x0001, pad_used, patched_count);
+    free(zipbuf);
     return res;
 }
 
