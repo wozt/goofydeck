@@ -1,0 +1,675 @@
+brightness: 90
+
+sleep:
+  dim_brightness: 20
+  dim_timeout: 10
+  sleep_timeout: 86400
+
+system_buttons:
+  $page.back:
+    position: 11
+  $page.previous:
+    position: 12
+  $page.next:
+    position: 13
+
+###############################################################################
+# PRESETS (STYLE UNIQUEMENT)
+###############################################################################
+
+presets:
+  base_button:
+    icon_color: FFFFFF
+    icon_background_color: "333333"
+    icon_size: 128
+    icon_border_radius: 12
+
+  light_off:
+    icon: mdi:lightbulb-outline
+    icon_background_color: "333333"
+
+  light_on:
+    icon: mdi:lightbulb
+    icon_background_color: FFD700
+
+  scripts:
+    icon_background_color: "D3D3FF"
+  reboot:
+    icon: mdi:restart
+  poweroff:
+    icon: mdi:power
+
+  screen_off:
+    icon: mdi:monitor-off
+    icon_background_color: "8b0000"
+
+  screen_on:
+    icon: mdi:monitor
+    icon_background_color: "1e90ff"
+  booltrue:
+    icon_size: 128
+    icon_border_radius: 12
+    icon_background_color: "00FF00"  # vert
+    icon_color: FFFFFF
+
+  boolfalse:
+    icon_size: 128
+    icon_border_radius: 12
+    icon_background_color: "8B0000"  # rouge foncé
+    icon_color: FFFFFF
+
+  room_folder:
+    icon_border_width: 4
+    icon_border_color: "FFFFFF"
+    icon_background_color: "b9003e"
+    icon_size: 128
+    icon_border_radius: 12
+
+  host_folder:
+    icon_border_width: 4
+    icon_border_color: "FFFFFF"
+    icon_background_color: "069494"
+    icon_size: 128
+    icon_border_radius: 12
+
+  pideck_folder:
+    icon_border_width: 4
+    icon_border_color: "FFFFFF"
+    icon_background_color: "241f31"
+    icon_size: 128
+    icon_border_radius: 12
+    icon_color: "FFFFFF"
+  local_button:
+    icon_color: "00FF00"
+  danger_button:
+    icon_background_color: "FF0000"
+    icon_color: "FFFFFF"
+  local_script_button:
+    icon_color: "FFFFFF"
+    icon_background_color: "2196F3"
+  script_button:
+    icon_color: "0960A5"
+    icon_background_color: "042844"
+  local_command_result:
+    text_color: "39FF14"  # hex RGB (6 chars, no #)
+    text_size: 65
+  local_command_result2:
+    text_color: "39FF14"  # hex RGB (6 chars, no #)
+    text_size: 35
+
+
+###############################################################################
+# PAGES
+###############################################################################
+
+pages:
+  $root:
+    buttons:
+      - name: "Salon"
+        presets:
+          - room_folder
+        icon: mdi:sofa
+        tap_action:
+          action: $page.go_to
+          data: salon
+
+      - name: "Cuisine"
+        presets:
+          - room_folder
+        icon: mdi:chef-hat
+        tap_action:
+          action: $page.go_to
+          data: cuisine
+      
+      - name: "Chambre"
+        presets:
+          - room_folder
+        icon: mdi:bed
+        tap_action:
+          action: $page.go_to
+          data: chambre
+      - name: "empty0"
+      - name: "empty1"     
+      - name: "Debian PC"
+        presets:
+          - host_folder
+        icon: mdi:server-minus
+        tap_action:
+          action: $page.go_to
+          data: debian_pc
+      - name: "Debian miniPC"
+        presets:
+          - host_folder
+        icon: mdi:server-minus
+        tap_action:
+          action: $page.go_to
+          data: debian_minipc
+      - name: "VidéoProj"
+        presets:
+          - host_folder
+        icon: mdi:projector
+        tap_action:
+          action: $page.go_to
+          data: video_projector
+      - name: "pi4"
+        presets:
+          - host_folder
+        icon: mdi:raspberry-pi
+        tap_action:
+          action: $page.go_to
+          data: pi4
+      - name: "empty2"
+      - name: "empty3"
+      - name: "settings"
+        presets:
+          - pideck_folder
+        icon: mdi:cog
+        tap_action:
+          action: $page.go_to
+          data: settings
+      # - name: LScripts
+      #   presets: local_script_button
+      #   icon: mdi:script
+      #   icon_background_color: 2196F3
+      #   tap_action:
+      #     action: $page.go_to
+      #     data: local_scripts
+      - name: "empty4"
+      - name: "empty5"
+      - name: "empty6"
+      - name: "empty7"
+      - name: "empty8"     
+      - name: "empty9"
+      - name: "empty10"
+      - name: "empty11"
+      - name: "empty12"
+      - name: "empty13"
+  salon:
+    buttons:
+      - name: "Lampe droite"
+        entity_id: light.lampe_droite
+        presets:
+          - base_button
+        tap_action:
+          action: light.toggle
+        states:
+          "on":
+            name: "LD ON"
+            presets:
+              - light_on
+          "off":
+            name: "LD OFF"
+            presets:
+              - light_off
+
+      - name: "Lampe gauche"
+        entity_id: light.lampe_gauche
+        presets:
+          - base_button
+        tap_action:
+          action: light.toggle
+        states:
+          "on":
+            name: "LG ON"
+            presets:
+              - light_on
+          "off":
+            name: "LG OFF"
+            presets:
+              - light_off
+      - name: "Lampe escalier"
+        entity_id: light.lampe_escalier
+        presets:
+          - base_button
+        tap_action:
+          action: light.toggle
+        states:
+          "on":
+            name: "LE ON"
+            presets:
+              - light_on
+          "off":
+            name: "LE OFF"
+            presets:
+              - light_off
+      - name: "Écrans Salon"
+        entity_id: script.eteint_les_ecrans_du_salon
+        presets:
+          - base_button
+        tap_action:
+          action: script.eteint_les_ecrans_du_salon
+        states:
+          "on":
+            name: "Écrans éteints"
+            presets:
+              - screen_on
+          "off":
+            name: "Écrans allumés"
+            presets:
+              - screen_off
+      - name: "empty0"
+      - name: "empty1"
+      - name: "empty2"
+      - name: "empty3"
+      - name: "empty4"
+      - name: "empty5"
+      - name: "empty6"
+      - name: "empty7"
+      - name: "empty8"
+      - name: "empty9"     
+      - name: "empty10"
+      - name: "empty11"
+      - name: "empty12"
+      - name: "empty13"
+      - name: "empty14"
+      - name: "empty15"
+      - name: "empty16"
+      - name: "empty17"
+      - name: "empty18"
+      - name: "empty19"
+      - name: "empty20"
+      - name: "empty21"
+      - name: "empty22"
+      - name: "empty23"
+      - name: "empty24"
+      - name: "empty25"
+      - name: "empty26"
+      - name: "empty27"
+      - name: "empty28"
+      - name: "empty29"
+      - name: "empty30"
+      - name: "empty31"
+      - name: "empty32"
+      - name: "empty33"
+      - name: "empty34"
+      - name: "empty35"
+      - name: "empty36"
+      - name: "empty37"
+      - name: "empty38"
+
+  cuisine:
+    buttons:
+      - name: "Néon du fond"
+        entity_id: switch.er_lu_kai_guan_switch_1
+        presets:
+          - base_button
+        tap_action:
+          action: switch.toggle
+        states:
+          "on":
+            name: "NF ON"
+            presets:
+              - light_on
+          "off":
+            name: "NF OFF"
+            presets:
+              - light_off
+
+      - name: "Néon droite"
+        entity_id: switch.er_lu_kai_guan_switch_2
+        presets:
+          - base_button
+        tap_action:
+          action: switch.toggle
+        states:
+          "on":
+            name: "ND ON"
+            presets:
+              - light_on
+          "off":
+            name: "ND OFF"
+            presets:
+              - light_off
+
+  chambre:
+    buttons:
+      - name: "Lampe droite de la chambre"
+        entity_id: light.lampe_droite_de_la_chambre
+        presets:
+          - base_button
+        tap_action:
+          action: light.toggle
+        states:
+          "on":
+            name: "LDG ON"
+            presets:
+              - light_on
+          "off":
+            name: "LDG OFF"
+            presets:
+              - light_off
+      - name: "Lampe gauche de la chambre"
+        entity_id: light.lampe_gauche_de_la_chambre
+        presets:
+          - base_button
+        tap_action:
+          action: light.toggle
+        states:
+          "on":
+            name: "LDG ON"
+            presets:
+              - light_on
+          "off":
+            name: "LDG OFF"
+            presets:
+              - light_off
+
+      - name: "Temperature chambre"
+        entity_id: sensor.tz3000_utwgoauk_snzb_02_temperature
+
+
+  debian_pc:
+    buttons:
+      - name: "reboot"
+        entity_id: script.reboot_debian_pc
+        presets:
+          - base_button
+          - scripts
+        icon: mdi:restart
+        tap_action:
+          action: script.reboot_debian_pc
+      - name: "poweroff"
+        entity_id: script.power_off_debian_pc
+        presets:
+          - base_button
+          - scripts
+        icon: mdi:power
+        tap_action:
+          action: script.power_off_debian_pc 
+                       
+  debian_minipc:
+    buttons:
+      - name: "reboot"
+        entity_id: script.reboot_minipc_server
+        presets:
+          - base_button
+          - scripts
+        icon: mdi:restart
+        tap_action:
+          action: script.reboot_minipc_server
+      - name: "poweroff"
+        entity_id: script.power_off_minipc_server
+        presets:
+          - base_button
+          - scripts
+        icon: mdi:power
+        tap_action:
+          action: script.power_off_minipc_server
+  video_projector:
+    buttons:
+      - name: "reboot"
+        entity_id: script.reboot_rpi5
+        presets:
+          - base_button
+          - scripts
+        icon: mdi:restart
+        tap_action:
+          action: script.reboot_rpi5
+      - name: "poweroff"
+        entity_id: script.power_off_rpi5
+        presets:
+          - base_button
+          - scripts
+        icon: mdi:power
+        tap_action:
+          action: script.power_off_rpi5
+  pi4:
+    buttons:
+      - name: "reboot"
+        entity_id: script.reboot_rpi4
+        presets:
+          - base_button
+          - scripts
+        icon: mdi:restart
+        tap_action:
+          action: script.reboot_rpi4
+      - name: "poweroff"
+        entity_id: script.power_off_rpi4
+        presets:
+          - base_button
+          - scripts
+        icon: mdi:power
+        tap_action:
+          action: script.power_off_rpi4
+  #local_scripts:
+  settings:
+    buttons:
+#check cache files, currently 67
+      - name: Check Cache
+        presets: 
+          - script_button
+          - local_command_result2
+        icon: mdi:hand-wave
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "/home/wozt/homedeck/assets/scripts/check_cache.sh"
+            refresh: 10s
+        hold_action:
+          action: $cmd.execute
+          data:
+              cmd: $stoploop
+        text: "{{ local_command_result('/home/wozt/homedeck/assets/scripts/check_cache.sh').stdout }}"
+# # show pi cpu usage
+      - name: Show CPU
+        presets: 
+          - script_button
+          - local_command_result
+        icon: mdi:chip
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "/home/wozt/homedeck/assets/scripts/show_cpu.sh"
+            refresh: 10s
+        hold_action:
+          action: $cmd.execute
+          data:
+              cmd: $stoploop
+        text: "{{ local_command_result('/home/wozt/homedeck/assets/scripts/show_cpu.sh').stdout }}"
+# # #show pi mem usage
+      - name: Show Mem
+        presets: 
+          - script_button
+          - local_command_result
+        icon: mdi:memory
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "/home/wozt/homedeck/assets/scripts/show_memory.sh"
+            refresh: 10s
+        hold_action:
+          action: $cmd.execute
+          data:
+              cmd: $stoploop
+        text: "{{ local_command_result('/home/wozt/homedeck/assets/scripts/show_memory.sh').stdout }}"
+# # show pi uptime
+      - name: Uptime
+        presets: 
+          - script_button
+          - local_command_result
+        icon: mdi:clock
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "/home/wozt/homedeck/assets/scripts/show_uptime.sh"
+            refresh: 60s
+        hold_action:
+          action: $cmd.execute
+          data:
+              cmd: $stoploop
+        text: "{{ local_command_result('/home/wozt/homedeck/assets/scripts/show_uptime.sh').stdout }}"
+# #show homedeck runtime since last launch/relaunch
+      - name: Runtime
+        presets: 
+          - script_button
+          - local_command_result
+        icon: mdi:clock
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "/home/wozt/homedeck/assets/scripts/show_deck_uptime.sh"
+            refresh: 30s
+        hold_action:
+          action: $cmd.execute
+          data:
+              cmd: $stoploop
+        text: "{{ local_command_result('/home/wozt/homedeck/assets/scripts/show_deck_uptime.sh').stdout }}"
+# flush cache both SD and RAMDISK
+      - name: Clear Cache
+        presets: 
+          - script_button
+        icon: mdi:trash-can-outline
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "sudo /home/wozt/homedeck/assets/scripts/clear_cache.sh"
+
+
+
+
+# remount dev folder on dev pc by sshing into it and sshfs back
+# a script is needed at your dev host at /whathever/remount_pideck.sh to mountback <user>@<this device ip>:/home/<user>/homedeck/ to you dev folder
+# script on dev pc exemple:
+# # # # #!/bin/bash
+
+# # # # MOUNT_POINT="/home/<USER>/homedeck"
+# # # # REMOTE="wozt@192.168.2.61:/home/<USER/homedeck"
+
+# # # # # Check existing mount point
+# # # # if [ ! -d "$MOUNT_POINT" ]; then
+# # # #     echo "❌ Le dossier $MOUNT_POINT n'existe pas"
+# # # #     exit 1
+# # # # fi
+
+# # # # # ----- MODE STATE -----
+# # # # if [ "$1" = "state" ]; then
+# # # #     if mountpoint -q "$MOUNT_POINT"; then
+# # # #         echo "on"
+# # # #     else
+# # # #         echo "off"
+# # # #     fi
+# # # #     exit 0
+# # # # fi
+
+# # # # # ----- MODE TOGGLE -----
+# # # # if mountpoint -q "$MOUNT_POINT"; then
+# # # #     echo "🔌 Alreadey mounted, unmounting..."
+# # # #     fusermount -u "$MOUNT_POINT"
+
+# # # #     if mountpoint -q "$MOUNT_POINT"; then
+# # # #         echo "❌ Fail unmount"
+# # # #         exit 1
+# # # #     else
+# # # #         echo "✅ Mount SUCCESS"
+# # # #     fi
+# # # # else
+# # # #     echo "🔄 Non monté, tentative de montage..."
+# # # #     sshfs "$REMOTE" "$MOUNT_POINT"
+
+# # # #     if mountpoint -q "$MOUNT_POINT"; then
+# # # #         echo "✅ Mount SUCCESS"
+# # # #     else
+# # # #         echo "❌ Fail mount"
+# # # #         exit 1
+# # # #     fi
+# # # # fi
+
+      - name: MountDev
+        icon: mdi:dev-to
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "sudo /home/wozt/homedeck/assets/scripts/mount_dev_folder_to_pc.sh"
+        state_result: "{{ state_result('/home/wozt/homedeck/assets/scripts/mount_dev_folder_to_pc.sh state') }}"
+        states:
+          "on":
+            name: "Mount ON"
+            presets:
+              - booltrue
+          "off":
+            name: "Mount OFF"
+            presets:
+              - boolfalse
+# just an exec with no feedback 
+      - name: Restart HomeDeck
+        presets: danger_button
+        icon: mdi:restart
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "sudo /home/wozt/homedeck/assets/scripts/restart_homedeck.sh"
+#check HA status
+      - name: HA Status
+        icon: mdi:home-assistant
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "sudo /home/wozt/homedeck/assets/scripts/check_ha_site_status.sh"
+        state_result: "{{ state_result('/home/wozt/homedeck/assets/scripts/check_ha_site_status.sh state') }}"
+        states:
+          "on":
+            name: "HA ON"
+            presets:
+              - booltrue
+          "off":
+            name: "HA OFF"
+            presets:
+              - boolfalse
+# example of looped text              
+      - name: looped test
+        presets:
+          - script_button
+          - local_command_result2
+        icon: mdi:test-tube-empty
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "echo looped"
+            refresh: 5s
+        hold_action:
+          action: $cmd.execute
+          data:
+              cmd: $stoploop
+        text: "{{ local_command_result('echo looped').stdout }}"
+#example of just text once 
+      - name: text once
+        presets: 
+          - script_button
+          - local_command_result
+        icon: mdi:hand-wave
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "/home/wozt/homedeck/assets/scripts/echo_test.sh"
+        text: "{{ local_command_result('/home/wozt/homedeck/assets/scripts/echo_test.sh').stdout }}"   
+      - name: test5s
+        presets:
+          - script_button
+          - local_command_result
+        icon: mdi:test-tube-empty
+        tap_action:
+          action: $cmd.execute
+          data:
+            cmd: "echo test"
+            refresh: 5s
+        hold_action:
+          action: $cmd.execute
+          data:
+              cmd: $stoploop
+        text: "{{ local_command_result('echo test').stdout }}"   
+      - name: "reboot"
+        entity_id: script.reboot_pideck
+        presets:
+          - base_button
+          - scripts
+        icon: mdi:restart
+        tap_action:
+          action: script.reboot_pideck
+      - name: "poweroff"
+        entity_id: script.power_off_pideck
+        presets:
+          - base_button
+          - scripts
+        icon: mdi:power
+        tap_action:
+          action: script.power_off_pideck

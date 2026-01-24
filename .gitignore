@@ -5,7 +5,7 @@ venv/
 .env
 
 # Build artifacts
-cache/
+.cache/
 fonts/
 mdi/
 
@@ -31,7 +31,7 @@ $RECYCLE.BIN/
 
 # Android/others
 Android/
-.cache/
+
 
 
 # Local binaries (built by Makefile)

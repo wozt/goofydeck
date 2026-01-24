@@ -78,6 +78,10 @@ typedef struct {
     int pos_back;
     int pos_prev;
     int pos_next;
+    int base_brightness;        // 0..100
+    int sleep_dim_brightness;   // 0..100
+    int sleep_dim_timeout_sec;  // seconds, 0=disabled
+    int sleep_timeout_sec;      // seconds, 0=disabled
     Preset *presets;
     size_t preset_count;
     size_t preset_cap;
@@ -358,6 +362,8 @@ static const char *yaml_scalar_cstr(yaml_node_t *n) {
     return (const char *)n->data.scalar.value;
 }
 
+static int clamp_int(int v, int lo, int hi);
+
 static int parse_int_scalar(const char *s, int *out) {
     if (!s || !out) return -1;
     char *end = NULL;
@@ -409,6 +415,10 @@ static void config_init_defaults(Config *cfg) {
     cfg->pos_back = 11;
     cfg->pos_prev = 12;
     cfg->pos_next = 13;
+    cfg->base_brightness = 90;
+    cfg->sleep_dim_brightness = 20;
+    cfg->sleep_dim_timeout_sec = 0;
+    cfg->sleep_timeout_sec = 0;
 }
 
 static void preset_init_defaults(Preset *p, const char *name) {
@@ -520,6 +530,29 @@ static int load_config(const char *path, Config *out) {
         yaml_parser_delete(&parser);
         fclose(f);
         return -1;
+    }
+
+    // brightness (root scalar)
+    {
+        yaml_node_t *bn = yaml_mapping_get(&doc, root, "brightness");
+        const char *bs = yaml_scalar_cstr(bn);
+        int b = 0;
+        if (bs && parse_int_scalar(bs, &b) == 0) cfg.base_brightness = clamp_int(b, 0, 100);
+    }
+
+    // sleep: { dim_brightness, dim_timeout, sleep_timeout }
+    {
+        yaml_node_t *sn = yaml_mapping_get(&doc, root, "sleep");
+        if (sn && sn->type == YAML_MAPPING_NODE) {
+            yaml_node_t *n;
+            int v = 0;
+            n = yaml_mapping_get(&doc, sn, "dim_brightness");
+            if (yaml_scalar_cstr(n) && parse_int_scalar(yaml_scalar_cstr(n), &v) == 0) cfg.sleep_dim_brightness = clamp_int(v, 0, 100);
+            n = yaml_mapping_get(&doc, sn, "dim_timeout");
+            if (yaml_scalar_cstr(n) && parse_int_scalar(yaml_scalar_cstr(n), &v) == 0) cfg.sleep_dim_timeout_sec = (v < 0) ? 0 : v;
+            n = yaml_mapping_get(&doc, sn, "sleep_timeout");
+            if (yaml_scalar_cstr(n) && parse_int_scalar(yaml_scalar_cstr(n), &v) == 0) cfg.sleep_timeout_sec = (v < 0) ? 0 : v;
+        }
     }
 
     // system_buttons
@@ -707,6 +740,12 @@ static int clamp_int(int v, int lo, int hi) {
     if (v < lo) return lo;
     if (v > hi) return hi;
     return v;
+}
+
+static double now_sec_monotonic(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 
 static int generate_icon_pipeline(const Options *opt, const Preset *preset, const Item *it, const char *out_png) {
@@ -1388,6 +1427,25 @@ int main(int argc, char **argv) {
     int page_stack_len = 0;
     bool control_enabled = true;
 
+    // Brightness/sleep state machine (driven by config).
+    enum { BR_NORMAL = 0, BR_DIM = 1, BR_SLEEP = 2 } br_state = BR_NORMAL;
+    int last_sent_brightness = -1;
+    double last_activity = now_sec_monotonic();
+    double next_brightness_retry = 0.0;
+
+    // Apply base brightness at start (best-effort).
+    {
+        char cmd[64];
+        int b = clamp_int(cfg.base_brightness, 0, 100);
+        snprintf(cmd, sizeof(cmd), "set-brightness %d", b);
+        char reply[64] = {0};
+        if (send_line_and_read_reply(opt.ulanzi_sock, cmd, reply, sizeof(reply)) == 0) {
+            last_sent_brightness = b;
+        } else {
+            next_brightness_retry = now_sec_monotonic() + 1.0;
+        }
+    }
+
     // Initial render once.
     render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
     persist_last_page(&opt, cur_page, offset);
@@ -1407,6 +1465,36 @@ int main(int argc, char **argv) {
         if (pr < 0) {
             if (errno == EINTR) continue;
             die_errno("poll");
+        }
+
+        // Idle brightness management (does not depend on control_enabled).
+        {
+            double now = now_sec_monotonic();
+            double idle = now - last_activity;
+
+            int desired_state = BR_NORMAL;
+            int desired_brightness = clamp_int(cfg.base_brightness, 0, 100);
+            if (cfg.sleep_timeout_sec > 0 && idle >= (double)cfg.sleep_timeout_sec) {
+                desired_state = BR_SLEEP;
+                desired_brightness = 0;
+            } else if (cfg.sleep_dim_timeout_sec > 0 && idle >= (double)cfg.sleep_dim_timeout_sec) {
+                desired_state = BR_DIM;
+                desired_brightness = clamp_int(cfg.sleep_dim_brightness, 0, 100);
+            }
+
+            if (desired_brightness == last_sent_brightness) {
+                br_state = desired_state;
+            } else if (now >= next_brightness_retry) {
+                char cmd[64];
+                snprintf(cmd, sizeof(cmd), "set-brightness %d", desired_brightness);
+                char reply[64] = {0};
+                if (send_line_and_read_reply(opt.ulanzi_sock, cmd, reply, sizeof(reply)) == 0) {
+                    last_sent_brightness = desired_brightness;
+                    br_state = desired_state;
+                } else {
+                    next_brightness_retry = now + 1.0;
+                }
+            }
         }
 
         // Control commands
@@ -1495,6 +1583,42 @@ int main(int argc, char **argv) {
                 char evt[32] = {0};
                 if (sscanf(evline, "button %d %31s", &btn, evt) != 2) continue;
                 if (strcmp(evt, "RELEASED") == 0) snprintf(evt, sizeof(evt), "RELEASE");
+
+                // Any button event counts as activity (even when stop-control).
+                last_activity = now_sec_monotonic();
+
+                // Wake behavior: if screen is in sleep (brightness 0), any button wakes WITHOUT triggering actions.
+                if (br_state == BR_SLEEP) {
+                    int b = clamp_int(cfg.base_brightness, 0, 100);
+                    if (b != last_sent_brightness) {
+                        char cmd[64];
+                        snprintf(cmd, sizeof(cmd), "set-brightness %d", b);
+                        char reply[64] = {0};
+                        if (send_line_and_read_reply(opt.ulanzi_sock, cmd, reply, sizeof(reply)) == 0) {
+                            last_sent_brightness = b;
+                        } else {
+                            next_brightness_retry = now_sec_monotonic() + 1.0;
+                        }
+                    }
+                    br_state = BR_NORMAL;
+                    continue;
+                }
+
+                // If dimmed, restore base brightness but keep normal button handling.
+                if (br_state == BR_DIM) {
+                    int b = clamp_int(cfg.base_brightness, 0, 100);
+                    if (b != last_sent_brightness) {
+                        char cmd[64];
+                        snprintf(cmd, sizeof(cmd), "set-brightness %d", b);
+                        char reply[64] = {0};
+                        if (send_line_and_read_reply(opt.ulanzi_sock, cmd, reply, sizeof(reply)) == 0) {
+                            last_sent_brightness = b;
+                        } else {
+                            next_brightness_retry = now_sec_monotonic() + 1.0;
+                        }
+                    }
+                    br_state = BR_NORMAL;
+                }
 
                 // Emergency resume: LONGHOLD 5s on button 14 forces start-control.
                 if (btn == 14 && strcmp(evt, "LONGHOLD") == 0) {

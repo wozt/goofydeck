@@ -1,4 +1,9 @@
-brightness: 90
+brightness: 100
+
+sleep:
+  dim_brightness: 10
+  dim_timeout: 10
+  sleep_timeout: 60
 
 system_buttons:
   $page.back:
@@ -709,4 +714,3 @@ pages:
         presets: [p28]
         icon: mdi:map-outline
         text: "MAP"
-
