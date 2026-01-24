@@ -36,6 +36,7 @@ icons/draw_square
 icons/draw_text
 ulanzi_d200_demon
 send_video_page
+lib/pagging_demon
 lib/send_image_page
 lib/send_video_page_wrapper
 standalone/draw_optimize_std

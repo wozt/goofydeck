@@ -22,7 +22,7 @@ GoofyDeck is a comprehensive project for managing the Ulanzi D200 device, includ
 ### Required Dependencies
 The installation script will automatically install:
 - **Build Tools**: gcc, make, pkg-config
-- **System Libraries**: hidapi, libusb, zlib, libpng
+- **System Libraries**: hidapi, libusb, zlib, libpng, libyaml
 - **Multimedia**: ffmpeg, ImageMagick
 - **Graphics**: cairo, librsvg (optional)
 - **Utilities**: jq, bc, netcat, socat
@@ -73,7 +73,7 @@ If you prefer manual installation:
 ```bash
 sudo apt-get update
 sudo apt-get install -y build-essential pkg-config git \
-  libhidapi-dev libusb-1.0-0-dev zlib1g-dev libpng-dev \
+  libhidapi-dev libusb-1.0-0-dev zlib1g-dev libpng-dev libyaml-dev \
   ffmpeg imagemagick librsvg2-bin librsvg2-dev libcairo2-dev \
   jq bc netcat-openbsd socat fonts-noto-core fonts-noto-color-emoji
 ```
@@ -81,7 +81,7 @@ sudo apt-get install -y build-essential pkg-config git \
 **Arch Linux:**
 ```bash
 sudo pacman -Sy --noconfirm base-devel pkgconf git \
-  hidapi libusb zlib libpng ffmpeg imagemagick \
+  hidapi libusb zlib libpng libyaml ffmpeg imagemagick \
   librsvg cairo jq bc openbsd-netcat socat \
   noto-fonts noto-fonts-emoji
 ```
@@ -89,7 +89,7 @@ sudo pacman -Sy --noconfirm base-devel pkgconf git \
 **RedHat/Fedora:**
 ```bash
 sudo dnf install -y gcc gcc-c++ make pkgconf-pkg-config git \
-  hidapi hidapi-devel libusbx-devel zlib zlib-devel libpng-devel \
+  hidapi hidapi-devel libusbx-devel zlib zlib-devel libpng-devel libyaml-devel \
   ffmpeg ffmpeg-devel ImageMagick librsvg2-tools \
   librsvg2-devel cairo-devel jq bc nmap-ncat socat \
   google-noto-emoji-color-fonts google-noto-sans-fonts
@@ -98,7 +98,7 @@ sudo dnf install -y gcc gcc-c++ make pkgconf-pkg-config git \
 **macOS (Homebrew):**
 ```bash
 brew update
-brew install git hidapi libusb zlib libpng ffmpeg \
+brew install git hidapi libusb zlib libpng libyaml ffmpeg \
   imagemagick librsvg cairo jq bc netcat socat
 brew install --cask font-noto-sans font-noto-emoji
 ```

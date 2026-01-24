@@ -8,6 +8,11 @@ PNG_LIBS := -lpng
 PTHREAD_LIBS := -lpthread
 MATH_LIBS := -lm
 HID_LIBS := -lhidapi-libusb
+YAML_CFLAGS := $(shell pkg-config --cflags yaml-0.1 2>/dev/null)
+YAML_LIBS := $(shell pkg-config --libs yaml-0.1 2>/dev/null)
+ifeq ($(strip $(YAML_LIBS)),)
+YAML_LIBS := -lyaml
+endif
 
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil libswscale 2>/dev/null)
 FFMPEG_LIBS := $(shell pkg-config --libs libavformat libavcodec libavutil libswscale 2>/dev/null)
@@ -34,7 +39,7 @@ ulanzi_d200_demon: ulanzi_d200.c
 tools: lib/send_image_page lib/send_video_page_wrapper lib/pagging_demon
 
 lib/pagging_demon: src/lib/pagging.c | dir_lib
-	$(CC) $(CFLAGS) -o $@ $< $(PNG_LIBS) $(ZLIB_LIBS)
+	$(CC) $(CFLAGS) $(YAML_CFLAGS) -o $@ $< $(PNG_LIBS) $(ZLIB_LIBS) $(YAML_LIBS)
 
 lib/send_image_page: src/lib/send_image_page.c | dir_lib
 	$(CC) $(CFLAGS) -o $@ $< $(PNG_LIBS) $(PTHREAD_LIBS) $(MATH_LIBS)

@@ -35,6 +35,7 @@
 
 #include <zlib.h>
 #include <png.h>
+#include <yaml.h>
 
 typedef struct {
     char *name;
@@ -146,42 +147,6 @@ static void rtrim_only(char *s) {
     while (n && (s[n - 1] == '\n' || s[n - 1] == '\r' || s[n - 1] == ' ' || s[n - 1] == '\t')) {
         s[--n] = 0;
     }
-}
-
-static int indent_of(const char *s) {
-    int i = 0;
-    while (s[i] == ' ') i++;
-    return i;
-}
-
-static void strip_inline_comment(char *s) {
-    // Simple heuristic: cut at " #".
-    for (size_t i = 1; s[i]; i++) {
-        if (s[i] == '#' && (s[i - 1] == ' ' || s[i - 1] == '\t')) {
-            s[i - 1] = 0;
-            break;
-        }
-    }
-    rtrim_only(s); // keep indentation for YAML parsing
-}
-
-static char *strip_quotes_dup(const char *s) {
-    if (!s) return xstrdup("");
-    while (*s == ' ' || *s == '\t') s++;
-    size_t n = strlen(s);
-    while (n && (s[n - 1] == ' ' || s[n - 1] == '\t')) n--;
-    if (n >= 2 && ((s[0] == '"' && s[n - 1] == '"') || (s[0] == '\'' && s[n - 1] == '\''))) {
-        char *out = malloc(n - 1);
-        if (!out) die_errno("malloc");
-        memcpy(out, s + 1, n - 2);
-        out[n - 2] = 0;
-        return out;
-    }
-    char *out = malloc(n + 1);
-    if (!out) die_errno("malloc");
-    memcpy(out, s, n);
-    out[n] = 0;
-    return out;
 }
 
 static uint32_t fnv1a32(const void *data, size_t len) {
@@ -329,6 +294,43 @@ static int run_exec(char *const argv[]) {
     return 128;
 }
 
+static yaml_node_t *yaml_mapping_get(yaml_document_t *doc, yaml_node_t *map, const char *key) {
+    if (!doc || !map || map->type != YAML_MAPPING_NODE || !key) return NULL;
+    for (yaml_node_pair_t *p = map->data.mapping.pairs.start; p < map->data.mapping.pairs.top; p++) {
+        yaml_node_t *k = yaml_document_get_node(doc, p->key);
+        yaml_node_t *v = yaml_document_get_node(doc, p->value);
+        if (!k || k->type != YAML_SCALAR_NODE) continue;
+        const char *ks = (const char *)k->data.scalar.value;
+        if (ks && strcmp(ks, key) == 0) return v;
+    }
+    return NULL;
+}
+
+static const char *yaml_scalar_cstr(yaml_node_t *n) {
+    if (!n || n->type != YAML_SCALAR_NODE) return NULL;
+    return (const char *)n->data.scalar.value;
+}
+
+static int parse_int_scalar(const char *s, int *out) {
+    if (!s || !out) return -1;
+    char *end = NULL;
+    long v = strtol(s, &end, 10);
+    if (end == s) return -1;
+    *out = (int)v;
+    return 0;
+}
+
+static int parse_offset_scalar(const char *s, int *x, int *y) {
+    if (!s || !x || !y) return -1;
+    int a = 0, b = 0;
+    if (sscanf(s, "%d,%d", &a, &b) == 2) {
+        *x = a;
+        *y = b;
+        return 0;
+    }
+    return -1;
+}
+
 static Page *config_get_page(Config *cfg, const char *name) {
     for (size_t i = 0; i < cfg->page_count; i++) {
         if (strcmp(cfg->pages[i].name, name) == 0) return &cfg->pages[i];
@@ -440,248 +442,163 @@ static void config_free(Config *cfg) {
 }
 
 static int load_config(const char *path, Config *out) {
-    FILE *f = fopen(path, "r");
+    FILE *f = fopen(path, "rb");
     if (!f) return -1;
+
+    yaml_parser_t parser;
+    yaml_document_t doc;
+    memset(&parser, 0, sizeof(parser));
+    memset(&doc, 0, sizeof(doc));
+
+    if (!yaml_parser_initialize(&parser)) {
+        fclose(f);
+        return -1;
+    }
+    yaml_parser_set_input_file(&parser, f);
+    if (!yaml_parser_load(&parser, &doc)) {
+        fprintf(stderr, "[pagging] ERROR: YAML parse failed: %s\n", parser.problem ? parser.problem : "unknown");
+        yaml_parser_delete(&parser);
+        fclose(f);
+        return -1;
+    }
 
     Config cfg;
     config_init_defaults(&cfg);
     if (!config_get_preset_mut(&cfg, "default")) (void)config_add_preset(&cfg, "default");
 
-    char *line = NULL;
-    size_t cap = 0;
-    char section[32] = {0};
-    char cur_page[256] = {0};
-    char cur_preset[128] = {0};
-    bool in_buttons = false;
-    Item cur_item = {0};
-    bool have_item = false;
-    bool in_tap_action = false;
-    int tap_action_indent = 0;
+    yaml_node_t *root = yaml_document_get_root_node(&doc);
+    if (!root || root->type != YAML_MAPPING_NODE) {
+        fprintf(stderr, "[pagging] ERROR: YAML root is not a mapping\n");
+        yaml_document_delete(&doc);
+        yaml_parser_delete(&parser);
+        fclose(f);
+        return -1;
+    }
 
-    while (getline(&line, &cap, f) != -1) {
-        strip_inline_comment(line);
-        if (line[0] == 0) continue;
-        int ind = indent_of(line);
-        char *t = line;
-        trim(t);
-        if (t[0] == 0) continue;
+    // system_buttons
+    yaml_node_t *sys = yaml_mapping_get(&doc, root, "system_buttons");
+    if (sys && sys->type == YAML_MAPPING_NODE) {
+        for (yaml_node_pair_t *p = sys->data.mapping.pairs.start; p < sys->data.mapping.pairs.top; p++) {
+            yaml_node_t *k = yaml_document_get_node(&doc, p->key);
+            yaml_node_t *v = yaml_document_get_node(&doc, p->value);
+            const char *key = yaml_scalar_cstr(k);
+            if (!key || !v || v->type != YAML_MAPPING_NODE) continue;
+            yaml_node_t *posn = yaml_mapping_get(&doc, v, "position");
+            const char *pos_s = yaml_scalar_cstr(posn);
+            int pos = 0;
+            if (parse_int_scalar(pos_s, &pos) != 0) continue;
+            if (strcmp(key, "$page.back") == 0) cfg.pos_back = pos;
+            else if (strcmp(key, "$page.previous") == 0) cfg.pos_prev = pos;
+            else if (strcmp(key, "$page.next") == 0) cfg.pos_next = pos;
+        }
+    }
 
-        if (strcmp(t, "system_buttons:") == 0) {
-            snprintf(section, sizeof(section), "system_buttons");
-            continue;
-        }
-        if (strcmp(t, "presets:") == 0) {
-            snprintf(section, sizeof(section), "presets");
-            continue;
-        }
-        if (strcmp(t, "pages:") == 0) {
-            snprintf(section, sizeof(section), "pages");
-            continue;
-        }
+    // presets
+    yaml_node_t *presets = yaml_mapping_get(&doc, root, "presets");
+    if (presets && presets->type == YAML_MAPPING_NODE) {
+        for (yaml_node_pair_t *p = presets->data.mapping.pairs.start; p < presets->data.mapping.pairs.top; p++) {
+            yaml_node_t *k = yaml_document_get_node(&doc, p->key);
+            yaml_node_t *v = yaml_document_get_node(&doc, p->value);
+            const char *preset_name = yaml_scalar_cstr(k);
+            if (!preset_name || !v || v->type != YAML_MAPPING_NODE) continue;
 
-        if (strcmp(section, "system_buttons") == 0) {
-            //   $page.back:
-            //     position: 11
-            if (ind == 2 && t[strlen(t) - 1] == ':') {
-                // store current key in cur_page buffer temporarily
-                snprintf(cur_page, sizeof(cur_page), "%.*s", (int)strlen(t) - 1, t);
-                continue;
-            }
-            if (ind >= 4 && strncmp(t, "position:", 9) == 0) {
-                int pos = atoi(t + 9);
-                if (strcmp(cur_page, "$page.back") == 0) cfg.pos_back = pos;
-                if (strcmp(cur_page, "$page.previous") == 0) cfg.pos_prev = pos;
-                if (strcmp(cur_page, "$page.next") == 0) cfg.pos_next = pos;
-                continue;
-            }
-        }
+            if (!config_get_preset_mut(&cfg, preset_name)) config_add_preset(&cfg, preset_name);
+            Preset *pr = config_get_preset_mut(&cfg, preset_name);
+            if (!pr) continue;
 
-        if (strcmp(section, "pages") == 0) {
-            if (ind == 2 && t[strlen(t) - 1] == ':') {
-                // Switching page: flush any pending item into the previous page.
-                if (have_item && cur_page[0]) {
-                    Page *p = config_get_page(&cfg, cur_page);
-                    if (p) page_add_item(p, cur_item);
-                    else {
-                        free(cur_item.name);
-                        free(cur_item.icon);
-                        free(cur_item.preset);
-                        free(cur_item.text);
-                        free(cur_item.tap_action);
-                        free(cur_item.tap_data);
+            yaml_node_t *n;
+
+            n = yaml_mapping_get(&doc, v, "icon_background_color");
+            if (yaml_scalar_cstr(n)) { free(pr->icon_background_color); pr->icon_background_color = xstrdup(yaml_scalar_cstr(n)); }
+            n = yaml_mapping_get(&doc, v, "icon_border_radius");
+            if (yaml_scalar_cstr(n)) { int iv = 0; if (parse_int_scalar(yaml_scalar_cstr(n), &iv) == 0) pr->icon_border_radius = iv; }
+            n = yaml_mapping_get(&doc, v, "icon_border_width");
+            if (yaml_scalar_cstr(n)) { int iv = 0; if (parse_int_scalar(yaml_scalar_cstr(n), &iv) == 0) pr->icon_border_width = iv; }
+            n = yaml_mapping_get(&doc, v, "icon_border_color");
+            if (yaml_scalar_cstr(n)) { free(pr->icon_border_color); pr->icon_border_color = xstrdup(yaml_scalar_cstr(n)); }
+            n = yaml_mapping_get(&doc, v, "icon_size");
+            if (yaml_scalar_cstr(n)) { int iv = 0; if (parse_int_scalar(yaml_scalar_cstr(n), &iv) == 0) pr->icon_size = iv; }
+            n = yaml_mapping_get(&doc, v, "icon_padding");
+            if (yaml_scalar_cstr(n)) { int iv = 0; if (parse_int_scalar(yaml_scalar_cstr(n), &iv) == 0) pr->icon_padding = iv; }
+            n = yaml_mapping_get(&doc, v, "icon_offset");
+            if (yaml_scalar_cstr(n)) { (void)parse_offset_scalar(yaml_scalar_cstr(n), &pr->icon_offset_x, &pr->icon_offset_y); }
+            n = yaml_mapping_get(&doc, v, "icon_brightness");
+            if (yaml_scalar_cstr(n)) { int iv = 0; if (parse_int_scalar(yaml_scalar_cstr(n), &iv) == 0) pr->icon_brightness = iv; }
+            n = yaml_mapping_get(&doc, v, "icon_color");
+            if (yaml_scalar_cstr(n)) { free(pr->icon_color); pr->icon_color = xstrdup(yaml_scalar_cstr(n)); }
+
+            n = yaml_mapping_get(&doc, v, "text_color");
+            if (yaml_scalar_cstr(n)) { free(pr->text_color); pr->text_color = xstrdup(yaml_scalar_cstr(n)); }
+            n = yaml_mapping_get(&doc, v, "text_align");
+            if (yaml_scalar_cstr(n)) { free(pr->text_align); pr->text_align = xstrdup(yaml_scalar_cstr(n)); }
+            n = yaml_mapping_get(&doc, v, "text_font");
+            if (yaml_scalar_cstr(n)) { free(pr->text_font); pr->text_font = xstrdup(yaml_scalar_cstr(n)); }
+            n = yaml_mapping_get(&doc, v, "text_size");
+            if (yaml_scalar_cstr(n)) { int iv = 0; if (parse_int_scalar(yaml_scalar_cstr(n), &iv) == 0) pr->text_size = iv; }
+            n = yaml_mapping_get(&doc, v, "text_offset");
+            if (yaml_scalar_cstr(n)) { (void)parse_offset_scalar(yaml_scalar_cstr(n), &pr->text_offset_x, &pr->text_offset_y); }
+        }
+    }
+
+    // pages
+    yaml_node_t *pages = yaml_mapping_get(&doc, root, "pages");
+    if (pages && pages->type == YAML_MAPPING_NODE) {
+        for (yaml_node_pair_t *pp = pages->data.mapping.pairs.start; pp < pages->data.mapping.pairs.top; pp++) {
+            yaml_node_t *k = yaml_document_get_node(&doc, pp->key);
+            yaml_node_t *v = yaml_document_get_node(&doc, pp->value);
+            const char *page_name = yaml_scalar_cstr(k);
+            if (!page_name || !v || v->type != YAML_MAPPING_NODE) continue;
+
+            if (!config_get_page(&cfg, page_name)) config_add_page(&cfg, page_name);
+            Page *page = config_get_page(&cfg, page_name);
+            if (!page) continue;
+
+            yaml_node_t *buttons = yaml_mapping_get(&doc, v, "buttons");
+            if (!buttons || buttons->type != YAML_SEQUENCE_NODE) continue;
+            for (yaml_node_item_t *it = buttons->data.sequence.items.start; it < buttons->data.sequence.items.top; it++) {
+                yaml_node_t *item = yaml_document_get_node(&doc, *it);
+                if (!item || item->type != YAML_MAPPING_NODE) continue;
+
+                Item out_item;
+                memset(&out_item, 0, sizeof(out_item));
+
+                yaml_node_t *n;
+                n = yaml_mapping_get(&doc, item, "name");
+                if (yaml_scalar_cstr(n)) out_item.name = xstrdup(yaml_scalar_cstr(n));
+                n = yaml_mapping_get(&doc, item, "icon");
+                if (yaml_scalar_cstr(n)) out_item.icon = xstrdup(yaml_scalar_cstr(n));
+                n = yaml_mapping_get(&doc, item, "text");
+                if (yaml_scalar_cstr(n)) out_item.text = xstrdup(yaml_scalar_cstr(n));
+
+                // presets: [p01, ...] => keep first
+                n = yaml_mapping_get(&doc, item, "presets");
+                if (n) {
+                    if (n->type == YAML_SEQUENCE_NODE && n->data.sequence.items.start < n->data.sequence.items.top) {
+                        yaml_node_t *first = yaml_document_get_node(&doc, *n->data.sequence.items.start);
+                        const char *s = yaml_scalar_cstr(first);
+                        if (s && s[0]) out_item.preset = xstrdup(s);
+                    } else if (n->type == YAML_SCALAR_NODE) {
+                        const char *s = yaml_scalar_cstr(n);
+                        if (s && s[0]) out_item.preset = xstrdup(s);
                     }
-                    memset(&cur_item, 0, sizeof(cur_item));
-                    have_item = false;
                 }
-                snprintf(cur_page, sizeof(cur_page), "%.*s", (int)strlen(t) - 1, t);
-                if (!config_get_page(&cfg, cur_page)) config_add_page(&cfg, cur_page);
-                in_buttons = false;
-                in_tap_action = false;
-                tap_action_indent = 0;
-                continue;
-            }
-            if (ind == 4 && strcmp(t, "buttons:") == 0) {
-                in_buttons = true;
-                in_tap_action = false;
-                tap_action_indent = 0;
-                continue;
-            }
-            if (!in_buttons || cur_page[0] == 0) continue;
 
-            // Start of item: "- name: ..."
-            if (ind == 6 && t[0] == '-' && (t[1] == ' ' || t[1] == 0)) {
-                if (have_item) {
-                    Page *p = config_get_page(&cfg, cur_page);
-                    if (p) page_add_item(p, cur_item);
-                    memset(&cur_item, 0, sizeof(cur_item));
-                    have_item = false;
+                // tap_action: { action: "$page.go_to", data: "scripts" }
+                n = yaml_mapping_get(&doc, item, "tap_action");
+                if (n && n->type == YAML_MAPPING_NODE) {
+                    yaml_node_t *a = yaml_mapping_get(&doc, n, "action");
+                    yaml_node_t *d = yaml_mapping_get(&doc, n, "data");
+                    if (yaml_scalar_cstr(a)) out_item.tap_action = xstrdup(yaml_scalar_cstr(a));
+                    if (yaml_scalar_cstr(d)) out_item.tap_data = xstrdup(yaml_scalar_cstr(d));
                 }
-                have_item = true;
-                in_tap_action = false;
-                tap_action_indent = 0;
 
-                // inline field after "- "
-                const char *rest = t + 1;
-                while (*rest == ' ') rest++;
-                if (strncmp(rest, "name:", 5) == 0) {
-                    cur_item.name = strip_quotes_dup(rest + 5);
-                } else if (strncmp(rest, "icon:", 5) == 0) {
-                    cur_item.icon = strip_quotes_dup(rest + 5);
-                }
-                continue;
-            }
-
-            if (!have_item) continue;
-
-            // Tap action block
-            if (ind == 8 && strcmp(t, "tap_action:") == 0) {
-                in_tap_action = true;
-                tap_action_indent = ind;
-                continue;
-            }
-            if (in_tap_action && ind <= tap_action_indent) {
-                in_tap_action = false;
-            }
-
-            if (ind == 8 && strncmp(t, "name:", 5) == 0) { free(cur_item.name); cur_item.name = strip_quotes_dup(t + 5); continue; }
-            if (ind == 8 && strncmp(t, "icon:", 5) == 0) { free(cur_item.icon); cur_item.icon = strip_quotes_dup(t + 5); continue; }
-            if (ind == 8 && strncmp(t, "text:", 5) == 0) { free(cur_item.text); cur_item.text = strip_quotes_dup(t + 5); continue; }
-            if (ind == 8 && strncmp(t, "presets:", 8) == 0) {
-                // presets: [default, ...]  -> keep first preset name
-                const char *s = t + 8;
-                while (*s == ' ' || *s == '\t') s++;
-                while (*s == '[' || *s == ' ' || *s == '\t') s++;
-                char first[128] = {0};
-                size_t k = 0;
-                while (*s && *s != ']' && *s != ',' && k + 1 < sizeof(first)) {
-                    if (*s != ' ' && *s != '\t') first[k++] = *s;
-                    s++;
-                }
-                first[k] = 0;
-                if (first[0]) { free(cur_item.preset); cur_item.preset = xstrdup(first); }
-                continue;
-            }
-
-            if (in_tap_action) {
-                if (ind == 10 && strncmp(t, "action:", 7) == 0) { free(cur_item.tap_action); cur_item.tap_action = strip_quotes_dup(t + 7); continue; }
-                if (ind == 10 && strncmp(t, "data:", 5) == 0) { free(cur_item.tap_data); cur_item.tap_data = strip_quotes_dup(t + 5); continue; }
-                if (ind == 12 && strncmp(t, "data:", 5) == 0) { free(cur_item.tap_data); cur_item.tap_data = strip_quotes_dup(t + 5); continue; }
-            }
-        }
-
-        if (strcmp(section, "presets") == 0) {
-            //   default:
-            //     icon_background_color: "241f31"
-            //     icon_border_radius: 12
-            if (ind == 2 && t[strlen(t) - 1] == ':') {
-                snprintf(cur_preset, sizeof(cur_preset), "%.*s", (int)strlen(t) - 1, t);
-                if (!config_get_preset_mut(&cfg, cur_preset)) config_add_preset(&cfg, cur_preset);
-                continue;
-            }
-            if (cur_preset[0] == 0) continue;
-            Preset *p = config_get_preset_mut(&cfg, cur_preset);
-            if (!p) continue;
-            if (ind >= 4 && strncmp(t, "icon_background_color:", 22) == 0) {
-                free(p->icon_background_color);
-                p->icon_background_color = strip_quotes_dup(t + 22);
-                continue;
-            }
-            if (ind >= 4 && strncmp(t, "icon_border_radius:", 19) == 0) {
-                p->icon_border_radius = atoi(t + 19);
-                continue;
-            }
-            if (ind >= 4 && strncmp(t, "icon_border_width:", 18) == 0) {
-                p->icon_border_width = atoi(t + 18);
-                continue;
-            }
-            if (ind >= 4 && strncmp(t, "icon_border_color:", 18) == 0) {
-                free(p->icon_border_color);
-                p->icon_border_color = strip_quotes_dup(t + 18);
-                continue;
-            }
-            if (ind >= 4 && strncmp(t, "icon_size:", 10) == 0) {
-                p->icon_size = atoi(t + 10);
-                continue;
-            }
-            if (ind >= 4 && strncmp(t, "icon_padding:", 13) == 0) {
-                p->icon_padding = atoi(t + 13);
-                continue;
-            }
-            if (ind >= 4 && strncmp(t, "icon_offset:", 12) == 0) {
-                int x = 0, y = 0;
-                if (sscanf(t + 12, "%d,%d", &x, &y) == 2) { p->icon_offset_x = x; p->icon_offset_y = y; }
-                continue;
-            }
-            if (ind >= 4 && strncmp(t, "icon_brightness:", 15) == 0) {
-                p->icon_brightness = atoi(t + 15);
-                continue;
-            }
-            if (ind >= 4 && strncmp(t, "icon_color:", 11) == 0) {
-                free(p->icon_color);
-                p->icon_color = strip_quotes_dup(t + 11);
-                continue;
-            }
-            if (ind >= 4 && strncmp(t, "text_color:", 11) == 0) {
-                free(p->text_color);
-                p->text_color = strip_quotes_dup(t + 11);
-                continue;
-            }
-            if (ind >= 4 && strncmp(t, "text_align:", 11) == 0) {
-                free(p->text_align);
-                p->text_align = strip_quotes_dup(t + 11);
-                continue;
-            }
-            if (ind >= 4 && strncmp(t, "text_font:", 10) == 0) {
-                free(p->text_font);
-                p->text_font = strip_quotes_dup(t + 10);
-                continue;
-            }
-            if (ind >= 4 && strncmp(t, "text_size:", 10) == 0) {
-                p->text_size = atoi(t + 10);
-                continue;
-            }
-            if (ind >= 4 && strncmp(t, "text_offset:", 12) == 0) {
-                int x = 0, y = 0;
-                if (sscanf(t + 12, "%d,%d", &x, &y) == 2) { p->text_offset_x = x; p->text_offset_y = y; }
-                continue;
+                page_add_item(page, out_item);
             }
         }
     }
 
-    if (have_item && cur_page[0]) {
-        Page *p = config_get_page(&cfg, cur_page);
-        if (p) page_add_item(p, cur_item);
-        else {
-            free(cur_item.name);
-            free(cur_item.icon);
-            free(cur_item.preset);
-            free(cur_item.text);
-            free(cur_item.tap_action);
-            free(cur_item.tap_data);
-        }
-    }
-
-    free(line);
+    yaml_document_delete(&doc);
+    yaml_parser_delete(&parser);
     fclose(f);
 
     config_free(out);
