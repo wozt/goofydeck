@@ -32,6 +32,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <poll.h>
 
 #include <zlib.h>
 #include <png.h>
@@ -88,6 +89,7 @@ typedef struct {
 typedef struct {
     char *config_path;
     char *ulanzi_sock;
+    char *control_sock;
     char *cache_root;
     char *error_icon;
     char *sys_pregen_dir;
@@ -169,6 +171,28 @@ static void ensure_dir(const char *path) {
     if (mkdir(path, 0775) != 0 && errno != EEXIST) die_errno("mkdir");
 }
 
+static int try_ensure_dir(const char *path) {
+    struct stat st;
+    if (stat(path, &st) == 0) {
+        return S_ISDIR(st.st_mode) ? 0 : -1;
+    }
+    if (mkdir(path, 0775) != 0 && errno != EEXIST) return -1;
+    return 0;
+}
+
+static int try_ensure_dir_parent(const char *path) {
+    char tmp[PATH_MAX];
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    for (size_t i = 1; tmp[i]; i++) {
+        if (tmp[i] == '/') {
+            tmp[i] = 0;
+            if (try_ensure_dir(tmp) != 0) return -1;
+            tmp[i] = '/';
+        }
+    }
+    return 0;
+}
+
 static void ensure_dir_parent(const char *path) {
     char tmp[PATH_MAX];
     snprintf(tmp, sizeof(tmp), "%s", path);
@@ -212,6 +236,29 @@ static int unix_connect(const char *sock_path) {
         close(fd);
         return -1;
     }
+    return fd;
+}
+
+static int make_unix_listen_socket(const char *sock_path) {
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", sock_path);
+    unlink(sock_path);
+
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        close(fd);
+        return -1;
+    }
+    if (listen(fd, 16) != 0) {
+        close(fd);
+        return -1;
+    }
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags >= 0) (void)fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     return fd;
 }
 
@@ -1132,11 +1179,81 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
     log_msg("send resp='%s'", reply[0] ? reply : "<empty>");
 }
 
+static void state_dir(const Options *opt, char *out, size_t cap) {
+    // Prefer RAM-backed /dev/shm, fallback to cache_root if not available.
+    if (!out || cap == 0) return;
+    const char *primary = "/dev/shm/goofydeck/pagging";
+    if (try_ensure_dir_parent(primary) == 0 && try_ensure_dir(primary) == 0) {
+        snprintf(out, cap, "%s", primary);
+        return;
+    }
+    snprintf(out, cap, "%s/pagging", (opt && opt->cache_root) ? opt->cache_root : ".cache");
+    ensure_dir(out);
+}
+
+static int join_path(char *out, size_t cap, const char *a, const char *b) {
+    if (!out || cap == 0 || !a || !b) return -1;
+    size_t al = strlen(a);
+    size_t bl = strlen(b);
+    // +1 for '/', +1 for '\0'
+    if (al + 1 + bl + 1 > cap) return -1;
+    memcpy(out, a, al);
+    out[al] = '/';
+    memcpy(out + al + 1, b, bl);
+    out[al + 1 + bl] = 0;
+    return 0;
+}
+
+static void persist_last_page(const Options *opt, const char *page_name, size_t offset) {
+    if (!page_name) return;
+    char dir[PATH_MAX];
+    state_dir(opt, dir, sizeof(dir));
+
+    char ppath[PATH_MAX];
+    if (join_path(ppath, sizeof(ppath), dir, "last_page") != 0) return;
+    FILE *pf = fopen(ppath, "wb");
+    if (pf) { fprintf(pf, "%s\n", page_name); fclose(pf); }
+
+    char opath[PATH_MAX];
+    if (join_path(opath, sizeof(opath), dir, "last_offset") != 0) return;
+    FILE *of = fopen(opath, "wb");
+    if (of) { fprintf(of, "%zu\n", offset); fclose(of); }
+}
+
+static int load_last_page(const Options *opt, char *out_page, size_t out_page_cap, size_t *out_offset) {
+    if (!out_page || out_page_cap == 0 || !out_offset) return -1;
+    char dir[PATH_MAX];
+    state_dir(opt, dir, sizeof(dir));
+
+    char ppath[PATH_MAX];
+    if (join_path(ppath, sizeof(ppath), dir, "last_page") != 0) return -1;
+    FILE *pf = fopen(ppath, "rb");
+    if (!pf) return -1;
+    if (!fgets(out_page, (int)out_page_cap, pf)) { fclose(pf); return -1; }
+    fclose(pf);
+    trim(out_page);
+    if (out_page[0] == 0) return -1;
+
+    char opath[PATH_MAX];
+    if (join_path(opath, sizeof(opath), dir, "last_offset") != 0) { *out_offset = 0; return 0; }
+    FILE *of = fopen(opath, "rb");
+    if (!of) { *out_offset = 0; return 0; }
+    char obuf[64] = {0};
+    if (!fgets(obuf, sizeof(obuf), of)) { fclose(of); *out_offset = 0; return 0; }
+    fclose(of);
+    trim(obuf);
+    unsigned long long v = 0;
+    if (sscanf(obuf, "%llu", &v) != 1) v = 0;
+    *out_offset = (size_t)v;
+    return 0;
+}
+
 int main(int argc, char **argv) {
     Options opt;
     memset(&opt, 0, sizeof(opt));
     opt.config_path = xstrdup("config/configuration.yml");
     opt.ulanzi_sock = xstrdup("/tmp/ulanzi_device.sock");
+    opt.control_sock = xstrdup("/tmp/goofydeck_pagging_control.sock");
     opt.cache_root = xstrdup(".cache");
     opt.error_icon = xstrdup("assets/pregen/error.png");
     opt.sys_pregen_dir = xstrdup("assets/pregen");
@@ -1154,6 +1271,9 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--ulanzi-sock") == 0 && i + 1 < argc) {
             free(opt.ulanzi_sock);
             opt.ulanzi_sock = xstrdup(argv[++i]);
+        } else if (strcmp(argv[i], "--control-sock") == 0 && i + 1 < argc) {
+            free(opt.control_sock);
+            opt.control_sock = xstrdup(argv[++i]);
         } else if (strcmp(argv[i], "--cache") == 0 && i + 1 < argc) {
             free(opt.cache_root);
             opt.cache_root = xstrdup(argv[++i]);
@@ -1166,7 +1286,7 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--dump-config") == 0) {
             dump_config = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            printf("Usage: %s [--config path] [--ulanzi-sock path] [--cache dir]\n", argv[0]);
+            printf("Usage: %s [--config path] [--ulanzi-sock path] [--control-sock path] [--cache dir]\n", argv[0]);
             return 0;
         } else {
             fprintf(stderr, "Unknown arg: %s\n", argv[i]);
@@ -1179,10 +1299,12 @@ int main(int argc, char **argv) {
     char *cache_abs = resolve_path(opt.root_dir, opt.cache_root);
     char *err_abs = resolve_path(opt.root_dir, opt.error_icon);
     char *sys_abs = resolve_path(opt.root_dir, opt.sys_pregen_dir);
+    char *ctl_abs = resolve_path(opt.root_dir, opt.control_sock);
     free(opt.config_path); opt.config_path = cfg_abs;
     free(opt.cache_root); opt.cache_root = cache_abs;
     free(opt.error_icon); opt.error_icon = err_abs;
     free(opt.sys_pregen_dir); opt.sys_pregen_dir = sys_abs;
+    free(opt.control_sock); opt.control_sock = ctl_abs;
 
     ensure_dir(opt.cache_root);
     ensure_dir_parent(opt.error_icon);
@@ -1252,112 +1374,226 @@ int main(int argc, char **argv) {
     if (rb_fd < 0) die_errno("connect ulanzi socket");
     (void)write(rb_fd, "read-buttons\n", 13);
 
-    FILE *rb = fdopen(rb_fd, "r");
-    if (!rb) die_errno("fdopen");
+    int rb_flags = fcntl(rb_fd, F_GETFL, 0);
+    if (rb_flags >= 0) (void)fcntl(rb_fd, F_SETFL, rb_flags | O_NONBLOCK);
+
+    int ctl_fd = make_unix_listen_socket(opt.control_sock);
+    if (ctl_fd < 0) die_errno("control listen socket");
+    log_msg("control socket: %s", opt.control_sock);
 
     char cur_page[256] = "$root";
     size_t offset = 0;
     char last_sig[256] = {0};
     char page_stack[64][256];
     int page_stack_len = 0;
+    bool control_enabled = true;
 
     // Initial render once.
     render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
+    persist_last_page(&opt, cur_page, offset);
 
-    char evline[256];
-    while (g_running && fgets(evline, sizeof(evline), rb)) {
-        // Log exactly what we receive (minus trailing newline)
-        rtrim_only(evline);
-        log_msg("rx ulanzi: %s", evline);
-        trim(evline);
-        if (evline[0] == 0) continue;
-        if (strcmp(evline, "ok") == 0) continue;
+    char inbuf[4096];
+    size_t inlen = 0;
 
-        int btn = 0;
-        char evt[32] = {0};
-        if (sscanf(evline, "button %d %31s", &btn, evt) != 2) continue;
-        if (strcmp(evt, "RELEASED") == 0) snprintf(evt, sizeof(evt), "RELEASE");
-        if (strcmp(evt, "TAP") != 0) continue;
+    while (g_running) {
+        struct pollfd fds[2];
+        memset(fds, 0, sizeof(fds));
+        fds[0].fd = rb_fd;
+        fds[0].events = POLLIN;
+        fds[1].fd = ctl_fd;
+        fds[1].events = POLLIN;
 
-        const Page *p = config_get_page(&cfg, cur_page);
-        if (!p) { snprintf(cur_page, sizeof(cur_page), "$root"); offset = 0; p = config_get_page(&cfg, cur_page); }
-        bool show_back = strcmp(cur_page, "$root") != 0;
-        SheetLayout sheet = compute_sheet_layout(p->count, show_back, offset);
-        offset = sheet.start;
+        int pr = poll(fds, 2, 100);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            die_errno("poll");
+        }
 
-        bool reserved_back = show_back;
-        bool reserved_prev = sheet.show_prev;
-        bool reserved_next = sheet.show_next;
-        int back_pos = cfg.pos_back;
-        int prev_pos = cfg.pos_prev;
-        int next_pos = cfg.pos_next;
+        // Control commands
+        if (fds[1].revents & POLLIN) {
+            for (;;) {
+                int cfd = accept(ctl_fd, NULL, NULL);
+                if (cfd < 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+                    break;
+                }
+                char cmdline[256] = {0};
+                ssize_t n = read(cfd, cmdline, sizeof(cmdline) - 1);
+                if (n < 0) n = 0;
+                cmdline[n] = 0;
+                trim(cmdline);
+                if (cmdline[0]) log_msg("rx control: %s", cmdline);
 
-        // System button presses
-        if (reserved_back && btn == back_pos) {
-            bool changed = false;
-            if (page_stack_len > 0) {
-                page_stack_len--;
-                snprintf(cur_page, sizeof(cur_page), "%s", page_stack[page_stack_len]);
-                changed = true;
-            } else {
-                // Legacy fallback: parent by path segment.
-                const char *par = parent_page(cur_page);
-                if (strcmp(par, cur_page) != 0) {
-                    snprintf(cur_page, sizeof(cur_page), "%s", par);
-                    changed = true;
+                const char *resp = "ok\n";
+                if (strcmp(cmdline, "stop-control") == 0) {
+                    control_enabled = false;
+                } else if (strcmp(cmdline, "start-control") == 0) {
+                    control_enabled = true;
+                } else if (strcmp(cmdline, "load-last-page") == 0) {
+                    char lp[256] = {0};
+                    size_t lo = 0;
+                    if (load_last_page(&opt, lp, sizeof(lp), &lo) == 0) {
+                        if (config_get_page(&cfg, lp)) {
+                            snprintf(cur_page, sizeof(cur_page), "%s", lp);
+                            offset = lo;
+                            last_sig[0] = 0; // force render
+                            render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
+                            persist_last_page(&opt, cur_page, offset);
+                        } else {
+                            resp = "err\n";
+                        }
+                    } else {
+                        resp = "err\n";
+                    }
+                } else if (cmdline[0] == 0) {
+                    // ignore empty
+                } else {
+                    resp = "unknown\n";
+                }
+                (void)write(cfd, resp, strlen(resp));
+                close(cfd);
+            }
+        }
+
+        // Ulanzi events
+        if (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+            char tmp[512];
+            ssize_t n = read(rb_fd, tmp, sizeof(tmp));
+            if (n == 0) break;
+            if (n < 0) {
+                if (errno != EAGAIN && errno != EWOULDBLOCK) break;
+                n = 0;
+            }
+            if (n > 0) {
+                if (inlen + (size_t)n > sizeof(inbuf)) {
+                    // drop buffer on overflow (shouldn't happen)
+                    inlen = 0;
+                }
+                memcpy(inbuf + inlen, tmp, (size_t)n);
+                inlen += (size_t)n;
+            }
+
+            size_t start = 0;
+            for (;;) {
+                void *nlp = memchr(inbuf + start, '\n', inlen - start);
+                if (!nlp) break;
+                size_t nl = (size_t)((char *)nlp - (inbuf + start));
+                char evline[256];
+                size_t cpy = nl;
+                if (cpy >= sizeof(evline)) cpy = sizeof(evline) - 1;
+                memcpy(evline, inbuf + start, cpy);
+                evline[cpy] = 0;
+                start += nl + 1;
+
+                rtrim_only(evline);
+                log_msg("rx ulanzi: %s", evline);
+                trim(evline);
+                if (evline[0] == 0) continue;
+                if (strcmp(evline, "ok") == 0) continue;
+
+                if (!control_enabled) continue;
+
+                int btn = 0;
+                char evt[32] = {0};
+                if (sscanf(evline, "button %d %31s", &btn, evt) != 2) continue;
+                if (strcmp(evt, "RELEASED") == 0) snprintf(evt, sizeof(evt), "RELEASE");
+                if (strcmp(evt, "TAP") != 0) continue;
+
+                const Page *p = config_get_page(&cfg, cur_page);
+                if (!p) { snprintf(cur_page, sizeof(cur_page), "$root"); offset = 0; p = config_get_page(&cfg, cur_page); }
+                bool show_back = strcmp(cur_page, "$root") != 0;
+                SheetLayout sheet = compute_sheet_layout(p->count, show_back, offset);
+                offset = sheet.start;
+
+                bool reserved_back = show_back;
+                bool reserved_prev = sheet.show_prev;
+                bool reserved_next = sheet.show_next;
+                int back_pos = cfg.pos_back;
+                int prev_pos = cfg.pos_prev;
+                int next_pos = cfg.pos_next;
+
+                // System button presses
+                if (reserved_back && btn == back_pos) {
+                    bool changed = false;
+                    if (page_stack_len > 0) {
+                        page_stack_len--;
+                        snprintf(cur_page, sizeof(cur_page), "%s", page_stack[page_stack_len]);
+                        changed = true;
+                    } else {
+                        // Legacy fallback: parent by path segment.
+                        const char *par = parent_page(cur_page);
+                        if (strcmp(par, cur_page) != 0) {
+                            snprintf(cur_page, sizeof(cur_page), "%s", par);
+                            changed = true;
+                        }
+                    }
+                    if (changed) {
+                        offset = 0;
+                        render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
+                        persist_last_page(&opt, cur_page, offset);
+                    }
+                    continue;
+                }
+                if (reserved_prev && btn == prev_pos) {
+                    offset = sheet.prev_start;
+                    render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
+                    persist_last_page(&opt, cur_page, offset);
+                    continue;
+                }
+                if (reserved_next && btn == next_pos) {
+                    offset = sheet.next_start;
+                    render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
+                    persist_last_page(&opt, cur_page, offset);
+                    continue;
+                }
+
+                // Content button mapping: positions excluding reserved.
+                size_t item_i = offset;
+                size_t pressed_item = (size_t)-1;
+                for (int pos = 1; pos <= 13; pos++) {
+                    bool reserved = false;
+                    if (reserved_back && pos == back_pos) reserved = true;
+                    if (reserved_prev && pos == prev_pos) reserved = true;
+                    if (reserved_next && pos == next_pos) reserved = true;
+                    if (reserved) continue;
+                    if (item_i >= p->count) break;
+                    if (pos == btn) { pressed_item = item_i; break; }
+                    item_i++;
+                }
+
+                if (pressed_item != (size_t)-1) {
+                    const Item *it = page_item_at(p, pressed_item);
+                    if (it && is_action_goto(it->tap_action) && it->tap_data && it->tap_data[0]) {
+                        if (page_stack_len < (int)(sizeof(page_stack) / sizeof(page_stack[0]))) {
+                            snprintf(page_stack[page_stack_len], sizeof(page_stack[page_stack_len]), "%s", cur_page);
+                            page_stack_len++;
+                        }
+                        snprintf(cur_page, sizeof(cur_page), "%s", it->tap_data);
+                        offset = 0;
+                        render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
+                        persist_last_page(&opt, cur_page, offset);
+                    }
                 }
             }
-            if (changed) {
-                offset = 0;
-                render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
-            }
-            continue;
-        }
-        if (reserved_prev && btn == prev_pos) {
-            offset = sheet.prev_start;
-            render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
-            continue;
-        }
-        if (reserved_next && btn == next_pos) {
-            offset = sheet.next_start;
-            render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
-            continue;
-        }
 
-        // Content button mapping: positions excluding reserved.
-        size_t item_i = offset;
-        size_t pressed_item = (size_t)-1;
-        for (int pos = 1; pos <= 13; pos++) {
-            bool reserved = false;
-            if (reserved_back && pos == back_pos) reserved = true;
-            if (reserved_prev && pos == prev_pos) reserved = true;
-            if (reserved_next && pos == next_pos) reserved = true;
-            if (reserved) continue;
-            if (item_i >= p->count) break;
-            if (pos == btn) { pressed_item = item_i; break; }
-            item_i++;
-        }
-
-        if (pressed_item != (size_t)-1) {
-            const Item *it = page_item_at(p, pressed_item);
-            if (it && is_action_goto(it->tap_action) && it->tap_data && it->tap_data[0]) {
-                if (page_stack_len < (int)(sizeof(page_stack) / sizeof(page_stack[0]))) {
-                    snprintf(page_stack[page_stack_len], sizeof(page_stack[page_stack_len]), "%s", cur_page);
-                    page_stack_len++;
-                }
-                snprintf(cur_page, sizeof(cur_page), "%s", it->tap_data);
-                offset = 0;
-                render_and_send(&opt, &cfg, cur_page, offset, blank_png, last_sig, sizeof(last_sig));
+            if (start > 0 && start < inlen) {
+                memmove(inbuf, inbuf + start, inlen - start);
+                inlen -= start;
+            } else if (start >= inlen) {
+                inlen = 0;
             }
         }
     }
 
-    fclose(rb);
+    close(rb_fd);
+    close(ctl_fd);
+    unlink(opt.control_sock);
     // blank_png points to a shared, persistent asset (assets/pregen/empty.png or error.png fallback).
     // Do not unlink it.
     config_free(&cfg);
     free(opt.config_path);
     free(opt.ulanzi_sock);
+    free(opt.control_sock);
     free(opt.cache_root);
     free(opt.error_icon);
     free(opt.sys_pregen_dir);
