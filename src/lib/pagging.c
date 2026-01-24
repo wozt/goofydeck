@@ -830,7 +830,7 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
 
     // draw_optimize (mandatory)
     {
-        char *argv[] = { draw_opt_bin, (char *)"-c", (char *)"8", (char *)out_png, NULL };
+        char *argv[] = { draw_opt_bin, (char *)"-c", (char *)"4", (char *)out_png, NULL };
         if (run_exec(argv) != 0) return -1;
     }
 
@@ -867,7 +867,7 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
         if (rc != 0) return -1;
 
         // RE draw_optimize
-        char *argv2[] = { draw_opt_bin, (char *)"-c", (char *)"8", (char *)out_png, NULL };
+        char *argv2[] = { draw_opt_bin, (char *)"-c", (char *)"4", (char *)out_png, NULL };
         if (run_exec(argv2) != 0) return -1;
     }
 

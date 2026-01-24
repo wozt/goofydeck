@@ -660,21 +660,6 @@ pages:
         tap_action:
           action: $page.go_to
           data: "scripts_deep"
-      - name: "Tool 2"
-        presets: [p12]
-        icon: mdi:dev-to
-        text: "HA"
-      - name: "Tool 2"
-        presets: [p12]
-        icon: mdi:dev-to
-        text: "HA"
-      - name: "Deep"
-        presets: [p30]
-        icon: mdi:dev-to
-        text: "DEEP"
-        tap_action:
-          action: $page.go_to
-          data: "scripts_deep"
 
   scripts_deep:
     buttons:
@@ -704,21 +689,7 @@ pages:
         presets: [p28]
         icon: mdi:map-outline
         text: "MAP"
-      - name: "Tool 2"
-        presets: [p12]
-        icon: mdi:dev-to
-        text: "HA"
-      - name: "Tool 2"
-        presets: [p12]
-        icon: mdi:dev-to
-        text: "HA"
-      - name: "Deep"
-        presets: [p30]
-        icon: mdi:dev-to
-        text: "DEEP"
-        tap_action:
-          action: $page.go_to
-          data: "scripts_deep"
+
 
   settings:
     buttons:
@@ -738,18 +709,4 @@ pages:
         presets: [p28]
         icon: mdi:map-outline
         text: "MAP"
-      - name: "Tool 2"
-        presets: [p12]
-        icon: mdi:dev-to
-        text: "HA"
-      - name: "Tool 2"
-        presets: [p12]
-        icon: mdi:dev-to
-        text: "HA"
-      - name: "Deep"
-        presets: [p30]
-        icon: mdi:dev-to
-        text: "DEEP"
-        tap_action:
-          action: $page.go_to
-          data: "scripts_deep"
+

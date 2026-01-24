@@ -38,7 +38,7 @@
 
 static int running = 1;
 // static const int MAX_PADDING_RETRIES = 4096; // max bytes to pad before force-patch
-static const int MAX_PADDING_RETRIES = 8192; // max bytes to pad before force-patch in fast mode
+static const int MAX_PADDING_RETRIES = 1024; // max bytes to pad before force-patch in fast mode
 static uint64_t TOTAL_BYTES_PATCHED = 0;
 static const int KEEPALIVE_INTERVAL = 24;  // seconds
 static uint64_t TOTAL_BYTES_SENT = 0;
@@ -515,16 +515,16 @@ static int build_zip_with_dummy(const IconItem *items, size_t count, size_t dumm
     if (count == 0) return -1;
     ZipWriter zw;
     zw_init(&zw);
-    StrBuf manifest;
-    build_manifest(items, count, &manifest);
-    zw_add_entry(&zw, "manifest.json", (const uint8_t *)manifest.data, manifest.len);
     if (dummy_len > 0) {
         uint8_t *dummy = malloc(dummy_len);
-        if (!dummy) { zw_free(&zw); sb_free(&manifest); return -1; }
+        if (!dummy) { zw_free(&zw); return -1; }
         memset(dummy, 0x01, dummy_len); // avoid 0x00/0x7c
         zw_add_entry(&zw, "dummy.txt", dummy, dummy_len);
         free(dummy);
     }
+    StrBuf manifest;
+    build_manifest(items, count, &manifest);
+    zw_add_entry(&zw, "manifest.json", (const uint8_t *)manifest.data, manifest.len);
     for (size_t i = 0; i < count; i++) {
         const uint8_t *buf = NULL;
         size_t sz = 0;
