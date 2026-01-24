@@ -111,6 +111,43 @@ make all
 
 ## 🎯 Usage
 
+### Start the Stack (Recommended)
+
+```bash
+# 2 panes (byobu): ulanzi_d200_demon + pagging_demon
+./launch_stack.sh --byobu
+
+# Stop everything started by launch_stack.sh (and kill the byobu session)
+./launch_stack.sh --kill
+```
+
+### Start Manually
+
+```bash
+./ulanzi_d200_demon
+./lib/pagging_demon
+```
+
+`pagging_demon`:
+- connects to `/tmp/ulanzi_device.sock`
+- reads button events (`read-buttons`)
+- renders icons from `config/configuration.yml`
+
+### Configuration
+
+Config file: `config/configuration.yml`
+
+High-level structure:
+- `system_buttons`: reserves positions for navigation buttons (`$page.back`, `$page.previous`, `$page.next`)
+- `presets`: icon/text styles (`default`, `$nav`, and custom presets)
+- `pages`: page definitions; each page has `buttons:`
+
+Actions:
+- `tap_action.action: "$page.go_to"` + `tap_action.data: "<page_name>"` to enter a page
+- Navigation actions are internal/system: `$page_back`, `$page_prev`, `$page_next` (shown automatically when needed)
+
+The YAML is parsed using `libyaml` (no Python).
+
 ### Start the Ulanzi D200 Daemon
 
 ```bash
@@ -196,12 +233,6 @@ The project includes many scripts in the `lib/` folder:
 
 # Manual ping
 ./lib/ping_alive.sh
-
-# Keep connection alive in loop
-./lib/keep_alive.sh
-
-# Test button presses
-./lib/test_button_pressed.sh
 ```
 
 ### Advanced Scripts
@@ -220,9 +251,11 @@ The project includes many scripts in the `lib/` folder:
 GoofyDeck/
 ├── ulanzi_d200_demon          # Main C daemon
 ├── ulanzi_d200.c              # Daemon source code
+├── launch_stack.sh            # Local launcher (byobu)
 ├── install.sh                 # Installation script
 ├── Makefile                   # Build file
 ├── lib/                       # Utility scripts
+│   ├── pagging_demon           # Paging daemon (config-driven)
 │   ├── send_button.sh
 │   ├── send_page.sh
 │   ├── send_image_page.sh
@@ -261,6 +294,7 @@ make all
 # Check dependencies
 pkg-config --exists hidapi
 pkg-config --exists libpng
+pkg-config --exists yaml-0.1
 ```
 
 **Socket not responding:**
