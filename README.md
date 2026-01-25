@@ -171,7 +171,7 @@ Base pipeline (per icon file):
 6) `icons/draw_optimize -c 4` (mandatory if text rendered)
 
 Dynamic sensor values:
-- For buttons with `entity_id:` but no `states:`, the daemon creates a cached base icon and overlays the current value text using `icons/draw_over` with temporary files in `/dev/shm` (cleaned after sending).
+- For buttons with `entity_id:` but no `states:`, the daemon creates a cached base icon, copies it to `/dev/shm`, renders the current value text onto that copy via `icons/draw_text`, then sends it (temp file is cleaned after sending).
 
 Notes:
 - `icons/draw_optimize` accepts both RGB and RGBA PNG inputs (some stages can write RGB when the background is opaque).

@@ -451,9 +451,9 @@ static void preset_init_defaults(Preset *p, const char *name) {
     p->icon_brightness = 100;
     p->icon_color = xstrdup("FFFFFF");
     p->text_color = xstrdup("FFFFFF");
-    p->text_align = xstrdup("bottom");
+    p->text_align = xstrdup("center");
     p->text_font = xstrdup("");
-    p->text_size = 16;
+    p->text_size = 40;
     p->text_offset_x = 0;
     p->text_offset_y = 0;
 }
@@ -1164,9 +1164,10 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
     // draw_text (optional)
     if (it->text && it->text[0]) {
         const char *tc = (preset && preset->text_color && preset->text_color[0]) ? preset->text_color : "FFFFFF";
-        const char *ta = (preset && preset->text_align && preset->text_align[0]) ? preset->text_align : "bottom";
-        const char *tf = (preset && preset->text_font) ? preset->text_font : "";
-        int ts = preset ? clamp_int(preset->text_size, 1, 64) : 16;
+        const char *ta = (preset && preset->text_align && preset->text_align[0]) ? preset->text_align : "center";
+        const char *tf = (preset && preset->text_font && preset->text_font[0]) ? preset->text_font : "Roboto";
+        bool used_default_font = !(preset && preset->text_font && preset->text_font[0]);
+        int ts = preset ? clamp_int(preset->text_size, 1, 64) : 40;
         int tox = preset ? preset->text_offset_x : 0;
         int toy = preset ? preset->text_offset_y : 0;
 
@@ -1187,6 +1188,11 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
             snprintf(tf_arg, sizeof(tf_arg), "--text_font=%s", tf);
             char *argv[] = { draw_text_bin, text_arg, tc_arg, ta_arg, tf_arg, ts_arg, to_arg, (char *)out_png, NULL };
             rc = run_exec(argv);
+            if (rc != 0 && used_default_font) {
+                // If "Roboto" isn't available, fall back to the draw_text default font behavior.
+                char *argv2[] = { draw_text_bin, text_arg, tc_arg, ta_arg, ts_arg, to_arg, (char *)out_png, NULL };
+                rc = run_exec(argv2);
+            }
         } else {
             char *argv[] = { draw_text_bin, text_arg, tc_arg, ta_arg, ts_arg, to_arg, (char *)out_png, NULL };
             rc = run_exec(argv);
@@ -1201,63 +1207,9 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
     return 0;
 }
 
-static int write_text_overlay_png(const Options *opt, const Preset *preset, const char *text, const char *out_png) {
-    if (!opt || !text || !out_png) return -1;
-    ensure_dir_parent(out_png);
-
-    char draw_square_bin[PATH_MAX];
-    char draw_text_bin[PATH_MAX];
-    char draw_opt_bin[PATH_MAX];
-    snprintf(draw_square_bin, sizeof(draw_square_bin), "%s/icons/draw_square", opt->root_dir);
-    snprintf(draw_text_bin, sizeof(draw_text_bin), "%s/icons/draw_text", opt->root_dir);
-    snprintf(draw_opt_bin, sizeof(draw_opt_bin), "%s/icons/draw_optimize", opt->root_dir);
-    if (access(draw_square_bin, X_OK) != 0) return -1;
-    if (access(draw_text_bin, X_OK) != 0) return -1;
-    if (access(draw_opt_bin, X_OK) != 0) return -1;
-
-    // 1) draw_square transparent
-    char *argv_sq[] = { draw_square_bin, (char *)"transparent", (char *)"--size=196", (char *)out_png, NULL };
-    if (run_exec(argv_sq) != 0) return -1;
-
-    const char *tc = (preset && preset->text_color && preset->text_color[0]) ? preset->text_color : "FFFFFF";
-    const char *ta = (preset && preset->text_align && preset->text_align[0]) ? preset->text_align : "bottom";
-    const char *tf = (preset && preset->text_font) ? preset->text_font : "";
-    int ts = preset ? clamp_int(preset->text_size, 1, 64) : 16;
-    int tox = preset ? preset->text_offset_x : 0;
-    int toy = preset ? preset->text_offset_y : 0;
-
-    char text_arg[768];
-    snprintf(text_arg, sizeof(text_arg), "--text=%s", text);
-    char tc_arg[64];
-    snprintf(tc_arg, sizeof(tc_arg), "--text_color=%s", tc);
-    char ta_arg[64];
-    snprintf(ta_arg, sizeof(ta_arg), "--text_align=%s", ta);
-    char ts_arg[64];
-    snprintf(ts_arg, sizeof(ts_arg), "--text_size=%d", ts);
-    char to_arg[64];
-    snprintf(to_arg, sizeof(to_arg), "--text_offset=%d,%d", tox, toy);
-
-    int rc = 0;
-    if (tf && tf[0]) {
-        char tf_arg[PATH_MAX];
-        snprintf(tf_arg, sizeof(tf_arg), "--text_font=%s", tf);
-        char *argv[] = { draw_text_bin, text_arg, tc_arg, ta_arg, tf_arg, ts_arg, to_arg, (char *)out_png, NULL };
-        rc = run_exec(argv);
-    } else {
-        char *argv[] = { draw_text_bin, text_arg, tc_arg, ta_arg, ts_arg, to_arg, (char *)out_png, NULL };
-        rc = run_exec(argv);
-    }
-    if (rc != 0) return -1;
-
-    // 2) draw_optimize mandatory after draw_text
-    char *argv_opt[] = { draw_opt_bin, (char *)"-c", (char *)"4", (char *)out_png, NULL };
-    if (run_exec(argv_opt) != 0) return -1;
-    return 0;
-}
-
-static int render_value_over_base_tmp(const Options *opt, const Preset *preset, const char *page_name, int pos,
+static int render_value_text_on_base_tmp(const Options *opt, const Preset *preset, const char *page_name, int pos,
                                       const char *base_png, const char *text, char *out_tmp_png, size_t out_cap) {
-    if (!opt || !preset || !page_name || !base_png || !text || !out_tmp_png || out_cap == 0) return -1;
+    if (!opt || !page_name || !base_png || !text || !out_tmp_png || out_cap == 0) return -1;
     out_tmp_png[0] = 0;
     if (!file_exists(base_png)) return -1;
 
@@ -1273,27 +1225,51 @@ static int render_value_over_base_tmp(const Options *opt, const Preset *preset, 
 
     long t = (long)time(NULL);
     pid_t pid = getpid();
-    char overlay[PATH_MAX];
     char outpng[PATH_MAX];
-    snprintf(overlay, sizeof(overlay), "%s/overlay_%s_%d_%ld_%d.png", tmpdir, page_tag, (int)pid, t, pos);
-    snprintf(outpng, sizeof(outpng), "%s/out_%s_%d_%ld_%d.png", tmpdir, page_tag, (int)pid, t, pos);
+    snprintf(outpng, sizeof(outpng), "%s/value_%s_%d_%ld_%d.png", tmpdir, page_tag, (int)pid, t, pos);
 
     if (copy_file(base_png, outpng) != 0) return -1;
-    if (write_text_overlay_png(opt, preset, text, overlay) != 0) { unlink(outpng); unlink(overlay); return -1; }
 
-    char draw_over_bin[PATH_MAX];
+    char draw_text_bin[PATH_MAX];
     char draw_opt_bin[PATH_MAX];
-    snprintf(draw_over_bin, sizeof(draw_over_bin), "%s/icons/draw_over", opt->root_dir);
+    snprintf(draw_text_bin, sizeof(draw_text_bin), "%s/icons/draw_text", opt->root_dir);
     snprintf(draw_opt_bin, sizeof(draw_opt_bin), "%s/icons/draw_optimize", opt->root_dir);
-    if (access(draw_over_bin, X_OK) != 0) { unlink(outpng); unlink(overlay); return -1; }
-    if (access(draw_opt_bin, X_OK) != 0) { unlink(outpng); unlink(overlay); return -1; }
+    if (access(draw_text_bin, X_OK) != 0) { unlink(outpng); return -1; }
+    if (access(draw_opt_bin, X_OK) != 0) { unlink(outpng); return -1; }
 
-    char *argv_over[] = { draw_over_bin, overlay, outpng, NULL };
-    if (run_exec(argv_over) != 0) { unlink(outpng); unlink(overlay); return -1; }
+    const char *tc = (preset && preset->text_color && preset->text_color[0]) ? preset->text_color : "FFFFFF";
+    const char *ta = (preset && preset->text_align && preset->text_align[0]) ? preset->text_align : "center";
+    const char *tf = (preset && preset->text_font && preset->text_font[0]) ? preset->text_font : "Roboto";
+    bool used_default_font = !(preset && preset->text_font && preset->text_font[0]);
+    int ts = preset ? clamp_int(preset->text_size, 1, 64) : 40;
+    int tox = preset ? preset->text_offset_x : 0;
+    int toy = preset ? preset->text_offset_y : 0;
+
+    char text_arg[768];
+    snprintf(text_arg, sizeof(text_arg), "--text=%s", text);
+    char tc_arg[64];
+    snprintf(tc_arg, sizeof(tc_arg), "--text_color=%s", tc);
+    char ta_arg[64];
+    snprintf(ta_arg, sizeof(ta_arg), "--text_align=%s", ta);
+    char tf_arg[PATH_MAX];
+    snprintf(tf_arg, sizeof(tf_arg), "--text_font=%s", tf);
+    char ts_arg[64];
+    snprintf(ts_arg, sizeof(ts_arg), "--text_size=%d", ts);
+    char to_arg[64];
+    snprintf(to_arg, sizeof(to_arg), "--text_offset=%d,%d", tox, toy);
+
+    char *argv_text[] = { draw_text_bin, text_arg, tc_arg, ta_arg, tf_arg, ts_arg, to_arg, outpng, NULL };
+    int rc = run_exec(argv_text);
+    if (rc != 0 && used_default_font) {
+        // If "Roboto" isn't available, fall back to the draw_text default font behavior.
+        char *argv_text2[] = { draw_text_bin, text_arg, tc_arg, ta_arg, ts_arg, to_arg, outpng, NULL };
+        rc = run_exec(argv_text2);
+    }
+    if (rc != 0) { unlink(outpng); return -1; }
+
     char *argv_opt[] = { draw_opt_bin, (char *)"-c", (char *)"4", outpng, NULL };
-    if (run_exec(argv_opt) != 0) { unlink(outpng); unlink(overlay); return -1; }
+    if (run_exec(argv_opt) != 0) { unlink(outpng); return -1; }
 
-    unlink(overlay);
     snprintf(out_tmp_png, out_cap, "%s", outpng);
     return 0;
 }
@@ -1499,12 +1475,17 @@ static void make_device_label(const char *src, char *out, size_t out_cap) {
     size_t w = 0;
     for (size_t i = 0; src[i] && w + 1 < out_cap; i++) {
         unsigned char c = (unsigned char)src[i];
-        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') c = '_';
-        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.') {
-            out[w++] = (char)c;
-        } else {
+        // Keep UTF-8 bytes as-is (Ulanzi socket protocol is text), but avoid whitespace/control chars
+        // because the device daemon splits args on spaces/tabs/newlines.
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
             out[w++] = '_';
+            continue;
         }
+        if (c < 0x20 || c == 0x7f) {
+            out[w++] = '_';
+            continue;
+        }
+        out[w++] = (char)c;
     }
     out[w] = 0;
 }
@@ -1650,7 +1631,7 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
                 char base_png[PATH_MAX];
                 if (cached_or_generated_into_state(opt, cfg, page_name, item_i, &tmp_it, NULL, (const char *)"", pr_name, NULL, base_png, sizeof(base_png))) {
                     char tmp_out[PATH_MAX];
-                    if (render_value_over_base_tmp(opt, pr, page_name, pos, base_png, eff_text, tmp_out, sizeof(tmp_out)) == 0) {
+                    if (render_value_text_on_base_tmp(opt, pr, page_name, pos, base_png, eff_text, tmp_out, sizeof(tmp_out)) == 0) {
                         snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp_out);
                         btn_set[pos] = true;
                         cleanup_tmp[pos] = true;
@@ -2099,7 +2080,7 @@ static void ha_partial_update_visible(const Options *opt, const Config *cfg, con
                     char base_png[PATH_MAX];
                     if (cached_or_generated_into_state(opt, cfg, page_name, item_i, &tmp_it, NULL, (const char *)"", pr_name, NULL, base_png, sizeof(base_png))) {
                         char tmp_out[PATH_MAX];
-                        if (render_value_over_base_tmp(opt, pr, page_name, pos, base_png, eff_text, tmp_out, sizeof(tmp_out)) == 0) {
+                        if (render_value_text_on_base_tmp(opt, pr, page_name, pos, base_png, eff_text, tmp_out, sizeof(tmp_out)) == 0) {
                             snprintf(icon_path, sizeof(icon_path), "%s", tmp_out);
                             ulanzi_send_partial(opt, pos, icon_path, label_src);
                             unlink(icon_path);
