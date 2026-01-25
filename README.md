@@ -1,7 +1,7 @@
 # GoofyDeck
 
-GoofyDeck is a comprehensive project for managing the Ulanzi D200 device, including a C daemon, utilities, and scripts to control the screen and buttons.
-/!\ this project is still under construction, not all function are implemented yet /!\
+GoofyDeck is a project for managing the Ulanzi D200 device with C daemons, utilities, and scripts to control the screen/buttons, with optional Home Assistant integration via `ha_demon`.
+/!\ this project is still under construction; not all features are implemented yet /!\
 
 ## 📋 Table of Contents
 
@@ -157,6 +157,33 @@ Home Assistant bindings (optional):
   - If `tap_action.data` is present and is a JSON object/array, it is forwarded as HA service data (and `entity_id` is injected if missing and `entity_id:` is set).
 - Script shortcut: `tap_action.action: script.<script_entity>` calls `script.turn_on` with `{"entity_id":"script.<script_entity>"}`.
 - Button `states:` can map HA state strings (e.g. `"on"`, `"off"`) to display overrides; when the state matches, the daemon uses a cached icon variant named `<button>-<hash>-<state>.png` (and `<button>-<hash>-base.png` as fallback) and updates the button via partial updates.
+
+### Icon Rendering Pipeline (pagging_demon)
+
+`pagging_demon` renders icons using only the C binaries in `icons/` (no shell wrappers):
+
+Base pipeline (per icon file):
+1) `icons/draw_square` (mandatory)
+2) `icons/draw_border` outer + inner (optional, if `icon_border_width > 0`)
+3) `icons/draw_mdi` (optional, if `icon: mdi:...`)
+4) `icons/draw_optimize -c 4` (mandatory)
+5) `icons/draw_text` (optional, if `text:` non-empty)
+6) `icons/draw_optimize -c 4` (mandatory if text rendered)
+
+Dynamic sensor values:
+- For buttons with `entity_id:` but no `states:`, the daemon creates a cached base icon and overlays the current value text using `icons/draw_over` with temporary files in `/dev/shm` (cleaned after sending).
+
+Notes:
+- `icons/draw_optimize` accepts both RGB and RGBA PNG inputs (some stages can write RGB when the background is opaque).
+
+### Cache Layout
+
+- Navigation icons are shared pre-generated assets: `assets/pregen/page_back.png`, `assets/pregen/page_prev.png`, `assets/pregen/page_next.png` (generated once if missing).
+- Page cache: `.cache/<page>/<button>-<hash>.png`
+  - `hash` is a short hash of `<page name> + <button number>`.
+  - If a button declares `states:`, the daemon also generates:
+    - `.cache/<page>/<button>-<hash>-base.png`
+    - `.cache/<page>/<button>-<hash>-<state>.png` for every configured state key.
 
 ### Home Assistant (ha_demon)
 
