@@ -56,6 +56,7 @@ TEST PRERENDER VIDEO
 TEST VIDEO PLAYBACK INFINITLY
 
 while true; do ./lib/send_video_page_wrapper -q=24 ./test_video/skrillex_10s.mp4; done
+while true; do ./lib/play_rendered_video.sh -d=66 ./test_video/skrillex_10s/; done
 
 
 

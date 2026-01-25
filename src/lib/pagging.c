@@ -67,6 +67,7 @@ typedef struct {
     char *text;                 // optional default text for the preset
     char *icon_background_color; // "RRGGBB" or "transparent"
     int icon_border_radius;      // percent (0..50)
+    int icon_border_size;        // px (98..196)
     int icon_border_width;       // px (0..98)
     char *icon_border_color;     // "RRGGBB" or "transparent"
     int icon_size;               // px (0..196), 0=auto
@@ -442,6 +443,7 @@ static void preset_init_defaults(Preset *p, const char *name) {
     p->text = NULL;
     p->icon_background_color = xstrdup("241f31");
     p->icon_border_radius = 12;
+    p->icon_border_size = 196;
     p->icon_border_width = 0;
     p->icon_border_color = xstrdup("FFFFFF");
     p->icon_size = 128;
@@ -624,6 +626,8 @@ static int load_config(const char *path, Config *out) {
             if (yaml_scalar_cstr(n)) { free(pr->icon_background_color); pr->icon_background_color = xstrdup(yaml_scalar_cstr(n)); }
             n = yaml_mapping_get(&doc, v, "icon_border_radius");
             if (yaml_scalar_cstr(n)) { int iv = 0; if (parse_int_scalar(yaml_scalar_cstr(n), &iv) == 0) pr->icon_border_radius = iv; }
+            n = yaml_mapping_get(&doc, v, "icon_border_size");
+            if (yaml_scalar_cstr(n)) { int iv = 0; if (parse_int_scalar(yaml_scalar_cstr(n), &iv) == 0) pr->icon_border_size = iv; }
             n = yaml_mapping_get(&doc, v, "icon_border_width");
             if (yaml_scalar_cstr(n)) { int iv = 0; if (parse_int_scalar(yaml_scalar_cstr(n), &iv) == 0) pr->icon_border_width = iv; }
             n = yaml_mapping_get(&doc, v, "icon_border_color");
@@ -1094,6 +1098,7 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
     const char *border_c = (preset && preset->icon_border_color && preset->icon_border_color[0]) ? preset->icon_border_color : "FFFFFF";
     const char *ic_color = (preset && preset->icon_color && preset->icon_color[0]) ? preset->icon_color : "FFFFFF";
     int rad = preset ? clamp_int(preset->icon_border_radius, 0, 50) : 0;
+    int border_size = preset ? clamp_int(preset->icon_border_size, 98, 196) : 196;
     int bw = preset ? clamp_int(preset->icon_border_width, 0, 98) : 0;
     int pad = preset ? clamp_int(preset->icon_padding, 0, 98) : 0;
     int off_x = preset ? preset->icon_offset_x : 0;
@@ -1122,12 +1127,12 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
         if (access(draw_border_bin, X_OK) != 0) return -1;
         char size_outer[32];
         char rad_arg[32];
-        snprintf(size_outer, sizeof(size_outer), "--size=196");
+        snprintf(size_outer, sizeof(size_outer), "--size=%d", border_size);
         snprintf(rad_arg, sizeof(rad_arg), "--radius=%d", rad);
         char *argv_outer[] = { draw_border_bin, (char *)border_c, size_outer, rad_arg, (char *)out_png, NULL };
         if (run_exec(argv_outer) != 0) return -1;
 
-        int inner = 196 - 2 * bw;
+        int inner = border_size - 2 * bw;
         inner = clamp_int(inner, 1, 196);
         char size_inner[32];
         snprintf(size_inner, sizeof(size_inner), "--size=%d", inner);
@@ -1801,14 +1806,18 @@ static int ha_connect_events(const Options *opt) {
     return fd;
 }
 
+static bool g_ha_connected_logged = false;
+
 static void ha_handle_line(HaStateMap *ha_map, const char *line) {
     if (!line) return;
     if (strncmp(line, "evt connected", 13) == 0) {
-        log_msg("ha: connected");
+        if (!g_ha_connected_logged) log_msg("ha: connected");
+        g_ha_connected_logged = true;
         return;
     }
     if (strncmp(line, "evt disconnected", 16) == 0) {
-        log_msg("ha: disconnected");
+        if (g_ha_connected_logged) log_msg("ha: disconnected");
+        g_ha_connected_logged = false;
         return;
     }
     if (strncmp(line, "err ", 4) == 0) {

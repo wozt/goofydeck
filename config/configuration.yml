@@ -45,7 +45,7 @@ presets:
     text_size: 48
     text_offset: 0,0
   base_button:
-    icon_background_color: "333333"
+    icon_background_color: "transparent"
     icon_size: 128
     icon_border_radius: 12
     icon_color: "FFFFFF"
@@ -67,6 +67,7 @@ presets:
     icon_background_color: "b9003e"
     icon_size: 128
     icon_border_radius: 12
+    icon_border_size: 128
   p01:
     icon_background_color: "241f31"
     icon_border_radius: 12
