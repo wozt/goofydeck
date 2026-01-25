@@ -2284,6 +2284,24 @@ int main(int argc, char **argv) {
         log_msg("config missing $root page");
         return 1;
     }
+
+    // Initialize label style once at startup (best-effort).
+    {
+        char style_json[PATH_MAX];
+        snprintf(style_json, sizeof(style_json), "%s/assets/json/default.json", opt.root_dir);
+        if (file_exists(style_json)) {
+            char cmd[PATH_MAX + 64];
+            snprintf(cmd, sizeof(cmd), "set-label-style %s", style_json);
+            char reply[64] = {0};
+            if (send_line_and_read_reply(opt.ulanzi_sock, cmd, reply, sizeof(reply)) != 0) {
+                log_msg("WARN: set-label-style failed");
+            } else {
+                log_msg("set-label-style resp='%s'", reply[0] ? reply : "<empty>");
+            }
+        } else {
+            log_msg("WARN: missing label style JSON: %s", style_json);
+        }
+    }
     if (dump_config) {
         fprintf(stderr, "[pagging] dump-config: pages=%zu presets=%zu\n", cfg.page_count, cfg.preset_count);
         for (size_t i = 0; i < cfg.page_count; i++) {
