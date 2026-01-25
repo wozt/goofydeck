@@ -57,7 +57,7 @@ static int write_chunk(FILE *f, const char *type, const unsigned char *data, siz
     return 0;
 }
 
-// --- PNG decode (bit depth 8 only; color types: 6 RGBA, 2 RGB, 3 palette) ---
+// --- PNG decode (supports palette bit depths 1/2/4/8; color types: 6 RGBA(8), 2 RGB(8), 3 palette(1/2/4/8)) ---
 typedef struct {
     uint32_t w, h;
     unsigned char *rgba; // w*h*4
@@ -69,8 +69,7 @@ static void image_free(Image *img) {
     img->w = img->h = 0;
 }
 
-static int png_unfilter(uint8_t *out, const uint8_t *scan, uint32_t w, uint32_t h, uint32_t bpp) {
-    uint32_t stride = bpp * w;
+static int png_unfilter(uint8_t *out, const uint8_t *scan, uint32_t h, uint32_t stride, uint32_t bpp) {
     const uint8_t *prev = NULL;
     for (uint32_t y = 0; y < h; y++) {
         const uint8_t *row = scan + y * (1 + stride);
@@ -121,6 +120,40 @@ static int png_unfilter(uint8_t *out, const uint8_t *scan, uint32_t w, uint32_t 
     return 0;
 }
 
+static int palette_unpack(const uint8_t *raw_packed, uint32_t w, uint32_t h, uint8_t bit_depth, uint8_t **out_idx) {
+    if (!raw_packed || !out_idx) return -1;
+    if (!(bit_depth == 1 || bit_depth == 2 || bit_depth == 4 || bit_depth == 8)) return -1;
+    size_t npx = (size_t)w * (size_t)h;
+    uint8_t *idx = malloc(npx);
+    if (!idx) return -1;
+
+    if (bit_depth == 8) {
+        memcpy(idx, raw_packed, npx);
+        *out_idx = idx;
+        return 0;
+    }
+
+    uint32_t row_bytes = (uint32_t)(((uint64_t)bit_depth * w + 7u) / 8u);
+    size_t outp = 0;
+    for (uint32_t y = 0; y < h; y++) {
+        const uint8_t *row = raw_packed + (size_t)y * row_bytes;
+        uint32_t x = 0;
+        for (uint32_t bi = 0; bi < row_bytes && x < w; bi++) {
+            uint8_t b = row[bi];
+            if (bit_depth == 4) {
+                idx[outp++] = (b >> 4) & 0x0f; x++;
+                if (x < w) { idx[outp++] = b & 0x0f; x++; }
+            } else if (bit_depth == 2) {
+                for (int s = 6; s >= 0 && x < w; s -= 2) { idx[outp++] = (b >> s) & 0x03; x++; }
+            } else { // 1
+                for (int s = 7; s >= 0 && x < w; s -= 1) { idx[outp++] = (b >> s) & 0x01; x++; }
+            }
+        }
+    }
+    *out_idx = idx;
+    return 0;
+}
+
 static int load_png_rgba(const char *path, Image *out) {
     memset(out, 0, sizeof(*out));
     FILE *f = fopen(path, "rb");
@@ -158,8 +191,12 @@ static int load_png_rgba(const char *path, Image *out) {
             h = read_be32(buf + 4);
             bit_depth = buf[8];
             color_type = buf[9];
-            if (bit_depth != 8) { free(buf); free(idat); fclose(f); return -1; }
             if (!(color_type == 6 || color_type == 2 || color_type == 3)) { free(buf); free(idat); fclose(f); return -1; }
+            if (color_type == 3) {
+                if (!(bit_depth == 1 || bit_depth == 2 || bit_depth == 4 || bit_depth == 8)) { free(buf); free(idat); fclose(f); return -1; }
+            } else {
+                if (bit_depth != 8) { free(buf); free(idat); fclose(f); return -1; }
+            }
         } else if (memcmp(type, "PLTE", 4) == 0) {
             if (len % 3 != 0 || len / 3 > 256) { free(buf); free(idat); fclose(f); return -1; }
             palette_size = (int)(len / 3);
@@ -191,8 +228,15 @@ static int load_png_rgba(const char *path, Image *out) {
     if (!w || !h || !idat) { free(idat); return -1; }
     if (color_type == 3 && palette_size == 0) { free(idat); return -1; }
 
-    uint32_t bpp = (color_type == 6) ? 4 : (color_type == 2 ? 3 : 1);
-    size_t scan_cap = (size_t)(1 + bpp * w) * h;
+    uint32_t stride = 0;
+    uint32_t bpp_filter = 0;
+    if (color_type == 6) { stride = 4 * w; bpp_filter = 4; }
+    else if (color_type == 2) { stride = 3 * w; bpp_filter = 3; }
+    else { // palette
+        stride = (uint32_t)(((uint64_t)bit_depth * w + 7u) / 8u);
+        bpp_filter = 1;
+    }
+    size_t scan_cap = (size_t)(1 + stride) * h;
     unsigned char *scan = malloc(scan_cap);
     if (!scan) { free(idat); return -1; }
 
@@ -208,9 +252,9 @@ static int load_png_rgba(const char *path, Image *out) {
     free(idat);
     if (ret != Z_STREAM_END) { free(scan); return -1; }
 
-    unsigned char *raw = malloc((size_t)bpp * w * h);
+    unsigned char *raw = malloc((size_t)stride * h);
     if (!raw) { free(scan); return -1; }
-    if (png_unfilter(raw, scan, w, h, bpp) != 0) { free(scan); free(raw); return -1; }
+    if (png_unfilter(raw, scan, h, stride, bpp_filter) != 0) { free(scan); free(raw); return -1; }
     free(scan);
 
     unsigned char *rgba = malloc((size_t)w * h * 4);
@@ -227,21 +271,24 @@ static int load_png_rgba(const char *path, Image *out) {
             rgba[outp++] = 255;
         }
     } else { // palette
+        uint8_t *idx = NULL;
+        if (palette_unpack(raw, w, h, bit_depth, &idx) != 0) { free(raw); free(rgba); return -1; }
         size_t outp = 0;
         for (size_t i = 0; i < (size_t)w * h; i++) {
-            unsigned char idx = raw[i];
-            if (idx >= (unsigned char)palette_size) {
+            unsigned char pi = idx[i];
+            if (pi >= (unsigned char)palette_size) {
                 rgba[outp++] = 0;
                 rgba[outp++] = 0;
                 rgba[outp++] = 0;
                 rgba[outp++] = 0;
             } else {
-                rgba[outp++] = palette[idx][0];
-                rgba[outp++] = palette[idx][1];
-                rgba[outp++] = palette[idx][2];
-                rgba[outp++] = palette[idx][3];
+                rgba[outp++] = palette[pi][0];
+                rgba[outp++] = palette[pi][1];
+                rgba[outp++] = palette[pi][2];
+                rgba[outp++] = palette[pi][3];
             }
         }
+        free(idx);
     }
     free(raw);
 

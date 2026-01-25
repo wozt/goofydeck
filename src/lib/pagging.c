@@ -89,7 +89,21 @@ typedef struct {
     Item *items;
     size_t count;
     size_t cap;
+    // Optional wallpaper override for this page.
+    char *wallpaper_path;
+    int wallpaper_quality;   // 10..100
+    int wallpaper_magnify;   // 50..300
+    bool wallpaper_dithering;
+    bool wallpaper_set;
 } Page;
+
+typedef struct {
+    char *path;
+    int quality;   // 10..100
+    int magnify;   // 50..300
+    bool dithering;
+    bool set;
+} WallpaperCfg;
 
 typedef struct {
     int pos_back;
@@ -105,6 +119,7 @@ typedef struct {
     Page *pages;
     size_t page_count;
     size_t page_cap;
+    WallpaperCfg wallpaper;
 } Config;
 
 typedef struct {
@@ -399,6 +414,90 @@ static int parse_offset_scalar(const char *s, int *x, int *y) {
     return -1;
 }
 
+static int parse_bool_scalar(const char *s, bool *out) {
+    if (!s || !out) return -1;
+    if (strcasecmp(s, "1") == 0 || strcasecmp(s, "true") == 0 || strcasecmp(s, "yes") == 0 || strcasecmp(s, "on") == 0) {
+        *out = true;
+        return 0;
+    }
+    if (strcasecmp(s, "0") == 0 || strcasecmp(s, "false") == 0 || strcasecmp(s, "no") == 0 || strcasecmp(s, "off") == 0) {
+        *out = false;
+        return 0;
+    }
+    return -1;
+}
+
+static void wallpaper_apply_defaults(WallpaperCfg *w) {
+    if (!w) return;
+    w->quality = 30;
+    w->magnify = 100;
+    w->dithering = true;
+}
+
+static void page_wallpaper_apply_defaults(Page *p) {
+    if (!p) return;
+    p->wallpaper_quality = 30;
+    p->wallpaper_magnify = 100;
+    p->wallpaper_dithering = true;
+}
+
+static void parse_wallpaper_node(yaml_document_t *doc, yaml_node_t *node, WallpaperCfg *out) {
+    if (!doc || !out || !node) return;
+    wallpaper_apply_defaults(out);
+
+    if (node->type == YAML_SCALAR_NODE) {
+        const char *s = yaml_scalar_cstr(node);
+        if (s && s[0]) {
+            free(out->path);
+            out->path = xstrdup(s);
+            out->set = true;
+        }
+        return;
+    }
+
+    if (node->type != YAML_MAPPING_NODE) return;
+    yaml_node_t *n = yaml_mapping_get(doc, node, "path");
+    if (yaml_scalar_cstr(n) && yaml_scalar_cstr(n)[0]) {
+        free(out->path);
+        out->path = xstrdup(yaml_scalar_cstr(n));
+        out->set = true;
+    }
+    n = yaml_mapping_get(doc, node, "quality");
+    if (yaml_scalar_cstr(n)) { int iv = 0; if (parse_int_scalar(yaml_scalar_cstr(n), &iv) == 0) out->quality = iv; }
+    n = yaml_mapping_get(doc, node, "magnify");
+    if (yaml_scalar_cstr(n)) { int iv = 0; if (parse_int_scalar(yaml_scalar_cstr(n), &iv) == 0) out->magnify = iv; }
+    n = yaml_mapping_get(doc, node, "dithering");
+    if (yaml_scalar_cstr(n)) { bool bv = true; if (parse_bool_scalar(yaml_scalar_cstr(n), &bv) == 0) out->dithering = bv; }
+}
+
+static void parse_page_wallpaper_node(yaml_document_t *doc, yaml_node_t *node, Page *p) {
+    if (!doc || !node || !p) return;
+    page_wallpaper_apply_defaults(p);
+    p->wallpaper_set = true;
+
+    if (node->type == YAML_SCALAR_NODE) {
+        const char *s = yaml_scalar_cstr(node);
+        if (s && s[0]) {
+            free(p->wallpaper_path);
+            p->wallpaper_path = xstrdup(s);
+        }
+        return;
+    }
+    if (node->type != YAML_MAPPING_NODE) return;
+
+    yaml_node_t *n = yaml_mapping_get(doc, node, "path");
+    if (yaml_scalar_cstr(n) && yaml_scalar_cstr(n)[0]) {
+        free(p->wallpaper_path);
+        p->wallpaper_path = xstrdup(yaml_scalar_cstr(n));
+    }
+    n = yaml_mapping_get(doc, node, "quality");
+    if (yaml_scalar_cstr(n)) { int iv = 0; if (parse_int_scalar(yaml_scalar_cstr(n), &iv) == 0) p->wallpaper_quality = iv; }
+    n = yaml_mapping_get(doc, node, "magnify");
+    if (yaml_scalar_cstr(n)) { int iv = 0; if (parse_int_scalar(yaml_scalar_cstr(n), &iv) == 0) p->wallpaper_magnify = iv; }
+    n = yaml_mapping_get(doc, node, "dithering");
+    if (yaml_scalar_cstr(n)) { bool bv = true; if (parse_bool_scalar(yaml_scalar_cstr(n), &bv) == 0) p->wallpaper_dithering = bv; }
+}
+
 static Page *config_get_page(Config *cfg, const char *name) {
     for (size_t i = 0; i < cfg->page_count; i++) {
         if (strcmp(cfg->pages[i].name, name) == 0) return &cfg->pages[i];
@@ -414,6 +513,11 @@ static Page *config_add_page(Config *cfg, const char *name) {
     Page *p = &cfg->pages[cfg->page_count++];
     memset(p, 0, sizeof(*p));
     p->name = xstrdup(name);
+    p->wallpaper_path = NULL;
+    p->wallpaper_quality = 30;
+    p->wallpaper_magnify = 100;
+    p->wallpaper_dithering = true;
+    p->wallpaper_set = false;
     return p;
 }
 
@@ -434,6 +538,11 @@ static void config_init_defaults(Config *cfg) {
     cfg->sleep_dim_brightness = 20;
     cfg->sleep_dim_timeout_sec = 0;
     cfg->sleep_timeout_sec = 0;
+    cfg->wallpaper.path = NULL;
+    cfg->wallpaper.quality = 30;
+    cfg->wallpaper.magnify = 100;
+    cfg->wallpaper.dithering = true;
+    cfg->wallpaper.set = false;
 }
 
 static void preset_init_defaults(Preset *p, const char *name) {
@@ -503,6 +612,7 @@ static void config_free(Config *cfg) {
 
     for (size_t i = 0; i < cfg->page_count; i++) {
         Page *p = &cfg->pages[i];
+        free(p->wallpaper_path);
         for (size_t j = 0; j < p->count; j++) {
             free(p->items[j].name);
             free(p->items[j].icon);
@@ -524,6 +634,7 @@ static void config_free(Config *cfg) {
         free(p->name);
     }
     free(cfg->pages);
+    free(cfg->wallpaper.path);
     memset(cfg, 0, sizeof(*cfg));
 }
 
@@ -582,6 +693,14 @@ static int load_config(const char *path, Config *out) {
             n = yaml_mapping_get(&doc, sn, "sleep_timeout");
             if (yaml_scalar_cstr(n) && parse_int_scalar(yaml_scalar_cstr(n), &v) == 0) cfg.sleep_timeout_sec = (v < 0) ? 0 : v;
         }
+    }
+
+    // wallpaper (global): string path or mapping { path, quality, magnify, dithering }
+    {
+        yaml_node_t *wn = yaml_mapping_get(&doc, root, "wallpaper");
+        if (wn) parse_wallpaper_node(&doc, wn, &cfg.wallpaper);
+        cfg.wallpaper.quality = clamp_int(cfg.wallpaper.quality, 10, 100);
+        cfg.wallpaper.magnify = clamp_int(cfg.wallpaper.magnify, 50, 300);
     }
 
     // system_buttons
@@ -668,6 +787,16 @@ static int load_config(const char *path, Config *out) {
             if (!config_get_page(&cfg, page_name)) config_add_page(&cfg, page_name);
             Page *page = config_get_page(&cfg, page_name);
             if (!page) continue;
+
+            // Optional wallpaper override per page.
+            {
+                yaml_node_t *wn = yaml_mapping_get(&doc, v, "wallpaper");
+                if (wn) {
+                    parse_page_wallpaper_node(&doc, wn, page);
+                    page->wallpaper_quality = clamp_int(page->wallpaper_quality, 10, 100);
+                    page->wallpaper_magnify = clamp_int(page->wallpaper_magnify, 50, 300);
+                }
+            }
 
             yaml_node_t *buttons = yaml_mapping_get(&doc, v, "buttons");
             if (!buttons || buttons->type != YAML_SEQUENCE_NODE) continue;
@@ -815,6 +944,169 @@ static int copy_file(const char *src, const char *dst) {
     return 0;
 }
 
+static void state_dir(const Options *opt, char *out, size_t cap);
+static void sanitize_suffix(const char *in, char *out, size_t cap);
+
+typedef struct {
+    const char *path;
+    int quality;
+    int magnify;
+    bool dithering;
+    bool enabled;
+} WallpaperEff;
+
+static WallpaperEff effective_wallpaper(const Config *cfg, const Page *page) {
+    WallpaperEff out;
+    memset(&out, 0, sizeof(out));
+    out.quality = 30;
+    out.magnify = 100;
+    out.dithering = true;
+    out.enabled = false;
+
+    if (page && page->wallpaper_set) {
+        if (page->wallpaper_path && page->wallpaper_path[0]) {
+            out.path = page->wallpaper_path;
+            out.quality = page->wallpaper_quality;
+            out.magnify = page->wallpaper_magnify;
+            out.dithering = page->wallpaper_dithering;
+            out.enabled = true;
+            return out;
+        }
+        // Explicitly set but empty => disable.
+        return out;
+    }
+
+    if (cfg && cfg->wallpaper.set && cfg->wallpaper.path && cfg->wallpaper.path[0]) {
+        out.path = cfg->wallpaper.path;
+        out.quality = cfg->wallpaper.quality;
+        out.magnify = cfg->wallpaper.magnify;
+        out.dithering = cfg->wallpaper.dithering;
+        out.enabled = true;
+    }
+    return out;
+}
+
+static int resolve_path_root(const Options *opt, const char *in, char *out, size_t cap) {
+    if (!opt || !in || !out || cap == 0) return -1;
+    out[0] = 0;
+    if (in[0] == '/') {
+        snprintf(out, cap, "%s", in);
+        return 0;
+    }
+    char tmp[PATH_MAX];
+    snprintf(tmp, sizeof(tmp), "%s/%s", opt->root_dir, in);
+    snprintf(out, cap, "%s", tmp);
+    return 0;
+}
+
+static int wallpaper_render_dir_and_prefix(const char *wallpaper_abs_png,
+                                           char *out_dir, size_t dir_cap,
+                                           char *out_prefix, size_t prefix_cap) {
+    if (!wallpaper_abs_png || !out_dir || !out_prefix || dir_cap == 0 || prefix_cap == 0) return -1;
+    out_dir[0] = 0;
+    out_prefix[0] = 0;
+
+    const char *base = strrchr(wallpaper_abs_png, '/');
+    base = base ? base + 1 : wallpaper_abs_png;
+    size_t bl = strlen(base);
+    if (bl < 4 || strcmp(base + bl - 4, ".png") != 0) return -1;
+    size_t name_len = bl - 4;
+    if (name_len + 1 > prefix_cap) return -1;
+    memcpy(out_prefix, base, name_len);
+    out_prefix[name_len] = 0;
+
+    char dirbuf[PATH_MAX];
+    snprintf(dirbuf, sizeof(dirbuf), "%s", wallpaper_abs_png);
+    char *slash = strrchr(dirbuf, '/');
+    if (slash) *slash = 0;
+    else snprintf(dirbuf, sizeof(dirbuf), ".");
+
+    snprintf(out_dir, dir_cap, "%s/%s", dirbuf, out_prefix);
+    return 0;
+}
+
+static bool wallpaper_tiles_exist(const char *dir, const char *prefix) {
+    if (!dir || !prefix) return false;
+    char path[PATH_MAX];
+    for (int i = 1; i <= 14; i++) {
+        snprintf(path, sizeof(path), "%s/%s-%d.png", dir, prefix, i);
+        if (!file_exists(path)) return false;
+    }
+    return true;
+}
+
+static int ensure_wallpaper_rendered(const Options *opt, const WallpaperEff *wp, char *out_dir, size_t dir_cap,
+                                     char *out_prefix, size_t prefix_cap) {
+    if (!opt || !wp || !wp->enabled || !wp->path || !out_dir || !out_prefix) return -1;
+
+    char abs_png[PATH_MAX];
+    if (resolve_path_root(opt, wp->path, abs_png, sizeof(abs_png)) != 0) return -1;
+    if (!file_exists(abs_png)) return -1;
+
+    if (wallpaper_render_dir_and_prefix(abs_png, out_dir, dir_cap, out_prefix, prefix_cap) != 0) return -1;
+    if (wallpaper_tiles_exist(out_dir, out_prefix)) return 0;
+
+    char script[PATH_MAX];
+    snprintf(script, sizeof(script), "%s/lib/render_image_page_wrapper.sh", opt->root_dir);
+    if (access(script, X_OK) != 0) return -1;
+
+    int q = clamp_int(wp->quality, 10, 100);
+    int m = clamp_int(wp->magnify, 50, 300);
+    char qarg[32];
+    char marg[32];
+    snprintf(qarg, sizeof(qarg), "-q=%d", q);
+    snprintf(marg, sizeof(marg), "-m=%d", m);
+
+    if (wp->dithering) {
+        char *argv[] = { script, qarg, marg, (char *)"-d", abs_png, NULL };
+        if (run_exec(argv) != 0) return -1;
+    } else {
+        char *argv[] = { script, qarg, marg, abs_png, NULL };
+        if (run_exec(argv) != 0) return -1;
+    }
+
+    return wallpaper_tiles_exist(out_dir, out_prefix) ? 0 : -1;
+}
+
+static int wallpaper_session_tile(const Options *opt, const char *render_dir, const char *prefix,
+                                  const WallpaperEff *wp, int tile_num, char *out_path, size_t out_cap) {
+    if (!opt || !render_dir || !prefix || !wp || !out_path || out_cap == 0) return -1;
+    out_path[0] = 0;
+    if (tile_num < 1 || tile_num > 14) return -1;
+
+    char src[PATH_MAX];
+    snprintf(src, sizeof(src), "%s/%s-%d.png", render_dir, prefix, tile_num);
+    if (!file_exists(src)) return -1;
+
+    // Session copy dir under state_dir (prefers /dev/shm via state_dir()).
+    char dir[PATH_MAX];
+    state_dir(opt, dir, sizeof(dir));
+    char wdir[PATH_MAX];
+    snprintf(wdir, sizeof(wdir), "%s/wallpaper", dir);
+    ensure_dir(wdir);
+
+    char key[PATH_MAX + 128];
+    snprintf(key, sizeof(key), "dir:%s\nprefix:%s\nq:%d\nm:%d\nd:%d\n",
+             render_dir, prefix, wp->quality, wp->magnify, wp->dithering ? 1 : 0);
+    uint32_t h = fnv1a32(key, strlen(key));
+    char sub[PATH_MAX];
+    snprintf(sub, sizeof(sub), "%s/%08x", wdir, h);
+    ensure_dir(sub);
+
+    char dst[PATH_MAX];
+    snprintf(dst, sizeof(dst), "%s/%s-%d.png", sub, prefix, tile_num);
+    if (!file_exists(dst)) {
+        (void)copy_file(src, dst);
+    }
+    if (file_exists(dst)) {
+        snprintf(out_path, out_cap, "%s", dst);
+        return 0;
+    }
+    // Fallback to on-disk render tile
+    snprintf(out_path, out_cap, "%s", src);
+    return 0;
+}
+
 static int clamp_int(int v, int lo, int hi) {
     if (v < lo) return lo;
     if (v > hi) return hi;
@@ -826,9 +1118,6 @@ static double now_sec_monotonic(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
-
-static void state_dir(const Options *opt, char *out, size_t cap);
-static void sanitize_suffix(const char *in, char *out, size_t cap);
 
 typedef struct {
     char *entity_id;
@@ -1540,9 +1829,17 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
     bool show_prev = sheet.show_prev;
     bool show_next = sheet.show_next;
 
+    WallpaperEff sig_wp = effective_wallpaper(cfg, p);
+    uint32_t wp_sig = 0;
+    if (sig_wp.enabled && sig_wp.path && sig_wp.path[0]) {
+        char wkey[1024];
+        snprintf(wkey, sizeof(wkey), "path:%s\nq:%d\nm:%d\nd:%d\n", sig_wp.path, sig_wp.quality, sig_wp.magnify, sig_wp.dithering ? 1 : 0);
+        wp_sig = fnv1a32(wkey, strlen(wkey));
+    }
+
     char sig[256];
-    snprintf(sig, sizeof(sig), "%s|%zu|%zu|%d|%d|%d|%d|%d", page_name, offset, item_slots,
-             show_back ? 1 : 0, need_pagination ? 1 : 0, show_prev ? 1 : 0, show_next ? 1 : 0, (int)p->count);
+    snprintf(sig, sizeof(sig), "%s|%zu|%zu|%d|%d|%d|%d|%d|%08x", page_name, offset, item_slots,
+             show_back ? 1 : 0, need_pagination ? 1 : 0, show_prev ? 1 : 0, show_next ? 1 : 0, (int)p->count, wp_sig);
     if (strncmp(sig, last_sig, last_sig_cap) == 0) {
         return;
     }
@@ -1688,17 +1985,84 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
         }
     }
 
+    // Optional wallpaper: pre-render 14 tiles from an image, then overlay each icon on its tile via draw_over.
+    // Tile 14 is sent as part of the same command (no overlay) when wallpaper is active.
+    char wp_tile14[PATH_MAX] = {0};
+    bool wp_active = false;
+    {
+        WallpaperEff wp = effective_wallpaper(cfg, p);
+        if (wp.enabled) {
+            char render_dir[PATH_MAX];
+            char prefix[PATH_MAX];
+            if (ensure_wallpaper_rendered(opt, &wp, render_dir, sizeof(render_dir), prefix, sizeof(prefix)) == 0) {
+                wp_active = true;
+                char dir[PATH_MAX];
+                state_dir(opt, dir, sizeof(dir));
+                char tmpdir[PATH_MAX];
+                snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", dir);
+                ensure_dir(tmpdir);
+
+                // Precompute tile 14 for this render (no overlay).
+                (void)wallpaper_session_tile(opt, render_dir, prefix, &wp, 14, wp_tile14, sizeof(wp_tile14));
+
+                char draw_over_bin[PATH_MAX];
+                snprintf(draw_over_bin, sizeof(draw_over_bin), "%s/icons/draw_over", opt->root_dir);
+                bool have_draw_over = (access(draw_over_bin, X_OK) == 0);
+
+                char page_tag[96];
+                sanitize_suffix(page_name, page_tag, sizeof(page_tag));
+                if (page_tag[0] == 0) snprintf(page_tag, sizeof(page_tag), "page");
+
+                long t = (long)time(NULL);
+                pid_t pid = getpid();
+
+                for (int pos = 1; pos <= 13; pos++) {
+                    char tile[PATH_MAX];
+                    if (wallpaper_session_tile(opt, render_dir, prefix, &wp, pos, tile, sizeof(tile)) != 0 || tile[0] == 0) continue;
+
+                    // If the button is blank, show only the wallpaper tile (no overlay).
+                    if (strcmp(btn_path[pos], blank_png) == 0) {
+                        snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tile);
+                        btn_set[pos] = true;
+                        continue;
+                    }
+
+                    if (!have_draw_over) continue;
+
+                    // If the current icon is a temp file (e.g. dynamic sensor value), clean it after composing.
+                    char icon_top[PATH_MAX];
+                    snprintf(icon_top, sizeof(icon_top), "%s", btn_path[pos]);
+                    bool icon_top_is_tmp = cleanup_tmp[pos];
+
+                    char outpng[PATH_MAX];
+                    snprintf(outpng, sizeof(outpng), "%s/wp_%s_%d_%ld_%d.png", tmpdir, page_tag, (int)pid, t, pos);
+                    if (copy_file(tile, outpng) != 0) continue;
+                    char *argv_over[] = { draw_over_bin, icon_top, outpng, NULL };
+                    if (run_exec(argv_over) != 0) { unlink(outpng); continue; }
+
+                    if (icon_top_is_tmp) unlink(icon_top);
+                    cleanup_tmp[pos] = true;
+                    snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", outpng);
+                    btn_set[pos] = true;
+                }
+            }
+        }
+    }
+
     // Build command
     char *cmd = NULL;
     size_t w = 0;
     size_t cap = 0;
-    appendf_dyn(&cmd, &w, &cap, "set-buttons-explicit");
+    appendf_dyn(&cmd, &w, &cap, "%s", wp_active ? "set-buttons-explicit-14" : "set-buttons-explicit");
     for (int pos = 1; pos <= 13; pos++) {
         if (!btn_set[pos]) snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", blank_png);
         appendf_dyn(&cmd, &w, &cap, " --button-%d=%s", pos, btn_path[pos]);
         if (label_set[pos]) {
             appendf_dyn(&cmd, &w, &cap, " --label-%d=%s", pos, btn_label[pos]);
         }
+    }
+    if (wp_active && wp_tile14[0]) {
+        appendf_dyn(&cmd, &w, &cap, " --button-14=%s", wp_tile14);
     }
     if (!cmd) return;
     if (w > 8000) log_msg("send cmd_len=%zu (was previously truncated at 8192)", w);
@@ -2010,6 +2374,72 @@ static void ulanzi_send_partial(const Options *opt, int pos, const char *png_pat
     if (reply[0]) log_msg("partial resp='%s'", reply);
 }
 
+static void ulanzi_send_partial_wallpaper(const Options *opt, const Config *cfg, const char *page_name, int pos,
+                                          const char *png_path, const char *label_src, const char *blank_png) {
+    if (!opt || !cfg || !page_name || pos < 1 || pos > 13 || !png_path || !png_path[0]) return;
+    const Page *page = config_get_page((Config *)cfg, page_name);
+    WallpaperEff wp = effective_wallpaper(cfg, page);
+    if (!wp.enabled) {
+        ulanzi_send_partial(opt, pos, png_path, label_src);
+        return;
+    }
+
+    char render_dir[PATH_MAX];
+    char prefix[PATH_MAX];
+    if (ensure_wallpaper_rendered(opt, &wp, render_dir, sizeof(render_dir), prefix, sizeof(prefix)) != 0) {
+        ulanzi_send_partial(opt, pos, png_path, label_src);
+        return;
+    }
+
+    char tile[PATH_MAX];
+    if (wallpaper_session_tile(opt, render_dir, prefix, &wp, pos, tile, sizeof(tile)) != 0 || tile[0] == 0) {
+        ulanzi_send_partial(opt, pos, png_path, label_src);
+        return;
+    }
+
+    // Blank => wallpaper tile only.
+    if (blank_png && strcmp(png_path, blank_png) == 0) {
+        ulanzi_send_partial(opt, pos, tile, label_src);
+        return;
+    }
+
+    char draw_over_bin[PATH_MAX];
+    snprintf(draw_over_bin, sizeof(draw_over_bin), "%s/icons/draw_over", opt->root_dir);
+    if (access(draw_over_bin, X_OK) != 0) {
+        ulanzi_send_partial(opt, pos, png_path, label_src);
+        return;
+    }
+
+    char dir[PATH_MAX];
+    state_dir(opt, dir, sizeof(dir));
+    char tmpdir[PATH_MAX];
+    snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", dir);
+    ensure_dir(tmpdir);
+
+    char page_tag[96];
+    sanitize_suffix(page_name, page_tag, sizeof(page_tag));
+    if (page_tag[0] == 0) snprintf(page_tag, sizeof(page_tag), "page");
+
+    long t = (long)time(NULL);
+    pid_t pid = getpid();
+    char outpng[PATH_MAX];
+    snprintf(outpng, sizeof(outpng), "%s/wp_partial_%s_%d_%ld_%d.png", tmpdir, page_tag, (int)pid, t, pos);
+    if (copy_file(tile, outpng) != 0) {
+        ulanzi_send_partial(opt, pos, png_path, label_src);
+        return;
+    }
+
+    char *argv_over[] = { draw_over_bin, (char *)png_path, outpng, NULL };
+    if (run_exec(argv_over) != 0) {
+        unlink(outpng);
+        ulanzi_send_partial(opt, pos, png_path, label_src);
+        return;
+    }
+
+    ulanzi_send_partial(opt, pos, outpng, label_src);
+    unlink(outpng);
+}
+
 static void ha_partial_update_visible(const Options *opt, const Config *cfg, const char *page_name, size_t offset,
                                       const HaStateMap *ha_map, const char *blank_png, const char *changed_entity_id) {
     if (!opt || !cfg || !page_name || !ha_map || !blank_png || !changed_entity_id) return;
@@ -2091,7 +2521,7 @@ static void ha_partial_update_visible(const Options *opt, const Config *cfg, con
                         char tmp_out[PATH_MAX];
                         if (render_value_text_on_base_tmp(opt, pr, page_name, pos, base_png, eff_text, tmp_out, sizeof(tmp_out)) == 0) {
                             snprintf(icon_path, sizeof(icon_path), "%s", tmp_out);
-                            ulanzi_send_partial(opt, pos, icon_path, label_src);
+                            ulanzi_send_partial_wallpaper(opt, cfg, page_name, pos, icon_path, label_src, blank_png);
                             unlink(icon_path);
                             sent = true;
                         }
@@ -2114,7 +2544,7 @@ static void ha_partial_update_visible(const Options *opt, const Config *cfg, con
                 }
             }
 
-            if (have_icon) ulanzi_send_partial(opt, pos, icon_path, label_src);
+            if (have_icon) ulanzi_send_partial_wallpaper(opt, cfg, page_name, pos, icon_path, label_src, blank_png);
         }
         item_i++;
     }

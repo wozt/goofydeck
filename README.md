@@ -143,6 +143,7 @@ High-level structure:
 - `system_buttons`: reserves positions for navigation buttons (`$page.back`, `$page.previous`, `$page.next`)
 - `presets`: icon/text styles (`default`, `$nav`, and custom presets)
 - `pages`: page definitions; each page has `buttons:`
+- `wallpaper` (optional): background image rendered into 14 tiles and composited behind each button
 
 Actions:
 - `tap_action.action: "$page.go_to"` + `tap_action.data: "<page_name>"` to enter a page
@@ -175,6 +176,34 @@ Dynamic sensor values:
 
 Notes:
 - `icons/draw_optimize` accepts both RGB and RGBA PNG inputs (some stages can write RGB when the background is opaque).
+
+### Wallpaper Support (pagging_demon)
+
+If `wallpaper` is configured (globally or per-page), `pagging_demon`:
+- Renders the wallpaper once into 14 tiles using `lib/render_image_page_wrapper.sh`.
+- Stores the persistent render next to the wallpaper image: `<wallpaper name without .png>/` containing tiles `<name>-1.png .. <name>-14.png`.
+- Uses a session cache in `/dev/shm` when possible.
+- Composites each icon over its corresponding tile using `icons/draw_over` (buttons 1..13).
+- Sends button 14 as the raw wallpaper tile (no overlay) as part of the same `set-buttons-explicit-14` command.
+
+Wallpaper config format:
+```yml
+wallpaper:
+  path: "mymedia/wallpapers/valley.png"
+  quality: 30      # default 30
+  magnify: 100     # default 100
+  dithering: yes   # default yes
+
+pages:
+  $root:
+    # per-page override (same schema); omit/empty to disable on that page
+    wallpaper:
+      path: "mymedia/wallpapers/valley.png"
+      quality: 30
+      magnify: 100
+      dithering: yes
+    buttons: [...]
+```
 
 ### Cache Layout
 
@@ -258,8 +287,8 @@ set-buttons-explicit \
   --button-2=mem.png --label-2=RAM \
   --button-3=disk.png --label-3=Disk
 
-# Button 14 (no label)
-set-buttons-explicit-14 --button-14=weather.png
+# Buttons 1-13 + button 14 (no label)
+set-buttons-explicit-14 --button-14=weather.png --button-1=cpu.png
 
 # Partial update
 set-partial-explicit --button-7=notification.png

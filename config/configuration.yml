@@ -5,6 +5,12 @@ sleep:
   dim_timeout: 10
   sleep_timeout: 3600
 
+wallpaper:
+  path: "mymedia/wallpapers/valley.png"
+  quality: 30
+  magnify: 100
+  dithering: yes
+
 system_buttons:
   $page.back:
     position: 11
@@ -117,7 +123,7 @@ presets:
     icon_background_color: "c01c28"
     icon_border_radius: 12
     icon_size: 128
-    icon_color: "transparent"
+    icon_color: "440055"
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
@@ -132,7 +138,7 @@ presets:
     icon_background_color: "e66100"
     icon_border_radius: 12
     icon_size: 160
-    icon_color: "FFFFFF"
+    icon_color: transparent
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
@@ -148,7 +154,7 @@ presets:
     icon_border_radius: 12
     icon_size: 0
     icon_color: "000000"
-    text_color: "000000"
+    text_color: "transparent"
     text_align: "center"
     text_font: "DejaVuSans.ttf"
     text_size: 48
@@ -159,7 +165,7 @@ presets:
     icon_offset: 0,0
     icon_brightness: 99
   p07:
-    icon_background_color: "26a269"
+    icon_background_color: "transparent"
     icon_border_radius: 12
     icon_size: 128
     icon_color: "FFFFFF"
@@ -174,7 +180,7 @@ presets:
     icon_offset: 0,0
     icon_brightness: 99
   p08:
-    icon_background_color: "3584e4"
+    icon_background_color: "transparent"
     icon_border_radius: 18
     icon_size: 128
     icon_color: "FFFFFF"
@@ -192,7 +198,7 @@ presets:
     icon_background_color: "5e5c64"
     icon_border_radius: 18
     icon_size: 128
-    icon_color: "FFFFFF"
+    icon_color: transparent
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
@@ -207,7 +213,7 @@ presets:
     icon_background_color: "000000"
     icon_border_radius: 18
     icon_size: 128
-    icon_color: "FFFFFF"
+    icon_color: transparent
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
@@ -520,7 +526,7 @@ presets:
     icon_brightness: 99
 
   dir1:
-    icon_background_color: "1a5fb4"
+    icon_background_color: transparent
     icon_border_radius: 20
     icon_border_width: 8
     icon_border_color: "FFFFFF"
@@ -567,6 +573,11 @@ presets:
 
 pages:
   $root:
+    wallpaper:
+      path: "mymedia/wallpapers/neige.png"
+      quality: 51
+      magnify: 100
+      dithering: yes
     buttons:
       - name: "Salon"
         presets: [room_folder]

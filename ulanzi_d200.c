@@ -744,18 +744,6 @@ static int send_partial_update(hid_device *dev, const IconItem *items, size_t co
     return res;
 }
 
-static int send_button14(hid_device *dev, const char *path) {
-    IconItem item;
-    item.btn_index = 13;
-    item.path = (char *)path;
-    item.name = basename_dup(path);
-    item.label = strdup("");
-    int res = send_partial_update(dev, &item, 1);
-    free(item.name);
-    free(item.label);
-    return res;
-}
-
 static void trim_line(char *line) {
     size_t len = strlen(line);
     while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) {
@@ -1061,28 +1049,6 @@ int main(void) {
                         free(items[i].label);
                     }
                     for (int i=0;i<13;i++) free(labels[i]);
-                } else if (strncmp(line,"set-partial-explicit-14",23)==0) {
-                    char *p = line + 23;
-                    char *argv[64];
-                    int argc = 0;
-                    while (*p && argc < 64) {
-                        while (*p==' ') p++;
-                        if (!*p) break;
-                        argv[argc++] = p;
-                        while (*p && *p!=' ') p++;
-                        if (*p) { *p='\0'; p++; }
-                    }
-                    const char *path = NULL;
-                    for (int i=0;i<argc;i++) {
-                        if (strncmp(argv[i],"--button-14=",12)==0) {
-                            path = argv[i]+12;
-                            break;
-                        }
-                    }
-                    if (!path && argc>0) path = argv[0];
-                    if (!path || strlen(path)==0) { write(cfd,"err\n",4); }
-                    else if (send_button14(dev, path)==0) write(cfd,"ok\n",3);
-                    else write(cfd,"err\n",4);
                 } else if (strncmp(line,"set-partial-explicit",20)==0) {
                     char *p = line + 20;
                     char *argv[64];
@@ -1138,15 +1104,6 @@ int main(void) {
                         if (items[i].data) free(items[i].data);
                     }
                     for (int i=0;i<13;i++) free(labels[i]);
-                } else if (strncmp(line,"set-partial-explicit-14",23)==0) {
-                    char *arg = line + 23;
-                    while (*arg==' ') arg++;
-                    const char *path = NULL;
-                    if (strncmp(arg,"--button-14=",12)==0) path = arg+12;
-                    else if (*arg) path = arg;
-                    if (!path || strlen(path)==0) { write(cfd,"err\n",4); }
-                    else if (send_button14(dev, path)==0) write(cfd,"ok\n",3);
-                    else write(cfd,"err\n",4);
                 } else if (strncmp(line,"ping",4)==0) {
                     time_t t=time(NULL); struct tm *tm=localtime(&t); char buf[16]; strftime(buf,sizeof(buf),"%H:%M:%S",tm);
                     char payload[64]; snprintf(payload,sizeof(payload),"%d|%d|%d|%s|%d",1,0,0,buf,0);

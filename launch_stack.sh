@@ -102,8 +102,8 @@ start_background() {
   ("${ROOT}/lib/ha_demon") &
   echo $! >"${PID_DIR}/ha_demon.pid"
 
-  echo "[launch] Sleeping 10s before starting paging..."
-  sleep 10
+  echo "[launch] Sleeping 5s before starting paging..."
+  sleep 5
 
   echo "[launch] Starting pagging_demon..."
   ("${ROOT}/lib/pagging_demon") &
