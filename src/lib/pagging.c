@@ -135,9 +135,53 @@ typedef struct {
 
 static volatile sig_atomic_t g_running = 1;
 
+// Minimum delay between successive commands sent to ulanzi_d200_demon.
+// Helps avoid spamming back-to-back ZIP transfers when buttons are pressed rapidly.
+// Tune this quickly for testing.
+static int g_ulanzi_send_debounce_ms = 300;
+static int64_t g_ulanzi_last_send_end_ns = 0;
+static int64_t g_last_action_ns = 0;
+// After a page transition, drop any queued TAPs that arrived during rendering and
+// ignore any immediate follow-up TAPs for a short window to avoid triggering an
+// action on the newly-entered page (double-tap on a folder button).
+static int g_post_page_change_ignore_ms = 250;
+static int64_t g_ignore_taps_until_ns = 0;
+
 static void on_signal(int sig) {
     (void)sig;
     g_running = 0;
+}
+
+static int64_t now_ns_monotonic(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec;
+}
+
+static void drain_fd_nonblocking(int fd) {
+    if (fd < 0) return;
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return;
+    (void)fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    char buf[4096];
+    for (;;) {
+        ssize_t r = read(fd, buf, sizeof(buf));
+        if (r > 0) continue;
+        if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+        break;
+    }
+    (void)fcntl(fd, F_SETFL, flags);
+}
+
+static void flush_pending_button_events(int rb_fd, size_t *inlen, size_t *parse_start) {
+    if (inlen) *inlen = 0;
+    if (parse_start) *parse_start = 0;
+    drain_fd_nonblocking(rb_fd);
+    if (g_post_page_change_ignore_ms > 0) {
+        g_ignore_taps_until_ns = now_ns_monotonic() + (int64_t)g_post_page_change_ignore_ms * 1000000LL;
+    } else {
+        g_ignore_taps_until_ns = 0;
+    }
 }
 
 static void die_errno(const char *msg) {
@@ -297,6 +341,22 @@ static int make_unix_listen_socket(const char *sock_path) {
 }
 
 static int send_line_and_read_reply(const char *sock_path, const char *line, char *reply, size_t reply_cap) {
+    int ms = g_ulanzi_send_debounce_ms;
+    if (ms > 0 && g_ulanzi_last_send_end_ns > 0) {
+        int64_t now = now_ns_monotonic();
+        int64_t min_gap = (int64_t)ms * 1000000LL;
+        int64_t elapsed = now - g_ulanzi_last_send_end_ns;
+        if (elapsed < min_gap) {
+            // Rate-limit writes to the device: wait a tiny bit so the previous ZIP can be processed.
+            // Action spam is handled separately by the input-side debounce (we drop events there).
+            int64_t rem = min_gap - elapsed;
+            struct timespec ts;
+            ts.tv_sec = (time_t)(rem / 1000000000LL);
+            ts.tv_nsec = (long)(rem % 1000000000LL);
+            (void)nanosleep(&ts, NULL);
+        }
+    }
+
     int fd = unix_connect(sock_path);
     if (fd < 0) return -1;
     size_t n = strlen(line);
@@ -310,6 +370,7 @@ static int send_line_and_read_reply(const char *sock_path, const char *line, cha
     reply[r] = 0;
     trim(reply);
     close(fd);
+    g_ulanzi_last_send_end_ns = now_ns_monotonic();
     return 0;
 }
 
@@ -1843,7 +1904,6 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
     if (strncmp(sig, last_sig, last_sig_cap) == 0) {
         return;
     }
-    snprintf(last_sig, last_sig_cap, "%s", sig);
 
     log_msg("render page='%s' offset=%zu slots=%zu items=%zu", page_name, offset, item_slots, p->count);
 
@@ -2068,7 +2128,8 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
     if (w > 8000) log_msg("send cmd_len=%zu (was previously truncated at 8192)", w);
 
     char reply[64] = {0};
-    if (send_line_and_read_reply(opt->ulanzi_sock, cmd, reply, sizeof(reply)) != 0) {
+    int sr = send_line_and_read_reply(opt->ulanzi_sock, cmd, reply, sizeof(reply));
+    if (sr != 0) {
         free(cmd);
         for (int pos = 1; pos <= 13; pos++) {
             if (cleanup_tmp[pos]) unlink(btn_path[pos]);
@@ -2077,6 +2138,7 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
         return;
     }
     free(cmd);
+    snprintf(last_sig, last_sig_cap, "%s", sig);
     log_msg("send resp='%s'", reply[0] ? reply : "<empty>");
 
     // Cleanup any temporary per-render images created in /dev/shm.
@@ -3048,6 +3110,27 @@ int main(int argc, char **argv) {
                 if (!control_enabled) continue;
                 if (strcmp(evt, "TAP") != 0) continue;
 
+                // Drop any very recent TAPs after a page transition.
+                {
+                    int64_t now = now_ns_monotonic();
+                    if (g_ignore_taps_until_ns > 0 && now < g_ignore_taps_until_ns) {
+                        continue;
+                    }
+                }
+
+                // Action debounce: ignore rapid successive TAPs (avoid queuing renders).
+                {
+                    int ms = g_ulanzi_send_debounce_ms;
+                    if (ms > 0) {
+                        int64_t now = now_ns_monotonic();
+                        int64_t min_gap = (int64_t)ms * 1000000LL;
+                        if (g_last_action_ns > 0 && (now - g_last_action_ns) < min_gap) {
+                            continue;
+                        }
+                        g_last_action_ns = now;
+                    }
+                }
+
                 const Page *p = config_get_page(&cfg, cur_page);
                 if (!p) { snprintf(cur_page, sizeof(cur_page), "$root"); offset = 0; p = config_get_page(&cfg, cur_page); }
                 bool show_back = strcmp(cur_page, "$root") != 0;
@@ -3081,6 +3164,8 @@ int main(int argc, char **argv) {
                         ha_enter_page(&opt, &cfg, cur_page, &ha_fd, ha_buf, &ha_len, &ha_map, &ha_subs);
                         render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
                         persist_last_page(&opt, cur_page, offset);
+                        flush_pending_button_events(rb_fd, &inlen, &start);
+                        goto parse_done;
                     }
                     continue;
                 }
@@ -3123,6 +3208,8 @@ int main(int argc, char **argv) {
                         ha_enter_page(&opt, &cfg, cur_page, &ha_fd, ha_buf, &ha_len, &ha_map, &ha_subs);
                         render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
                         persist_last_page(&opt, cur_page, offset);
+                        flush_pending_button_events(rb_fd, &inlen, &start);
+                        goto parse_done;
                     } else if (it && it->tap_action && it->tap_action[0] && it->tap_action[0] != '$') {
                         // Home Assistant call (domain.service or script.<entity> shortcut).
                         if (ha_call_from_item(&opt, ha_fd, it) != 0) {
@@ -3132,6 +3219,7 @@ int main(int argc, char **argv) {
                 }
             }
 
+parse_done:
             if (start > 0 && start < inlen) {
                 memmove(inbuf, inbuf + start, inlen - start);
                 inlen -= start;
