@@ -717,6 +717,12 @@ pages:
         presets: [base_button]
         tap_action:
           action: light.toggle
+        hold_action:
+          action: light.toggle
+        longhold_action:
+          action: light.toggle
+        released_action:
+          action: light.toggle
         states:
           "on":
             name: "LD ON"

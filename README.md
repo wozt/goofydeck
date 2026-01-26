@@ -124,7 +124,7 @@ Button fields:
 - `icon`: `mdi:<name>` or empty.
 - `text`: optional icon text (static).
 - `entity_id`: enables Home Assistant state tracking on that button when HA is enabled.
-- `tap_action:`:
+- `tap_action:` / `hold_action:` / `longhold_action:` / `released_action:`:
   - `action`: either internal paging actions (start with `$`) or a Home Assistant service like `light.toggle`
   - `data`: optional:
     - for `$page.go_to`: target page name (string)

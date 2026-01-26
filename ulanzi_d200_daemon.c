@@ -55,6 +55,7 @@ static hid_device *open_device(void) {
 }
 
 static int write_packet(hid_device *dev, const uint8_t *packet, size_t len) {
+    if (!dev) return -1;
     uint8_t buf_with_report[PACKET_SIZE + 1];
     buf_with_report[0] = 0x00;
     memcpy(buf_with_report + 1, packet, len);
@@ -109,6 +110,7 @@ static void build_packet(uint16_t command, const uint8_t *data, size_t data_len,
 }
 
 static int send_command(hid_device *dev, uint16_t cmd, const uint8_t *data, size_t len) {
+    if (!dev) return -1;
     uint8_t packet[PACKET_SIZE];
     build_packet(cmd, data, len, len, packet);
     return write_packet(dev, packet, PACKET_SIZE);
@@ -775,12 +777,16 @@ int main(void) {
     int debug = getenv("ULANZI_DEBUG") ? 1 : 0;
     g_debug = debug;
     if (getenv("ULANZI_FAST_NOPAD")) g_fast_nopad = 1;
-    hid_device *dev = open_device();
-    if (!dev) {
-        fprintf(stderr, "Unable to open device\n");
-        return 1;
+    hid_device *dev = NULL;
+    double next_reconnect = 0.0;
+    {
+        dev = open_device();
+        if (dev) {
+            hid_set_nonblocking(dev, 0);
+        } else {
+            fprintf(stderr, "Unable to open device (will retry)\n");
+        }
     }
-    hid_set_nonblocking(dev, 0);
 
     int listen_fd = make_listen_socket();
     printf("ulanzi_d200_daemon listening on %s\n", SOCK_PATH);
@@ -795,6 +801,27 @@ int main(void) {
     const double TAP_THRESHOLD = 0.02;      // seconds
     time_t last_keepalive = time(NULL);
     while (running) {
+        // Auto-reconnect to HID device if it disappeared (USB reset / unplug).
+        if (!dev) {
+            struct timespec ts_now;
+            clock_gettime(CLOCK_MONOTONIC, &ts_now);
+            double now = (double)ts_now.tv_sec + (double)ts_now.tv_nsec / 1e9;
+            if (now >= next_reconnect) {
+                dev = open_device();
+                if (dev) {
+                    hid_set_nonblocking(dev, 0);
+                    memset(down_time, 0, sizeof(down_time));
+                    memset(hold_emitted, 0, sizeof(hold_emitted));
+                    memset(longhold_emitted, 0, sizeof(longhold_emitted));
+                    memset(tap_pending, 0, sizeof(tap_pending));
+                    last_keepalive = time(NULL);
+                    if (debug) fprintf(stderr, "[debug] Reconnected to HID device\n");
+                } else {
+                    next_reconnect = now + 0.5;
+                }
+            }
+        }
+
         int cfd = accept(listen_fd, NULL, NULL);
         if (cfd >= 0) {
             int cflags = fcntl(cfd, F_GETFL, 0);
@@ -804,6 +831,13 @@ int main(void) {
             if (n > 0) {
                 line[n] = '\0';
                 trim_line(line);
+
+                // If the USB device is disconnected, only allow read-buttons subscription to stay open.
+                // Other commands require an active HID device.
+                if (!dev && strncmp(line, "read-buttons", 12) != 0) {
+                    write(cfd, "err no_device\n", 14);
+                    goto cmd_done;
+                }
                 
                 // Special case for set-buttons-explicit-14-data: binary data follows
                 int is_binary_command = 0;
@@ -1118,6 +1152,7 @@ int main(void) {
                 } else {
                     write(cfd,"unknown\n",8);
                 }
+cmd_done:
             }
             if (cfd != -1) close(cfd);
         } else {
@@ -1127,8 +1162,8 @@ int main(void) {
             }
         }
 
-        // stream button events to read-buttons subscriber
-        if (rb_fd >= 0) {
+        // stream button events to read-buttons subscriber (only when device is connected)
+        if (rb_fd >= 0 && dev) {
             uint8_t buf[PACKET_SIZE];
             int r = hid_read_timeout(dev, buf, sizeof(buf), 50);
             if (r > 0 && buf[0]==HEADER0 && buf[1]==HEADER1) {
@@ -1217,8 +1252,14 @@ int main(void) {
             } else {
                 const wchar_t *err = hid_error(dev);
                 fprintf(stderr, "[debug] hid_read_timeout failed: %d (%ls)\n", r, err ? err : L"?");
-                close(rb_fd);
-                rb_fd=-1;
+                hid_close(dev);
+                dev = NULL;
+                next_reconnect = 0.0;
+                // Keep rb_fd open so subscribers (paging_daemon) stay connected and recover after reconnect.
+                memset(down_time, 0, sizeof(down_time));
+                memset(hold_emitted, 0, sizeof(hold_emitted));
+                memset(longhold_emitted, 0, sizeof(longhold_emitted));
+                memset(tap_pending, 0, sizeof(tap_pending));
             }
         }
 
@@ -1230,7 +1271,13 @@ int main(void) {
             strftime(buf_time,sizeof(buf_time),"%H:%M:%S",tm);
             char payload[64];
             snprintf(payload,sizeof(payload),"%d|%d|%d|%s|%d",1,0,0,buf_time,0);
-            send_command(dev,0x0006,(uint8_t*)payload,strlen(payload));
+            if (dev) {
+                if (send_command(dev,0x0006,(uint8_t*)payload,strlen(payload)) < 0) {
+                    hid_close(dev);
+                    dev = NULL;
+                    next_reconnect = 0.0;
+                }
+            }
             last_keepalive = now_keep;
         }
 
@@ -1240,7 +1287,7 @@ int main(void) {
 
     if (rb_fd>=0) close(rb_fd);
     close(listen_fd);
-    hid_close(dev);
+    if (dev) hid_close(dev);
     hid_exit();
     unlink(SOCK_PATH);
     return 0;

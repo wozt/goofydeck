@@ -55,6 +55,12 @@ typedef struct {
     char *text;
     char *tap_action;
     char *tap_data;
+    char *hold_action;
+    char *hold_data;
+    char *longhold_action;
+    char *longhold_data;
+    char *released_action;
+    char *released_data;
     char *entity_id;
     StateOverride *states;
     size_t state_count;
@@ -135,14 +141,58 @@ typedef struct {
 
 static volatile sig_atomic_t g_running = 1;
 
-// Minimum delay between successive commands sent to ulanzi_d200_daemon.
-// Helps avoid spamming back-to-back ZIP transfers when buttons are pressed rapidly.
+// Minimum delay between successive actions (TAP) to avoid spamming back-to-back ZIP transfers.
 // Tune this quickly for testing.
 static int g_ulanzi_send_debounce_ms = 300;
 static int64_t g_ulanzi_last_send_end_ns = 0;
 static int64_t g_last_action_ns = 0;
 
 typedef enum { BR_NORMAL = 0, BR_DIM = 1, BR_SLEEP = 2 } BrightnessState;
+
+typedef enum {
+    BTN_EVT_UNKNOWN = 0,
+    BTN_EVT_TAP,
+    BTN_EVT_HOLD,
+    BTN_EVT_LONGHOLD,
+    BTN_EVT_RELEASED,
+} ButtonEvent;
+
+static const char *button_event_name(ButtonEvent e) {
+    switch (e) {
+        case BTN_EVT_TAP: return "TAP";
+        case BTN_EVT_HOLD: return "HOLD";
+        case BTN_EVT_LONGHOLD: return "LONGHOLD";
+        case BTN_EVT_RELEASED: return "RELEASED";
+        default: return "UNKNOWN";
+    }
+}
+
+// Fast parser for the 2nd token of "button N <evt>" coming from ulanzi_d200_daemon.
+// Accepts: TAP, HOLD, LONGHOLD, RELEASED.
+static ButtonEvent parse_button_event_word(const char *s) {
+    if (!s || !s[0]) return BTN_EVT_UNKNOWN;
+    switch (s[0]) {
+        case 'T': // TAP
+            if (s[1] == 'A' && s[2] == 'P' && s[3] == 0) return BTN_EVT_TAP;
+            return BTN_EVT_UNKNOWN;
+        case 'H': // HOLD
+            if (s[1] == 'O' && s[2] == 'L' && s[3] == 'D' && s[4] == 0) return BTN_EVT_HOLD;
+            return BTN_EVT_UNKNOWN;
+        case 'L': // LONGHOLD
+            if (s[1] == 'O' && s[2] == 'N' && s[3] == 'G' && s[4] == 'H' && s[5] == 'O' && s[6] == 'L' &&
+                s[7] == 'D' && s[8] == 0)
+                return BTN_EVT_LONGHOLD;
+            return BTN_EVT_UNKNOWN;
+        case 'R': // RELEASED
+            if (s[1] == 'E' && s[2] == 'L' && s[3] == 'E' && s[4] == 'A' && s[5] == 'S' && s[6] == 'E' &&
+                s[7] == 'D' && s[8] == 0) {
+                return BTN_EVT_RELEASED;
+            }
+            return BTN_EVT_UNKNOWN;
+        default:
+            return BTN_EVT_UNKNOWN;
+    }
+}
 // After a page transition, drop any queued TAPs that arrived during rendering and
 // ignore any immediate follow-up TAPs for a short window to avoid triggering an
 // action on the newly-entered page (double-tap on a folder button).
@@ -683,6 +733,12 @@ static void config_free(Config *cfg) {
             free(p->items[j].text);
             free(p->items[j].tap_action);
             free(p->items[j].tap_data);
+            free(p->items[j].hold_action);
+            free(p->items[j].hold_data);
+            free(p->items[j].longhold_action);
+            free(p->items[j].longhold_data);
+            free(p->items[j].released_action);
+            free(p->items[j].released_data);
             free(p->items[j].entity_id);
             for (size_t k = 0; k < p->items[j].state_count; k++) {
                 free(p->items[j].states[k].key);
@@ -900,6 +956,33 @@ static int load_config(const char *path, Config *out) {
                     yaml_node_t *d = yaml_mapping_get(&doc, n, "data");
                     if (yaml_scalar_cstr(a)) out_item.tap_action = xstrdup(yaml_scalar_cstr(a));
                     if (yaml_scalar_cstr(d)) out_item.tap_data = xstrdup(yaml_scalar_cstr(d));
+                }
+
+                // hold_action: { action: "...", data: "..." }
+                n = yaml_mapping_get(&doc, item, "hold_action");
+                if (n && n->type == YAML_MAPPING_NODE) {
+                    yaml_node_t *a = yaml_mapping_get(&doc, n, "action");
+                    yaml_node_t *d = yaml_mapping_get(&doc, n, "data");
+                    if (yaml_scalar_cstr(a)) out_item.hold_action = xstrdup(yaml_scalar_cstr(a));
+                    if (yaml_scalar_cstr(d)) out_item.hold_data = xstrdup(yaml_scalar_cstr(d));
+                }
+
+                // longhold_action: { action: "...", data: "..." }
+                n = yaml_mapping_get(&doc, item, "longhold_action");
+                if (n && n->type == YAML_MAPPING_NODE) {
+                    yaml_node_t *a = yaml_mapping_get(&doc, n, "action");
+                    yaml_node_t *d = yaml_mapping_get(&doc, n, "data");
+                    if (yaml_scalar_cstr(a)) out_item.longhold_action = xstrdup(yaml_scalar_cstr(a));
+                    if (yaml_scalar_cstr(d)) out_item.longhold_data = xstrdup(yaml_scalar_cstr(d));
+                }
+
+                // released_action: { action: "...", data: "..." } (triggered on Ulanzi RELEASED)
+                n = yaml_mapping_get(&doc, item, "released_action");
+                if (n && n->type == YAML_MAPPING_NODE) {
+                    yaml_node_t *a = yaml_mapping_get(&doc, n, "action");
+                    yaml_node_t *d = yaml_mapping_get(&doc, n, "data");
+                    if (yaml_scalar_cstr(a)) out_item.released_action = xstrdup(yaml_scalar_cstr(a));
+                    if (yaml_scalar_cstr(d)) out_item.released_data = xstrdup(yaml_scalar_cstr(d));
                 }
 
                 // states: { "on": { name, presets, icon, text }, ... }
@@ -2802,8 +2885,8 @@ static int ha_call_from_item(const Options *opt, int ha_fd, const Item *it) {
     return (rc == 0) ? 0 : -1;
 }
 
-static int parse_sim_button_arg(const char *arg, char *evt_out, size_t evt_cap, int *btn_out) {
-    if (!arg || !evt_out || evt_cap == 0 || !btn_out) return -1;
+static int parse_sim_button_arg(const char *arg, ButtonEvent *evt_out, int *btn_out) {
+    if (!arg || !evt_out || !btn_out) return -1;
 
     while (*arg == ' ' || *arg == '\t') arg++;
     if (*arg == 0) return -1;
@@ -2826,23 +2909,20 @@ static int parse_sim_button_arg(const char *arg, char *evt_out, size_t evt_cap, 
     }
 
     const char *p = buf;
-    const char *evt = NULL;
+    ButtonEvent evt = BTN_EVT_UNKNOWN;
     size_t evt_len = 0;
 
     if (strncmp(p, "LONGHOLD", 8) == 0) {
-        evt = "LONGHOLD";
+        evt = BTN_EVT_LONGHOLD;
         evt_len = 8;
     } else if (strncmp(p, "RELEASED", 8) == 0) {
-        evt = "RELEASE";
+        evt = BTN_EVT_RELEASED;
         evt_len = 8;
-    } else if (strncmp(p, "RELEASE", 7) == 0) {
-        evt = "RELEASE";
-        evt_len = 7;
     } else if (strncmp(p, "HOLD", 4) == 0) {
-        evt = "HOLD";
+        evt = BTN_EVT_HOLD;
         evt_len = 4;
     } else if (strncmp(p, "TAP", 3) == 0) {
-        evt = "TAP";
+        evt = BTN_EVT_TAP;
         evt_len = 3;
     } else {
         return -1;
@@ -2855,7 +2935,7 @@ static int parse_sim_button_arg(const char *arg, char *evt_out, size_t evt_cap, 
     if (!end || *end != 0) return -1;
     if (v < 1 || v > 14) return -1;
 
-    snprintf(evt_out, evt_cap, "%s", evt);
+    *evt_out = evt;
     *btn_out = (int)v;
     return 0;
 }
@@ -2866,7 +2946,7 @@ static void handle_button_event(const Options *opt,
                                 int rb_fd,
                                 size_t *inlen,
                                 int btn,
-                                const char *evt,
+                                ButtonEvent evt,
                                 BrightnessState *br_state,
                                 int *last_sent_brightness,
                                 double *next_brightness_retry,
@@ -2887,7 +2967,7 @@ static void handle_button_event(const Options *opt,
                                 size_t last_sig_cap) {
     if (!opt || !cfg || !blank_png || !br_state || !last_sent_brightness || !next_brightness_retry || !last_activity || !control_enabled ||
         !cur_page || cur_page_cap == 0 || !offset || !page_stack_len || !ha_fd || !ha_buf || !ha_len || !ha_map || !ha_subs ||
-        !last_sig || last_sig_cap == 0 || !evt)
+        !last_sig || last_sig_cap == 0)
         return;
     if (btn < 1 || btn > 14) return;
 
@@ -2928,7 +3008,7 @@ static void handle_button_event(const Options *opt,
     }
 
     // Emergency resume: LONGHOLD 5s on button 14 forces start-control.
-    if (btn == 14 && strcmp(evt, "LONGHOLD") == 0) {
+    if (btn == 14 && evt == BTN_EVT_LONGHOLD) {
         if (!*control_enabled) {
             log_msg("start-control (forced by button 14 LONGHOLD)");
             *control_enabled = true;
@@ -2940,9 +3020,15 @@ static void handle_button_event(const Options *opt,
     }
 
     if (!*control_enabled) return;
-    if (strcmp(evt, "TAP") != 0) return;
 
-    // Drop any very recent TAPs after a page transition.
+    const bool is_tap = (evt == BTN_EVT_TAP);
+    const bool is_hold = (evt == BTN_EVT_HOLD);
+    const bool is_longhold = (evt == BTN_EVT_LONGHOLD);
+    const bool is_release = (evt == BTN_EVT_RELEASED);
+    if (!(is_tap || is_hold || is_longhold || is_release)) return;
+
+    // After a page transition, ignore any immediate follow-up events (including RELEASED)
+    // to avoid triggering actions on the newly-entered page.
     {
         int64_t now = now_ns_monotonic();
         if (g_ignore_taps_until_ns > 0 && now < g_ignore_taps_until_ns) {
@@ -2951,7 +3037,7 @@ static void handle_button_event(const Options *opt,
     }
 
     // Action debounce: ignore rapid successive TAPs (avoid queuing renders).
-    {
+    if (is_tap) {
         int ms = g_ulanzi_send_debounce_ms;
         if (ms > 0) {
             int64_t now = now_ns_monotonic();
@@ -2982,7 +3068,11 @@ static void handle_button_event(const Options *opt,
     int prev_pos = cfg->pos_prev;
     int next_pos = cfg->pos_next;
 
-    // System button presses
+    // System button presses (TAP only)
+    if (!is_tap) {
+        // non-tap events never trigger nav system buttons
+        goto content_buttons;
+    }
     if (reserved_back && btn == back_pos) {
         bool changed = false;
         if (*page_stack_len > 0) {
@@ -3018,6 +3108,7 @@ static void handle_button_event(const Options *opt,
         return;
     }
 
+content_buttons:
     // Content button mapping: positions excluding reserved.
     size_t item_i = *offset;
     size_t pressed_item = (size_t)-1;
@@ -3039,12 +3130,29 @@ static void handle_button_event(const Options *opt,
     const Item *it = page_item_at(p, pressed_item);
     if (!it) return;
 
-    if (is_action_goto(it->tap_action) && it->tap_data && it->tap_data[0]) {
+    const char *action = NULL;
+    const char *data = NULL;
+    if (is_tap) {
+        action = it->tap_action;
+        data = it->tap_data;
+    } else if (is_hold) {
+        action = it->hold_action;
+        data = it->hold_data;
+    } else if (is_longhold) {
+        action = it->longhold_action;
+        data = it->longhold_data;
+    } else if (is_release) {
+        action = it->released_action;
+        data = it->released_data;
+    }
+    if (!action || !action[0]) return;
+
+    if (is_action_goto(action) && data && data[0]) {
         if (*page_stack_len < page_stack_cap) {
             snprintf(page_stack[*page_stack_len], sizeof(page_stack[*page_stack_len]), "%s", cur_page);
             (*page_stack_len)++;
         }
-        snprintf(cur_page, cur_page_cap, "%s", it->tap_data);
+        snprintf(cur_page, cur_page_cap, "%s", data);
         *offset = 0;
         ha_enter_page(opt, cfg, cur_page, ha_fd, ha_buf, ha_len, ha_map, ha_subs);
         render_and_send(opt, cfg, cur_page, *offset, ha_map, blank_png, last_sig, last_sig_cap);
@@ -3053,9 +3161,12 @@ static void handle_button_event(const Options *opt,
         return;
     }
 
-    if (it->tap_action && it->tap_action[0] && it->tap_action[0] != '$') {
-        if (ha_call_from_item(opt, *ha_fd, it) != 0) {
-            log_msg("ha call failed (action='%s')", it->tap_action ? it->tap_action : "");
+    if (action[0] != '$') {
+        Item tmp = *it;
+        tmp.tap_action = (char *)action;
+        tmp.tap_data = (char *)(data ? data : "");
+        if (ha_call_from_item(opt, *ha_fd, &tmp) != 0) {
+            log_msg("ha call failed (action='%s')", action ? action : "");
         }
     }
 }
@@ -3339,12 +3450,12 @@ int main(int argc, char **argv) {
                         resp = "err bad_args\n";
                     } else {
                         while (*p == ' ') p++;
-                        char evt[32] = {0};
+                        ButtonEvent evt = BTN_EVT_UNKNOWN;
                         int btn = 0;
-                        if (parse_sim_button_arg(p, evt, sizeof(evt), &btn) != 0) {
+                        if (parse_sim_button_arg(p, &evt, &btn) != 0 || evt == BTN_EVT_UNKNOWN) {
                             resp = "err bad_args\n";
                         } else {
-                            log_msg("simulate button %d %s", btn, evt);
+                            log_msg("simulate button %d %s", btn, button_event_name(evt));
                             handle_button_event(&opt, &cfg, blank_png, rb_fd, &inlen, btn, evt,
                                                 &br_state, &last_sent_brightness, &next_brightness_retry, &last_activity,
                                                 &control_enabled,
@@ -3451,9 +3562,10 @@ int main(int argc, char **argv) {
                 if (strcmp(evline, "ok") == 0) continue;
 
                 int btn = 0;
-                char evt[32] = {0};
-                if (sscanf(evline, "button %d %31s", &btn, evt) != 2) continue;
-                if (strcmp(evt, "RELEASED") == 0) snprintf(evt, sizeof(evt), "RELEASE");
+                char evt_word[32] = {0};
+                if (sscanf(evline, "button %d %31s", &btn, evt_word) != 2) continue;
+                ButtonEvent evt = parse_button_event_word(evt_word);
+                if (evt == BTN_EVT_UNKNOWN) continue;
 
                 // Any button event counts as activity (even when stop-control).
                 last_activity = now_sec_monotonic();
@@ -3492,7 +3604,7 @@ int main(int argc, char **argv) {
                 }
 
                 // Emergency resume: LONGHOLD 5s on button 14 forces start-control.
-                if (btn == 14 && strcmp(evt, "LONGHOLD") == 0) {
+                if (btn == 14 && evt == BTN_EVT_LONGHOLD) {
                     if (!control_enabled) {
                         log_msg("start-control (forced by button 14 LONGHOLD)");
                         control_enabled = true;
@@ -3504,9 +3616,15 @@ int main(int argc, char **argv) {
                 }
 
                 if (!control_enabled) continue;
-                if (strcmp(evt, "TAP") != 0) continue;
 
-                // Drop any very recent TAPs after a page transition.
+                const bool is_tap = (evt == BTN_EVT_TAP);
+                const bool is_hold = (evt == BTN_EVT_HOLD);
+                const bool is_longhold = (evt == BTN_EVT_LONGHOLD);
+                const bool is_release = (evt == BTN_EVT_RELEASED);
+                if (!(is_tap || is_hold || is_longhold || is_release)) continue;
+
+                // After a page transition, ignore any immediate follow-up events (including RELEASED)
+                // to avoid triggering actions on the newly-entered page.
                 {
                     int64_t now = now_ns_monotonic();
                     if (g_ignore_taps_until_ns > 0 && now < g_ignore_taps_until_ns) {
@@ -3515,7 +3633,7 @@ int main(int argc, char **argv) {
                 }
 
                 // Action debounce: ignore rapid successive TAPs (avoid queuing renders).
-                {
+                if (is_tap) {
                     int ms = g_ulanzi_send_debounce_ms;
                     if (ms > 0) {
                         int64_t now = now_ns_monotonic();
@@ -3540,7 +3658,8 @@ int main(int argc, char **argv) {
                 int prev_pos = cfg.pos_prev;
                 int next_pos = cfg.pos_next;
 
-                // System button presses
+                // System button presses (TAP only)
+                if (!is_tap) goto content_buttons;
                 if (reserved_back && btn == back_pos) {
                     bool changed = false;
                     if (page_stack_len > 0) {
@@ -3578,6 +3697,7 @@ int main(int argc, char **argv) {
                     continue;
                 }
 
+content_buttons:
                 // Content button mapping: positions excluding reserved.
                 size_t item_i = offset;
                 size_t pressed_item = (size_t)-1;
@@ -3594,22 +3714,44 @@ int main(int argc, char **argv) {
 
                 if (pressed_item != (size_t)-1) {
                     const Item *it = page_item_at(p, pressed_item);
-                    if (it && is_action_goto(it->tap_action) && it->tap_data && it->tap_data[0]) {
+                    if (!it) continue;
+
+                    const char *action = NULL;
+                    const char *data = NULL;
+                    if (is_tap) {
+                        action = it->tap_action;
+                        data = it->tap_data;
+                    } else if (is_hold) {
+                        action = it->hold_action;
+                        data = it->hold_data;
+                    } else if (is_longhold) {
+                        action = it->longhold_action;
+                        data = it->longhold_data;
+                    } else if (is_release) {
+                        action = it->released_action;
+                        data = it->released_data;
+                    }
+                    if (!action || !action[0]) continue;
+
+                    if (is_action_goto(action) && data && data[0]) {
                         if (page_stack_len < (int)(sizeof(page_stack) / sizeof(page_stack[0]))) {
                             snprintf(page_stack[page_stack_len], sizeof(page_stack[page_stack_len]), "%s", cur_page);
                             page_stack_len++;
                         }
-                        snprintf(cur_page, sizeof(cur_page), "%s", it->tap_data);
+                        snprintf(cur_page, sizeof(cur_page), "%s", data);
                         offset = 0;
                         ha_enter_page(&opt, &cfg, cur_page, &ha_fd, ha_buf, &ha_len, &ha_map, &ha_subs);
                         render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
                         persist_last_page(&opt, cur_page, offset);
                         flush_pending_button_events(rb_fd, &inlen, &start);
                         goto parse_done;
-                    } else if (it && it->tap_action && it->tap_action[0] && it->tap_action[0] != '$') {
+                    } else if (action[0] != '$') {
                         // Home Assistant call (domain.service or script.<entity> shortcut).
-                        if (ha_call_from_item(&opt, ha_fd, it) != 0) {
-                            log_msg("ha call failed (action='%s')", it->tap_action ? it->tap_action : "");
+                        Item tmp = *it;
+                        tmp.tap_action = (char *)action;
+                        tmp.tap_data = (char *)(data ? data : "");
+                        if (ha_call_from_item(&opt, ha_fd, &tmp) != 0) {
+                            log_msg("ha call failed (action='%s')", action ? action : "");
                         }
                     }
                 }
