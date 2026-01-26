@@ -198,7 +198,7 @@ static ButtonEvent parse_button_event_word(const char *s) {
 // After a page transition, drop any queued TAPs that arrived during rendering and
 // ignore any immediate follow-up TAPs for a short window to avoid triggering an
 // action on the newly-entered page (double-tap on a folder button).
-static int g_post_page_change_ignore_ms = 250;
+static int g_post_page_change_ignore_ms = 300;
 static int64_t g_ignore_taps_until_ns = 0;
 
 static void on_signal(int sig) {
@@ -239,7 +239,7 @@ static void flush_pending_button_events(int rb_fd, size_t *inlen, size_t *parse_
 }
 
 static void die_errno(const char *msg) {
-    fprintf(stderr, "[paging] ERROR: %s: %s\n", msg, strerror(errno));
+    fprintf(stderr, "[pg] ERROR: %s: %s\n", msg, strerror(errno));
     exit(1);
 }
 
@@ -249,6 +249,9 @@ static bool g_log_status_active = false;
 static int g_paging_verbose_render_logs = 0;
 // Set to 1 if you want to see stdout/stderr from icon-generation tools (draw_*, sort, etc).
 static int g_paging_verbose_tool_logs = 0;
+// Set to 1 to print frequent status/action logs on fixed refresh lines (TTY only).
+static int g_paging_refresh_logs = 1;
+static char g_last_action_line[256] = {0};
 
 static void log_clear_status_line(void) {
     if (g_log_is_tty <= 0) return;
@@ -262,7 +265,7 @@ static void log_msg(const char *fmt, ...) {
     log_clear_status_line();
     va_list ap;
     va_start(ap, fmt);
-    fprintf(stderr, "[paging] ");
+    fprintf(stderr, "[pg] ");
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
@@ -273,7 +276,7 @@ static void log_render(const char *fmt, ...) {
     log_clear_status_line();
     va_list ap;
     va_start(ap, fmt);
-    fprintf(stderr, "[paging] ");
+    fprintf(stderr, "[pg] ");
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
@@ -282,10 +285,10 @@ static void log_render(const char *fmt, ...) {
 // Status-style log line (overwrites the previous status line).
 // Used for high-frequency button events to avoid spamming the console.
 static void log_status(const char *fmt, ...) {
-    if (g_log_is_tty <= 0) {
+    if (!g_paging_refresh_logs || g_log_is_tty <= 0) {
         va_list ap;
         va_start(ap, fmt);
-        fprintf(stderr, "[paging] ");
+        fprintf(stderr, "[pg] ");
         vfprintf(stderr, fmt, ap);
         fprintf(stderr, "\n");
         va_end(ap);
@@ -294,12 +297,44 @@ static void log_status(const char *fmt, ...) {
 
     va_list ap;
     va_start(ap, fmt);
-    fprintf(stderr, "\r[paging] ");
+    fprintf(stderr, "\r[pg] ");
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\033[K");
     va_end(ap);
     fflush(stderr);
     g_log_status_active = true;
+}
+
+// Action-style log line: printed "above" the status line (TTY only) so button events can keep refreshing below.
+static void log_action(const char *fmt, ...) {
+    if (!g_paging_refresh_logs || g_log_is_tty <= 0) {
+        va_list ap;
+        va_start(ap, fmt);
+        fprintf(stderr, "[pg] ");
+        vfprintf(stderr, fmt, ap);
+        fprintf(stderr, "\n");
+        va_end(ap);
+        return;
+    }
+
+    // Format into a buffer so we can de-dup identical consecutive action lines.
+    char line[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    if (strcmp(line, g_last_action_line) == 0) return;
+    snprintf(g_last_action_line, sizeof(g_last_action_line), "%s", line);
+
+    if (!g_log_status_active) {
+        fprintf(stderr, "[pg] %s\n", line);
+        fflush(stderr);
+        return;
+    }
+
+    // We are currently sitting on the status line; write to the line above and restore cursor.
+    fprintf(stderr, "\033[s\033[1A\r[pg] %s\033[K\033[u", line);
+    fflush(stderr);
 }
 
 static int file_exists(const char *path);
@@ -3203,8 +3238,8 @@ static int ha_call_from_item(const Options *opt, int ha_fd, const Item *it) {
 
     char cmd[8192];
     snprintf(cmd, sizeof(cmd), "call %s %s %s", domain, service, json);
-    // Keep paging logs short: only print the JSON payload for HA calls.
-    log_msg("%s", json);
+    // Keep paging logs short: only print the JSON payload for HA calls, as an "action" line above the button status.
+    log_action("%s", json);
 
     // Prefer the persistent HA session socket if available.
     int fd = ha_fd;
