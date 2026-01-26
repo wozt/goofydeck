@@ -44,6 +44,8 @@ static const int KEEPALIVE_INTERVAL = 24;  // seconds
 static uint64_t TOTAL_BYTES_SENT = 0;
 static int g_debug = 0;
 static int g_fast_nopad = 0;
+// 0 = short fixed-width status line, 1 = legacy verbose format
+static int g_sendzip_log_legacy = 0;
 
 static void on_signal(int sig) {
     (void)sig;
@@ -268,10 +270,24 @@ static void log_sendzip(size_t len, int pad, int patched, size_t patched_count) 
     (void)patched;
     TOTAL_BYTES_SENT += len;
     TOTAL_BYTES_PATCHED += patched_count;
-    double hval; const char *hunit;
-    human_bytes(TOTAL_BYTES_SENT, &hval, &hunit);
-    time_t t=time(NULL); struct tm *tm=localtime(&t); char ts[32]; strftime(ts,sizeof(ts),"%Y-%m-%d %H:%M:%S",tm);
-    fprintf(stderr, "\r[%s] sendzip %zu bytes (pad=%d, patched=%zu, total_patched=%" PRIu64 ") total=%.2f%s\033[K", ts, len, pad, patched_count, TOTAL_BYTES_PATCHED, hval, hunit);
+    time_t t=time(NULL);
+    struct tm *tm=localtime(&t);
+    char ts[32];
+    if (g_sendzip_log_legacy) {
+        double hval; const char *hunit;
+        human_bytes(TOTAL_BYTES_SENT, &hval, &hunit);
+        strftime(ts,sizeof(ts),"%Y-%m-%d %H:%M:%S",tm);
+        fprintf(stderr, "\r[%s] sendzip %zu bytes (pad=%d, patched=%zu, total_patched=%" PRIu64 ") total=%.2f%s\033[K",
+                ts, len, pad, patched_count, TOTAL_BYTES_PATCHED, hval, hunit);
+    } else {
+        // Short, fixed-width format to avoid "blinking" in the console.
+        // Example:
+        //   26-01-26|22-32-57 zip=00166012b total=34.12MB
+        strftime(ts, sizeof(ts), "%y-%m-%d|%H-%M-%S", tm);
+        double hval; const char *hunit;
+        human_bytes(TOTAL_BYTES_SENT, &hval, &hunit);
+        fprintf(stderr, "\r%s zip=%08zub total=%.2f%s\033[K", ts, len, hval, hunit);
+    }
     fflush(stderr);
 }
 

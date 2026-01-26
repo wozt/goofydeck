@@ -164,7 +164,7 @@ printf 'simule-button LONGHOLD14\n' | socat - UNIX-CONNECT:/tmp/goofydeck_paging
 
 ## Home Assistant (`ha_daemon`)
 
-Put credentials in `.env` (see `example.env`):
+Create a Home Assistant **long-lived access token** (Profile → Security → Long-Lived Access Tokens), then put credentials in `.env` (see `example.env`):
 
 ```bash
 HA_HOST="ws://localhost:8123"

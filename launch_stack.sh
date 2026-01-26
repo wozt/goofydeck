@@ -23,6 +23,9 @@ kill_all() {
   self_pid="$$"
   mux_bin="$(command -v byobu-tmux 2>/dev/null || command -v tmux 2>/dev/null || true)"
 
+  # Cleanup RAM-backed runtime caches (best-effort).
+  rm -rf "/dev/shm/goofydeck" 2>/dev/null || true
+
   # Kill tmux session if present.
   if [ -n "${mux_bin}" ]; then
     # Also kills legacy sessions from older launcher versions.
