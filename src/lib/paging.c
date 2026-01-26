@@ -3203,7 +3203,8 @@ static int ha_call_from_item(const Options *opt, int ha_fd, const Item *it) {
 
     char cmd[8192];
     snprintf(cmd, sizeof(cmd), "call %s %s %s", domain, service, json);
-    log_msg("ha tx: %s", cmd);
+    // Keep paging logs short: only print the JSON payload for HA calls.
+    log_msg("%s", json);
 
     // Prefer the persistent HA session socket if available.
     int fd = ha_fd;
