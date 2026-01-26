@@ -121,7 +121,7 @@ static FD_UNUSED int fd_find_project_root(char *out, size_t outsz) {
             char marker_src[PATH_MAX];
             char marker_icons[PATH_MAX];
             fd_snprintf_checked(marker_make, sizeof(marker_make), "marker_make", "%s/Makefile", exe);
-            fd_snprintf_checked(marker_src, sizeof(marker_src), "marker_src", "%s/ulanzi_d200.c", exe);
+            fd_snprintf_checked(marker_src, sizeof(marker_src), "marker_src", "%s/ulanzi_d200_daemon.c", exe);
             fd_snprintf_checked(marker_icons, sizeof(marker_icons), "marker_icons", "%s/icons", exe);
             if (fd_file_exists(marker_make) && fd_file_exists(marker_src) && fd_dir_exists(marker_icons)) {
                 fd_snprintf_checked(out, outsz, "root(exe)", "%s", exe);
@@ -137,7 +137,7 @@ static FD_UNUSED int fd_find_project_root(char *out, size_t outsz) {
         char marker_src[PATH_MAX];
         char marker_icons[PATH_MAX];
         fd_snprintf_checked(marker_make, sizeof(marker_make), "marker_make", "%s/Makefile", out);
-        fd_snprintf_checked(marker_src, sizeof(marker_src), "marker_src", "%s/ulanzi_d200.c", out);
+        fd_snprintf_checked(marker_src, sizeof(marker_src), "marker_src", "%s/ulanzi_d200_daemon.c", out);
         fd_snprintf_checked(marker_icons, sizeof(marker_icons), "marker_icons", "%s/icons", out);
         if (fd_file_exists(marker_make) && fd_file_exists(marker_src) && fd_dir_exists(marker_icons)) return 0;
 

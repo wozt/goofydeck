@@ -6,8 +6,8 @@ sleep:
   sleep_timeout: 3600
 
 wallpaper:
-  path: "mymedia/wallpapers/valley.png"
-  quality: 30
+  path: "mymedia/wallpapers/neige.png"
+  quality: 60
   magnify: 100
   dithering: yes
 
@@ -575,7 +575,7 @@ pages:
   $root:
     wallpaper:
       path: "mymedia/wallpapers/valley.png"
-      quality: 51
+      quality: 30
       magnify: 100
       dithering: yes
     buttons:

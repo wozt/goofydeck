@@ -783,7 +783,7 @@ int main(void) {
     hid_set_nonblocking(dev, 0);
 
     int listen_fd = make_listen_socket();
-    printf("ulanzi_d200_demon listening on %s\n", SOCK_PATH);
+    printf("ulanzi_d200_daemon listening on %s\n", SOCK_PATH);
 
     int rb_fd = -1;
     double down_time[14] = {0};

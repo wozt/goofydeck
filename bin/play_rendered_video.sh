@@ -149,7 +149,7 @@ find_max_frames() {
 connect_to_daemon() {
     if [[ ! -S "$SOCK_PATH" ]]; then
         echo "Erreur: socket du démon non trouvé: $SOCK_PATH" >&2
-        echo "Assurez-vous que le démon ulanzi_d200_demon est en cours d'exécution" >&2
+        echo "Assurez-vous que le démon ulanzi_d200_daemon est en cours d'exécution" >&2
         exit 1
     fi
     

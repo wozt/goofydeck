@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: show a pre-rendered 14-tile image folder on the D200 via ulanzi_d200_demon (set-buttons-explicit-14)
+# Description: show a pre-rendered 14-tile image folder on the D200 via ulanzi_d200_daemon (set-buttons-explicit-14)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,13 +23,13 @@ abs_path() {
 
 usage() {
   cat >&2 <<EOF
-Usage: ./lib/show_image_rendered.sh <folder>
+Usage: ./bin/show_image_rendered.sh <folder>
 
 Folder must contain 14 PNG files matching:
   *-1.png ... *-14.png
 
 Example:
-  ./lib/show_image_rendered.sh mymedia/wallpapers/valley
+  ./bin/show_image_rendered.sh mymedia/wallpapers/valley
 EOF
 }
 

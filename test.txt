@@ -24,24 +24,20 @@ printf 'set-label-style test_json/style.json\n' | nc -U /tmp/ulanzi_device.sock
 
 
 TEST IMAGE STREAM
-./lib/send_image_page.sh test_image/grid_1280x720.png
-# ou
-./lib/send_image_page test_image/grid_1280x720.png
-time $(./lib/send_image_page test_image/neige_16.png)
+./bin/send_image_page test_image/grid_1280x720.png
+time $(./bin/send_image_page test_image/neige_16.png)
 
 
 TEST VIDEO STREAM
-./compile_lib.sh
-./lib/send_video_page.sh test_video/skrillex_clip.mp4
-# ou en C
-./lib/send_video_page skrillex_clip.mp4
+make all
+./bin/send_video_page_wrapper -q=61 ./test_video/skrillex_clip.mp4
 
 
 RENDER VIDEO STREAM
 
 
 PLAY VIDEO AFTER RENDER
-./lib/play_rendered_video.sh -d=66 ./test_video/skrillex_10s/
+./bin/play_rendered_video.sh -d=66 ./test_video/skrillex_10s/
 
 
 
@@ -50,20 +46,20 @@ PLAY VIDEO AFTER RENDER
 -rw-rw-r--  1 wozt wozt 1,9M 19 janv. 20:03 neige.png
 
 TEST PRERENDER VIDEO
-./lib/send_video_page_wrapper -r -q=32 ./test_video/skrillex_10s.mp4
+./bin/send_video_page_wrapper -r -q=32 ./test_video/skrillex_10s.mp4
 
 
 TEST VIDEO PLAYBACK INFINITLY
 
-while true; do ./lib/send_video_page_wrapper -q=24 ./test_video/skrillex_10s.mp4; done
-while true; do ./lib/play_rendered_video.sh -d=66 ./test_video/skrillex_10s/; done
+while true; do ./bin/send_video_page_wrapper -q=24 ./test_video/skrillex_10s.mp4; done
+while true; do ./bin/play_rendered_video.sh -d=66 ./test_video/skrillex_10s/; done
 
 
 
 printf 'set-buttons-explicit-14 --button-1=/dev/shm/tmpvideoplayback_1636041/1/000.png --button-2=/dev/shm/tmpvideoplayback_1636041/2/000.png --button-3=/dev/shm/tmpvideoplayback_1636041/3/000.png --button-4=/dev/shm/tmpvideoplayback_1636041/4/000.png --button-5=/dev/shm/tmpvideoplayback_1636041/5/000.png --button-6=/dev/shm/tmpvideoplayback_1636041/6/000.png --button-7=/dev/shm/tmpvideoplayback_1636041/7/000.png --button-8=/dev/shm/tmpvideoplayback_1636041/8/000.png --button-9=/dev/shm/tmpvideoplayback_1636041/9/000.png --button-10=/dev/shm/tmpvideoplayback_1636041/10/000.png --button-11=/dev/shm/tmpvideoplayback_1636041/11/000.png --button-12=/dev/shm/tmpvideoplayback_1636041/12/000.png --button-13=/dev/shm/tmpvideoplayback_1636041/13/000.png --button-14=/dev/shm/tmpvideoplayback_1636041/14/000.png\n' | nc -U /tmp/ulanzi_device.sock
 
 TEST RENDER BAD APPLE
-./lib/send_video_page_wrapper -q=61 -s=66 -c="--fps=15" -r ./test_video/bad_apple.mp4
+./bin/send_video_page_wrapper -q=61 -s=66 -c="--fps=15" -r ./test_video/bad_apple.mp4
 
 
 
@@ -141,23 +137,23 @@ rm -f c_std.png 2>/dev/null || true
 
 
 #test video render#######################
-./lib/send_video_page_wrapper -q=61 -s=50 -c="--fps=15" -r ./test_video/skrillex_10s.mp4
-./lib/send_video_page_wrapper -q=61 -s=50 -r ./test_video/skrillex_10s.mp4
-./lib/send_video_page_wrapper -q=61 -s=50 -d -r ./test_video/skrillex_10s.mp4
+./bin/send_video_page_wrapper -q=61 -s=50 -c="--fps=15" -r ./test_video/skrillex_10s.mp4
+./bin/send_video_page_wrapper -q=61 -s=50 -r ./test_video/skrillex_10s.mp4
+./bin/send_video_page_wrapper -q=61 -s=50 -d -r ./test_video/skrillex_10s.mp4
 
 #test video playback  #####################
-./lib/play_rendered_video.sh -c -d=66 ./test_video/skrillex_10s/
-./lib/play_rendered_video.sh -c -d=64 ./test_video/skrillex_10s/
+./bin/play_rendered_video.sh -c -d=66 ./test_video/skrillex_10s/
+./bin/play_rendered_video.sh -c -d=64 ./test_video/skrillex_10s/
 
 #test video playback command   ################
-./lib/play_rendered_video_control play
-./lib/play_rendered_video_control pause
-./lib/play_rendered_video_control stop
-./lib/play_rendered_video_control back
-./lib/play_rendered_video_control forward
+./bin/play_rendered_video_control play
+./bin/play_rendered_video_control pause
+./bin/play_rendered_video_control stop
+./bin/play_rendered_video_control back
+./bin/play_rendered_video_control forward
 
 #test button reception    ###################
-./lib/test_button_pressed.sh
+./bin/test_button_pressed.sh
 
 FULLTEST VALIDE LE 23/01/2026 a 01:30
 ############################################################################
@@ -279,5 +275,3 @@ time $( \
 ./icons/draw_mdi mdi:sofa FFFFFF --size=128 base.png && \
 ./icons/draw_optimize -c 4 base.png \
 )
-
-

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: send first 13 images from a folder across buttons 1-13 using ulanzi_d200_demon daemon
+# Description: send first 13 images from a folder across buttons 1-13 using ulanzi_d200_daemon daemon
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

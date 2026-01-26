@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: send specific PNGs to explicit buttons (1-13) on the D200 via ulanzi_d200_demon daemon
+# Description: send specific PNGs to explicit buttons (1-13) on the D200 via ulanzi_d200_daemon daemon
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -112,7 +112,7 @@ if [ "${SKIP_VIDEO}" -eq 0 ]; then
   if [ ! -f "${VIDEO}" ]; then
     warn "Video not found: ${VIDEO} (skipping render)"
   else
-    run_step "Render video -> rendered folder" ./lib/send_video_page_wrapper -r "${VIDEO}"
+    run_step "Render video -> rendered folder" ./bin/send_video_page_wrapper -r "${VIDEO}"
   fi
 else
   log "Skipping video render (--skip-video)."
@@ -124,10 +124,10 @@ if [ "${SKIP_PLAY}" -eq 0 ]; then
     warn "Rendered folder not found: ${render_dir} (skipping play)"
   else
     if have timeout; then
-      best_effort "Play rendered folder (${PLAY_SECONDS}s)" timeout "${PLAY_SECONDS}s" ./lib/play_rendered_video.sh --delay="${RENDER_DELAY_MS}" "${render_dir}"
+      best_effort "Play rendered folder (${PLAY_SECONDS}s)" timeout "${PLAY_SECONDS}s" ./bin/play_rendered_video.sh --delay="${RENDER_DELAY_MS}" "${render_dir}"
     else
       warn "'timeout' not found; running play without timeout (CTRL+C to stop)"
-      best_effort "Play rendered folder" ./lib/play_rendered_video.sh --delay="${RENDER_DELAY_MS}" "${render_dir}"
+      best_effort "Play rendered folder" ./bin/play_rendered_video.sh --delay="${RENDER_DELAY_MS}" "${render_dir}"
     fi
   fi
 else

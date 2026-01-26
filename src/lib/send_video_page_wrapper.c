@@ -309,7 +309,7 @@ int main(int argc, char **argv) {
     // Construire le chemin absolu vers send_image_page
     char send_image_page_path[PATH_MAX];
     snprintf_checked(send_image_page_path, sizeof(send_image_page_path), "send_image_page_path",
-                     "%s/lib/send_image_page", cwd);
+                     "%s/bin/send_image_page", cwd);
     
     if (!video_path) {
         fprintf(stderr, "Erreur: fichier vidéo requis\n");
@@ -322,7 +322,7 @@ int main(int argc, char **argv) {
         printf("Conversion de la vidéo avant traitement...\n");
         
         // Construire la commande de conversion
-        char *convert_cmd = asprintf_alloc("convert_cmd", "%s/lib/convert_video.sh %s \"%s\"",
+        char *convert_cmd = asprintf_alloc("convert_cmd", "%s/bin/convert_video.sh %s \"%s\"",
                                            cwd, opts.convert_opts, video_path);
         
         printf("Commande: %s\n", convert_cmd);

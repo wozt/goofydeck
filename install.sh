@@ -211,9 +211,11 @@ ensure_fonts() {
 
 need_build() {
   local -a expected=(
-    "${ROOT}/ulanzi_d200_demon"
-    "${ROOT}/lib/send_image_page"
-    "${ROOT}/lib/send_video_page_wrapper"
+    "${ROOT}/ulanzi_d200_daemon"
+    "${ROOT}/bin/paging_daemon"
+    "${ROOT}/bin/ha_daemon"
+    "${ROOT}/bin/send_image_page"
+    "${ROOT}/bin/send_video_page_wrapper"
     "${ROOT}/icons/draw_square"
     "${ROOT}/icons/draw_border"
     "${ROOT}/icons/draw_optimize"

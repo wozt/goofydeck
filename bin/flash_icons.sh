@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-SENDER="${ROOT}/lib/send_page.sh"
+SENDER="${ROOT}/bin/send_page.sh"
 INTERVAL_MS="40"
 TARGETS=()
 SHOW_HELP="${ROOT}/show_help.sh"

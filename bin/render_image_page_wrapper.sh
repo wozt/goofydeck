@@ -5,12 +5,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-SEND_BIN="${ROOT}/lib/send_image_page"
+SEND_BIN="${ROOT}/bin/send_image_page"
 SHOW_HELP="${ROOT}/show_help.sh"
 
 usage() {
   cat >&2 <<EOF
-Usage: ./lib/render_image_page_wrapper.sh [send_image_page options...] <image.png>
+Usage: ./bin/render_image_page_wrapper.sh [send_image_page options...] <image.png>
 
 This wrapper forces:
   --no-send
@@ -21,7 +21,7 @@ Where:
   prefix = <basename without .png>
 
 Example:
-  ./lib/render_image_page_wrapper.sh -q=80 mymedia/wallpapers/valley.png
+  ./bin/render_image_page_wrapper.sh -q=80 mymedia/wallpapers/valley.png
   # renders into: mymedia/wallpapers/valley/ (tiles: valley-1.png..valley-14.png)
 EOF
 }
@@ -110,4 +110,4 @@ esac
 name="${base%.png}"
 out_dir="${dir}/${name}"
 
-exec "${SEND_BIN}" --no-send "-k=${out_dir}=${name}" "${args[@]}" "${img}"
+exec "${SEND_BIN}" --no-send --no-tile-optimize "-k=${out_dir}=${name}" "${args[@]}" "${img}"

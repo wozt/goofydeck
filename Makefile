@@ -32,27 +32,27 @@ ifneq ($(strip $(MDI_LIBS)),)
 HAVE_MDI := 1
 endif
 
-.PHONY: all daemon tools icons standalone clean dir_lib dir_icons dir_standalone
+.PHONY: all daemon tools icons standalone clean dir_bin dir_icons dir_standalone
 
 all: daemon tools icons standalone
 
-daemon: ulanzi_d200_demon
+daemon: ulanzi_d200_daemon
 
-ulanzi_d200_demon: ulanzi_d200.c
+ulanzi_d200_daemon: ulanzi_d200_daemon.c
 	$(CC) $(CFLAGS) -o $@ $< $(HID_LIBS) $(ZLIB_LIBS) $(PNG_LIBS)
 
-tools: lib/send_image_page lib/send_video_page_wrapper lib/pagging_demon lib/ha_demon
+tools: bin/send_image_page bin/send_video_page_wrapper bin/paging_daemon bin/ha_daemon
 
-lib/pagging_demon: src/lib/pagging.c | dir_lib
+bin/paging_daemon: src/lib/paging.c | dir_bin
 	$(CC) $(CFLAGS) $(YAML_CFLAGS) -o $@ $< $(PNG_LIBS) $(ZLIB_LIBS) $(YAML_LIBS)
 
-lib/ha_demon: src/lib/ha_demon.c | dir_lib
+bin/ha_daemon: src/lib/ha_daemon.c | dir_bin
 	$(CC) $(CFLAGS) $(OPENSSL_CFLAGS) -o $@ $< $(PTHREAD_LIBS) $(OPENSSL_LIBS)
 
-lib/send_image_page: src/lib/send_image_page.c | dir_lib
+bin/send_image_page: src/lib/send_image_page.c | dir_bin
 	$(CC) $(CFLAGS) -o $@ $< $(PNG_LIBS) $(PTHREAD_LIBS) $(MATH_LIBS)
 
-lib/send_video_page_wrapper: src/lib/send_video_page_wrapper.c | dir_lib
+bin/send_video_page_wrapper: src/lib/send_video_page_wrapper.c | dir_bin
 	$(CC) $(CFLAGS) $(FFMPEG_CFLAGS) -o $@ $< $(FFMPEG_LIBS) $(PNG_LIBS) $(ZLIB_LIBS) $(PTHREAD_LIBS) $(MATH_LIBS)
 
 icons: icons/draw_border icons/draw_optimize icons/draw_over icons/draw_square icons/draw_text
@@ -79,8 +79,8 @@ standalone: standalone/draw_optimize_std
 standalone/draw_optimize_std: src/standalone/draw_optimize_std.c | dir_standalone
 	$(CC) $(CFLAGS) -o $@ $< $(ZLIB_LIBS)
 
-dir_lib:
-	mkdir -p lib
+dir_bin:
+	mkdir -p bin
 
 dir_icons:
 	mkdir -p icons
@@ -89,10 +89,10 @@ dir_standalone:
 	mkdir -p standalone
 
 clean:
-	rm -f ulanzi_d200_demon
-	rm -f lib/pagging_demon
-	rm -f lib/ha_demon
-	rm -f lib/send_video_page_wrapper
-	rm -f lib/send_image_page
+	rm -f ulanzi_d200_daemon
+	rm -f bin/paging_daemon
+	rm -f bin/ha_daemon
+	rm -f bin/send_video_page_wrapper
+	rm -f bin/send_image_page
 	rm -f icons/draw_border icons/draw_mdi icons/draw_optimize icons/draw_over icons/draw_square icons/draw_text
 	rm -f standalone/draw_optimize_std

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Interactive test helper for lib/ha_demon.
+# Interactive test helper for bin/ha_daemon.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,7 +8,7 @@ ENV_FILE="${ROOT}/.env"
 SOCK_PATH_DEFAULT="/tmp/goofydeck_ha.sock"
 SOCK_PATH="${SOCK_PATH_DEFAULT}"
 
-PID_FILE="/dev/shm/goofydeck_ha_demon.pid"
+PID_FILE="/dev/shm/goofydeck_ha_daemon.pid"
 FIFO_DIR="/tmp/goofydeck_ha_test"
 FIFO_IN="${FIFO_DIR}/in.fifo"
 MON_PID_FILE="${FIFO_DIR}/monitor.pid"
@@ -83,9 +83,9 @@ ensure_env() {
 }
 
 ensure_deps() {
-  [ -x "${ROOT}/lib/ha_demon" ] || {
-    echo "[test_ha] Building lib/ha_demon..."
-    make -C "${ROOT}" -B lib/ha_demon >/dev/null
+  [ -x "${ROOT}/bin/ha_daemon" ] || {
+    echo "[test_ha] Building bin/ha_daemon..."
+    make -C "${ROOT}" -B bin/ha_daemon >/dev/null
   }
   have nc || die "nc is required (netcat)"
 }
@@ -100,8 +100,8 @@ start_daemon() {
   mkdir -p "${FIFO_DIR}"
   rm -f "${SOCK_PATH}" 2>/dev/null || true
 
-  echo "[test_ha] Starting ha_demon on ${SOCK_PATH}..."
-  ("${ROOT}/lib/ha_demon" --sock "${SOCK_PATH}" >"${FIFO_DIR}/ha_demon.log" 2>&1) &
+  echo "[test_ha] Starting ha_daemon on ${SOCK_PATH}..."
+  ("${ROOT}/bin/ha_daemon" --sock "${SOCK_PATH}" >"${FIFO_DIR}/ha_daemon.log" 2>&1) &
   echo $! >"${HA_PID_FILE}"
   echo $! >"${PID_FILE}" 2>/dev/null || true
 
@@ -110,8 +110,8 @@ start_daemon() {
     [ -S "${SOCK_PATH}" ] && break
     sleep 0.05
   done
-  [ -S "${SOCK_PATH}" ] || die "Socket not created: ${SOCK_PATH} (see ${FIFO_DIR}/ha_demon.log)"
-  echo "[test_ha] ha_demon started (pid=$(cat "${HA_PID_FILE}"))."
+  [ -S "${SOCK_PATH}" ] || die "Socket not created: ${SOCK_PATH} (see ${FIFO_DIR}/ha_daemon.log)"
+  echo "[test_ha] ha_daemon started (pid=$(cat "${HA_PID_FILE}"))."
 }
 
 stop_daemon() {
@@ -119,7 +119,7 @@ stop_daemon() {
   if [ -f "${HA_PID_FILE}" ]; then pid="$(cat "${HA_PID_FILE}" 2>/dev/null || true)"; fi
   if [ -z "${pid}" ] && [ -f "${PID_FILE}" ]; then pid="$(cat "${PID_FILE}" 2>/dev/null || true)"; fi
   if [ -n "${pid}" ] && is_running_pid "${pid}"; then
-    echo "[test_ha] Stopping ha_demon pid=${pid}..."
+    echo "[test_ha] Stopping ha_daemon pid=${pid}..."
     kill -TERM "${pid}" 2>/dev/null || true
     sleep 0.2
     kill -KILL "${pid}" 2>/dev/null || true
@@ -141,7 +141,7 @@ monitor_start() {
     # shellcheck disable=SC2002
     cat "${FIFO_IN}" | nc -U "${SOCK_PATH}"
   ) | while IFS= read -r line; do
-    printf "[ha_demon] %s\n" "${line}"
+    printf "[ha_daemon] %s\n" "${line}"
   done &
 
   echo $! >"${MON_PID_FILE}"
@@ -164,12 +164,12 @@ monitor_stop() {
 
 send_cmd() {
   local cmd="$1"
-  [ -S "${SOCK_PATH}" ] || die "ha_demon socket missing: ${SOCK_PATH} (start daemon first)"
+  [ -S "${SOCK_PATH}" ] || die "ha_daemon socket missing: ${SOCK_PATH} (start daemon first)"
   if [ -p "${FIFO_IN}" ]; then
     printf "%s\n" "${cmd}" >"${FIFO_IN}"
     return 0
   fi
-  # One-shot client (no events): ensure we exit even though ha_demon keeps the socket open.
+  # One-shot client (no events): ensure we exit even though ha_daemon keeps the socket open.
   if have timeout; then
     resp="$(printf "%s\n" "${cmd}" | timeout 1s nc -U "${SOCK_PATH}" 2>/dev/null || true)"
     [ -n "${resp}" ] && printf "%s\n" "${resp}"
@@ -203,8 +203,8 @@ main_menu() {
   cat <<EOF
 
 HA test menu:
-  1) Start ha_demon
-  2) Stop ha_demon
+  1) Start ha_daemon
+  2) Stop ha_daemon
   3) Start monitor session (persistent)
   4) Stop monitor session
   5) ping
@@ -214,7 +214,7 @@ HA test menu:
   9) unsub <sub_id>
  10) get <entity_id>
  11) call <domain> <service> <json>
- 12) Show ha_demon log tail
+ 12) Show ha_daemon log tail
   q) Quit
 EOF
 }
@@ -231,7 +231,7 @@ while true; do
       stop_daemon
       ;;
     3)
-      [ -S "${SOCK_PATH}" ] || die "start ha_demon first"
+      [ -S "${SOCK_PATH}" ] || die "start ha_daemon first"
       monitor_start
       ;;
     4)
@@ -284,10 +284,10 @@ while true; do
       pause_menu
       ;;
     12)
-      if [ -f "${FIFO_DIR}/ha_demon.log" ]; then
-        tail -n 50 "${FIFO_DIR}/ha_demon.log"
+      if [ -f "${FIFO_DIR}/ha_daemon.log" ]; then
+        tail -n 50 "${FIFO_DIR}/ha_daemon.log"
       else
-        echo "No log yet (${FIFO_DIR}/ha_demon.log)"
+        echo "No log yet (${FIFO_DIR}/ha_daemon.log)"
       fi
       pause_menu
       ;;

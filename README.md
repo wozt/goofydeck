@@ -1,6 +1,6 @@
 # GoofyDeck
 
-GoofyDeck controls an Ulanzi D200 with C daemons and config-driven paging, with optional Home Assistant integration (`ha_demon`).
+GoofyDeck controls an Ulanzi D200 with C daemons and config-driven paging, with optional Home Assistant integration (`ha_daemon`).
 This project is still under construction.
 
 The previous (long) README has been archived to `legacy/README.md`.
@@ -24,15 +24,15 @@ Recommended (byobu):
 Manual:
 
 ```bash
-./ulanzi_d200_demon
-./lib/pagging_demon
-./lib/ha_demon
+./ulanzi_d200_daemon
+./bin/paging_daemon
+./bin/ha_daemon
 ```
 
 ## Sockets
 
 - Ulanzi device daemon: `/tmp/ulanzi_device.sock`
-- Paging control socket: `/tmp/goofydeck_pagging_control.sock`
+- Paging control socket: `/tmp/goofydeck_paging_control.sock`
 - Home Assistant daemon: `/tmp/goofydeck_ha.sock`
 
 ## Configuration
@@ -133,19 +133,19 @@ Button fields:
 
 ## Paging control commands
 
-Send one line to `/tmp/goofydeck_pagging_control.sock`:
+Send one line to `/tmp/goofydeck_paging_control.sock`:
 
 ```bash
-printf 'stop-control\n' | socat - UNIX-CONNECT:/tmp/goofydeck_pagging_control.sock
-printf 'start-control\n' | socat - UNIX-CONNECT:/tmp/goofydeck_pagging_control.sock
-printf 'load-last-page\n' | socat - UNIX-CONNECT:/tmp/goofydeck_pagging_control.sock
+printf 'stop-control\n' | socat - UNIX-CONNECT:/tmp/goofydeck_paging_control.sock
+printf 'start-control\n' | socat - UNIX-CONNECT:/tmp/goofydeck_paging_control.sock
+printf 'load-last-page\n' | socat - UNIX-CONNECT:/tmp/goofydeck_paging_control.sock
 
 # Simulate button events (same logic as physical buttons)
-printf 'simule-button TAP1\n' | socat - UNIX-CONNECT:/tmp/goofydeck_pagging_control.sock
-printf 'simule-button LONGHOLD14\n' | socat - UNIX-CONNECT:/tmp/goofydeck_pagging_control.sock
+printf 'simule-button TAP1\n' | socat - UNIX-CONNECT:/tmp/goofydeck_paging_control.sock
+printf 'simule-button LONGHOLD14\n' | socat - UNIX-CONNECT:/tmp/goofydeck_paging_control.sock
 ```
 
-## Home Assistant (`ha_demon`)
+## Home Assistant (`ha_daemon`)
 
 Put credentials in `.env` (see `example.env`):
 
@@ -155,7 +155,7 @@ HA_ACCESS_TOKEN=""
 ```
 
 Optional:
-- `USERNAME`: used by helper scripts like `lib/get_username.sh` (falls back to `whoami` if unset).
+- `USERNAME`: used by helper scripts like `bin/get_username.sh` (falls back to `whoami` if unset).
 - **Buttons**: 13 main buttons + 1 special button
 - **Resolution**: 1280x720 pixels for full images
 - **Format**: PNG recommended for icons

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GET_USER="${SCRIPT_DIR}/../lib/get_username.sh"
+GET_USER="${SCRIPT_DIR}/../bin/get_username.sh"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SHOW_HELP="${ROOT}/show_help.sh"
 

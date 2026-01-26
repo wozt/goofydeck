@@ -28,7 +28,7 @@ if [ ! -d "${ICON_DIR}" ]; then
   exit 1
 fi
 
-FLASH="${ROOT}/lib/flash_icons.sh"
+FLASH="${ROOT}/bin/flash_icons.sh"
 if [ ! -x "${FLASH}" ]; then
   echo "flash_icons.sh not found at ${FLASH}" >&2
   exit 1

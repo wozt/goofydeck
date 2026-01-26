@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: run a script by name from root/lib/icons/standalone/install with provided args
+# Description: run a script by name from root/bin/icons/standalone/install with provided args
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -7,7 +7,7 @@ SHOW_HELP="${SCRIPT_DIR}/show_help.sh"
 ROOT="${SCRIPT_DIR}"
 
 if [[ "${1:-}" == "--complete" ]]; then
-  # Output available script basenames from root + lib/ + icons/ + standalone/
+  # Output available script basenames from root + bin/ + icons/ + standalone/
   find "${ROOT}" -maxdepth 1 -type f -name "*.sh" -printf "%f\n"
   find "${ROOT}/lib" -maxdepth 1 -type f -name "*.sh" -printf "%f\n"
   find "${ROOT}/icons" -maxdepth 1 -type f -name "*.sh" -printf "%f\n"
@@ -33,7 +33,7 @@ fi
 
 candidates=(
   "${ROOT}/${TARGET_NAME}"
-  "${ROOT}/lib/${TARGET_NAME}"
+  "${ROOT}/bin/${TARGET_NAME}"
   "${ROOT}/icons/${TARGET_NAME}"
   "${ROOT}/standalone/${TARGET_NAME}"
 )

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: set Ulanzi D200 brightness (0-100) via ulanzi_d200_demon daemon
+# Description: set Ulanzi D200 brightness (0-100) via ulanzi_d200_daemon daemon
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -1,7 +1,7 @@
 // Single paging daemon for GoofyDeck (no Python).
 //
 // Responsibilities:
-// - Connect to ulanzi_d200_demon unix socket (/tmp/ulanzi_device.sock)
+// - Connect to ulanzi_d200_daemon unix socket (/tmp/ulanzi_device.sock)
 // - Subscribe to button events (read-buttons)
 // - Load config/configuration.yml (minimal YAML subset)
 // - Render and send pages only when needed (initial + navigation triggers)
@@ -135,7 +135,7 @@ typedef struct {
 
 static volatile sig_atomic_t g_running = 1;
 
-// Minimum delay between successive commands sent to ulanzi_d200_demon.
+// Minimum delay between successive commands sent to ulanzi_d200_daemon.
 // Helps avoid spamming back-to-back ZIP transfers when buttons are pressed rapidly.
 // Tune this quickly for testing.
 static int g_ulanzi_send_debounce_ms = 300;
@@ -187,14 +187,14 @@ static void flush_pending_button_events(int rb_fd, size_t *inlen, size_t *parse_
 }
 
 static void die_errno(const char *msg) {
-    fprintf(stderr, "[pagging] ERROR: %s: %s\n", msg, strerror(errno));
+    fprintf(stderr, "[paging] ERROR: %s: %s\n", msg, strerror(errno));
     exit(1);
 }
 
 static void log_msg(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    fprintf(stderr, "[pagging] ");
+    fprintf(stderr, "[paging] ");
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
@@ -716,7 +716,7 @@ static int load_config(const char *path, Config *out) {
     }
     yaml_parser_set_input_file(&parser, f);
     if (!yaml_parser_load(&parser, &doc)) {
-        fprintf(stderr, "[pagging] ERROR: YAML parse failed: %s\n", parser.problem ? parser.problem : "unknown");
+        fprintf(stderr, "[paging] ERROR: YAML parse failed: %s\n", parser.problem ? parser.problem : "unknown");
         yaml_parser_delete(&parser);
         fclose(f);
         return -1;
@@ -728,7 +728,7 @@ static int load_config(const char *path, Config *out) {
 
     yaml_node_t *root = yaml_document_get_root_node(&doc);
     if (!root || root->type != YAML_MAPPING_NODE) {
-        fprintf(stderr, "[pagging] ERROR: YAML root is not a mapping\n");
+        fprintf(stderr, "[paging] ERROR: YAML root is not a mapping\n");
         yaml_document_delete(&doc);
         yaml_parser_delete(&parser);
         fclose(f);
@@ -1110,11 +1110,12 @@ static int ensure_wallpaper_rendered(const Options *opt, const WallpaperEff *wp,
     if (wallpaper_tiles_exist(out_dir, out_prefix)) return 0;
 
     char script[PATH_MAX];
-    snprintf(script, sizeof(script), "%s/lib/render_image_page_wrapper.sh", opt->root_dir);
+    snprintf(script, sizeof(script), "%s/bin/render_image_page_wrapper.sh", opt->root_dir);
     if (access(script, X_OK) != 0) return -1;
 
     int q = clamp_int(wp->quality, 10, 100);
-    int m = clamp_int(wp->magnify, 50, 300);
+    // magnify is a percentage (10..100)
+    int m = clamp_int(wp->magnify, 10, 100);
     char qarg[32];
     char marg[32];
     snprintf(qarg, sizeof(qarg), "-q=%d", q);
@@ -2257,12 +2258,12 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
 static void state_dir(const Options *opt, char *out, size_t cap) {
     // Prefer RAM-backed /dev/shm, fallback to cache_root if not available.
     if (!out || cap == 0) return;
-    const char *primary = "/dev/shm/goofydeck/pagging";
+    const char *primary = "/dev/shm/goofydeck/paging";
     if (try_ensure_dir_parent(primary) == 0 && try_ensure_dir(primary) == 0) {
         snprintf(out, cap, "%s", primary);
         return;
     }
-    snprintf(out, cap, "%s/pagging", (opt && opt->cache_root) ? opt->cache_root : ".cache");
+    snprintf(out, cap, "%s/paging", (opt && opt->cache_root) ? opt->cache_root : ".cache");
     ensure_dir(out);
 }
 
@@ -2510,7 +2511,7 @@ static void ha_enter_page(const Options *opt, const Config *cfg, const char *pag
     const Page *p = config_get_page((Config *)cfg, page_name);
     if (!p) return;
 
-    // Only connect to ha_demon if this page needs it.
+    // Only connect to ha_daemon if this page needs it.
     bool needs_ha = false;
     for (size_t i = 0; i < p->count; i++) {
         if (p->items[i].entity_id && p->items[i].entity_id[0]) { needs_ha = true; break; }
@@ -3064,7 +3065,7 @@ int main(int argc, char **argv) {
     memset(&opt, 0, sizeof(opt));
     opt.config_path = xstrdup("config/configuration.yml");
     opt.ulanzi_sock = xstrdup("/tmp/ulanzi_device.sock");
-    opt.control_sock = xstrdup("/tmp/goofydeck_pagging_control.sock");
+    opt.control_sock = xstrdup("/tmp/goofydeck_paging_control.sock");
     opt.ha_sock = xstrdup("/tmp/goofydeck_ha.sock");
     opt.cache_root = xstrdup(".cache");
     opt.error_icon = xstrdup("assets/pregen/error.png");
@@ -3158,10 +3159,10 @@ int main(int argc, char **argv) {
         }
     }
     if (dump_config) {
-        fprintf(stderr, "[pagging] dump-config: pages=%zu presets=%zu\n", cfg.page_count, cfg.preset_count);
+        fprintf(stderr, "[paging] dump-config: pages=%zu presets=%zu\n", cfg.page_count, cfg.preset_count);
         for (size_t i = 0; i < cfg.page_count; i++) {
             const Page *p = &cfg.pages[i];
-            fprintf(stderr, "[pagging] page '%s' items=%zu\n", p->name ? p->name : "<null>", p->count);
+            fprintf(stderr, "[paging] page '%s' items=%zu\n", p->name ? p->name : "<null>", p->count);
             for (size_t j = 0; j < p->count && j < 20; j++) {
                 const Item *it = &p->items[j];
                 fprintf(stderr, "  - name='%s' preset='%s' icon='%s' text='%s' action='%s' data='%s'\n",

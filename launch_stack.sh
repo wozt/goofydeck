@@ -57,9 +57,9 @@ kill_all() {
   # Fallback: kill by command line (covers manual runs and tmux runs that didn't write pid files).
   if command -v pgrep >/dev/null 2>&1; then
     extra_pids=()
-    while IFS= read -r p; do extra_pids+=("$p"); done < <(pgrep -f "${ROOT}/ulanzi_d200_demon" 2>/dev/null || true)
-    while IFS= read -r p; do extra_pids+=("$p"); done < <(pgrep -f "${ROOT}/pagging_demon" 2>/dev/null || true)
-    while IFS= read -r p; do extra_pids+=("$p"); done < <(pgrep -f "${ROOT}/ha_demon" 2>/dev/null || true)
+    while IFS= read -r p; do extra_pids+=("$p"); done < <(pgrep -f "${ROOT}/ulanzi_d200_daemon" 2>/dev/null || true)
+    while IFS= read -r p; do extra_pids+=("$p"); done < <(pgrep -f "${ROOT}/bin/paging_daemon" 2>/dev/null || true)
+    while IFS= read -r p; do extra_pids+=("$p"); done < <(pgrep -f "${ROOT}/bin/ha_daemon" 2>/dev/null || true)
 
     # De-dup + exclude ourselves
     uniq_pids=()
@@ -87,27 +87,27 @@ kill_all() {
 }
 
 start_background() {
-  [ -x "${ROOT}/ulanzi_d200_demon" ] || { echo "Missing ${ROOT}/ulanzi_d200_demon (run: make all)" >&2; exit 1; }
-  [ -x "${ROOT}/lib/pagging_demon" ] || { echo "Missing ${ROOT}/lib/pagging_demon (run: make all)" >&2; exit 1; }
-  [ -x "${ROOT}/lib/ha_demon" ] || { echo "Missing ${ROOT}/lib/ha_demon (run: make all)" >&2; exit 1; }
+  [ -x "${ROOT}/ulanzi_d200_daemon" ] || { echo "Missing ${ROOT}/ulanzi_d200_daemon (run: make all)" >&2; exit 1; }
+  [ -x "${ROOT}/bin/paging_daemon" ] || { echo "Missing ${ROOT}/bin/paging_daemon (run: make all)" >&2; exit 1; }
+  [ -x "${ROOT}/bin/ha_daemon" ] || { echo "Missing ${ROOT}/bin/ha_daemon (run: make all)" >&2; exit 1; }
   [ -f "${CONFIG_PATH}" ] || { echo "Missing config: ${CONFIG_PATH}" >&2; exit 1; }
 
-  echo "[launch] Starting ulanzi_d200_demon..."
+  echo "[launch] Starting ulanzi_d200_daemon..."
   rm -f "${ULANZI_SOCK}" 2>/dev/null || true
-  ("${ROOT}/ulanzi_d200_demon") &
-  echo $! >"${PID_DIR}/ulanzi_d200_demon.pid"
+  ("${ROOT}/ulanzi_d200_daemon") &
+  echo $! >"${PID_DIR}/ulanzi_d200_daemon.pid"
 
-  echo "[launch] Starting ha_demon..."
+  echo "[launch] Starting ha_daemon..."
   rm -f "${HA_SOCK}" 2>/dev/null || true
-  ("${ROOT}/lib/ha_demon") &
-  echo $! >"${PID_DIR}/ha_demon.pid"
+  ("${ROOT}/bin/ha_daemon") &
+  echo $! >"${PID_DIR}/ha_daemon.pid"
 
   echo "[launch] Sleeping 5s before starting paging..."
   sleep 5
 
-  echo "[launch] Starting pagging_demon..."
-  ("${ROOT}/lib/pagging_demon") &
-  echo $! >"${PID_DIR}/pagging_demon.pid"
+  echo "[launch] Starting paging_daemon..."
+  ("${ROOT}/bin/paging_daemon") &
+  echo $! >"${PID_DIR}/paging_daemon.pid"
 
   echo "[launch] Running."
   echo "[launch] PIDs:"
@@ -117,9 +117,9 @@ start_background() {
 start_byobu() {
   mux_bin="$(command -v byobu-tmux 2>/dev/null || true)"
   [ -n "${mux_bin}" ] || { echo "byobu-tmux not found (install byobu)" >&2; exit 1; }
-  [ -x "${ROOT}/ulanzi_d200_demon" ] || { echo "Missing ${ROOT}/ulanzi_d200_demon (run: make all)" >&2; exit 1; }
-  [ -x "${ROOT}/lib/pagging_demon" ] || { echo "Missing ${ROOT}/lib/pagging_demon (run: make all)" >&2; exit 1; }
-  [ -x "${ROOT}/lib/ha_demon" ] || { echo "Missing ${ROOT}/lib/ha_demon (run: make all)" >&2; exit 1; }
+  [ -x "${ROOT}/ulanzi_d200_daemon" ] || { echo "Missing ${ROOT}/ulanzi_d200_daemon (run: make all)" >&2; exit 1; }
+  [ -x "${ROOT}/bin/paging_daemon" ] || { echo "Missing ${ROOT}/bin/paging_daemon (run: make all)" >&2; exit 1; }
+  [ -x "${ROOT}/bin/ha_daemon" ] || { echo "Missing ${ROOT}/bin/ha_daemon (run: make all)" >&2; exit 1; }
   [ -f "${CONFIG_PATH}" ] || { echo "Missing config: ${CONFIG_PATH}" >&2; exit 1; }
 
   if "${mux_bin}" has-session -t "${TMUX_SESSION}" >/dev/null 2>&1; then
@@ -135,15 +135,15 @@ start_byobu() {
   "${mux_bin}" set-option -t "${TMUX_SESSION}" -g mouse on >/dev/null 2>&1 || true
 
   # Pane 0: ulanzi daemon
-  "${mux_bin}" send-keys -t "${TMUX_SESSION}:stack.0" "cd \"${ROOT}\"; echo \\$\\$ >\"${PID_DIR}/ulanzi_d200_demon.pid\"; exec ./ulanzi_d200_demon" C-m
+  "${mux_bin}" send-keys -t "${TMUX_SESSION}:stack.0" "cd \"${ROOT}\"; echo \\$\\$ >\"${PID_DIR}/ulanzi_d200_daemon.pid\"; exec ./ulanzi_d200_daemon" C-m
 
-  # Pane 1: pagging daemon (delayed)
+  # Pane 1: paging daemon (delayed)
   "${mux_bin}" split-window -t "${TMUX_SESSION}:stack.0" -h
-  "${mux_bin}" send-keys -t "${TMUX_SESSION}:stack.1" "cd \"${ROOT}\"; echo \\$\\$ >\"${PID_DIR}/pagging_demon.pid\"; echo '[launch] sleep 5s before paging...' >&2; sleep 5; exec ./lib/pagging_demon" C-m
+  "${mux_bin}" send-keys -t "${TMUX_SESSION}:stack.1" "cd \"${ROOT}\"; echo \\$\\$ >\"${PID_DIR}/paging_daemon.pid\"; echo '[launch] sleep 5s before paging...' >&2; sleep 5; exec ./bin/paging_daemon" C-m
 
-  # Pane 2: ha_demon
+  # Pane 2: ha_daemon
   "${mux_bin}" split-window -t "${TMUX_SESSION}:stack.1" -h
-  "${mux_bin}" send-keys -t "${TMUX_SESSION}:stack.2" "cd \"${ROOT}\"; echo \\$\\$ >\"${PID_DIR}/ha_demon.pid\"; exec ./lib/ha_demon" C-m
+  "${mux_bin}" send-keys -t "${TMUX_SESSION}:stack.2" "cd \"${ROOT}\"; echo \\$\\$ >\"${PID_DIR}/ha_daemon.pid\"; exec ./bin/ha_daemon" C-m
 
   "${mux_bin}" select-layout -t "${TMUX_SESSION}:stack" even-horizontal
   "${mux_bin}" select-pane -t "${TMUX_SESSION}:stack.0"
@@ -164,9 +164,9 @@ Options:
   --paging-sock <path>  (default: ${PAGING_SOCK})
 
 Starts:
-  1) ./ulanzi_d200_demon
-  2) ./lib/ha_demon
-  3) ./lib/pagging_demon
+  1) ./ulanzi_d200_daemon
+  2) ./bin/ha_daemon
+  3) ./bin/paging_daemon
 
 Stop:
   ./launch_stack.sh --kill
