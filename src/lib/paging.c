@@ -2948,7 +2948,7 @@ static void ulanzi_send_partial(const Options *opt, int pos, const char *png_pat
         log_msg("partial send failed (pos=%d)", pos);
         return;
     }
-    if (reply[0]) log_msg("partial resp='%s'", reply);
+    (void)reply;
 }
 
 static void ulanzi_send_partial_wallpaper(const Options *opt, const Config *cfg, const char *page_name, int pos,
