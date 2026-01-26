@@ -117,6 +117,13 @@ static volatile sig_atomic_t g_running = 1;
 // Set to 0 to silence informational logs from this daemon.
 // Errors (prefixed with "[ha] ERROR") are always printed.
 static int g_ha_verbose_logs = 1;
+// Set to 1 to use a 2-line "refresh" UI (TTY only):
+// - line above: last HA event
+// - bottom line: status (sub/unsub/get/call/result/ws)
+static int g_ha_refresh_logs = 1;
+
+static int g_ha_log_is_tty = -1;
+static int g_ha_ui_ready = 0;
 
 static void on_signal(int sig) {
     (void)sig;
@@ -125,6 +132,8 @@ static void on_signal(int sig) {
 
 static void log_msg(const char *fmt, ...) {
     if (!g_ha_verbose_logs) return;
+    // If refresh UI is enabled, do not mix multi-line logs with the 2-line status display.
+    // (We keep log_msg for low-frequency informational messages.)
     va_list ap;
     va_start(ap, fmt);
     fprintf(stderr, "[ha] ");
@@ -133,20 +142,58 @@ static void log_msg(const char *fmt, ...) {
     va_end(ap);
 }
 
-static void log_json_preview(const char *prefix, const char *json) {
-    if (!prefix) prefix = "json";
-    if (!json) json = "";
-    char buf[241];
-    size_t n = strlen(json);
-    size_t cpy = n;
-    if (cpy > sizeof(buf) - 1) cpy = sizeof(buf) - 1;
-    memcpy(buf, json, cpy);
-    buf[cpy] = 0;
-    for (size_t i = 0; buf[i]; i++) {
-        if (buf[i] == '\n' || buf[i] == '\r' || buf[i] == '\t') buf[i] = ' ';
+static void ha_ui_init_if_needed(void) {
+    if (!g_ha_verbose_logs) return;
+    if (!g_ha_refresh_logs) return;
+    if (g_ha_log_is_tty <= 0) return;
+    if (g_ha_ui_ready) return;
+    // Reserve two lines and place the cursor on the bottom line (status line).
+    fprintf(stderr, "\n\n\033[1A");
+    fflush(stderr);
+    g_ha_ui_ready = 1;
+}
+
+static void ha_log_status(const char *fmt, ...) {
+    if (!g_ha_verbose_logs) return;
+    if (!g_ha_refresh_logs || g_ha_log_is_tty <= 0) {
+        va_list ap;
+        va_start(ap, fmt);
+        fprintf(stderr, "[ha] ");
+        vfprintf(stderr, fmt, ap);
+        fprintf(stderr, "\n");
+        va_end(ap);
+        return;
     }
-    if (n > cpy) log_msg("%s: %s ...(%zu bytes)", prefix, buf, n);
-    else log_msg("%s: %s", prefix, buf);
+    ha_ui_init_if_needed();
+    va_list ap;
+    va_start(ap, fmt);
+    fprintf(stderr, "\r[ha] ");
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\033[K");
+    va_end(ap);
+    fflush(stderr);
+}
+
+static void ha_log_event(const char *fmt, ...) {
+    if (!g_ha_verbose_logs) return;
+    if (!g_ha_refresh_logs || g_ha_log_is_tty <= 0) {
+        va_list ap;
+        va_start(ap, fmt);
+        fprintf(stderr, "[ha] ");
+        vfprintf(stderr, fmt, ap);
+        fprintf(stderr, "\n");
+        va_end(ap);
+        return;
+    }
+    ha_ui_init_if_needed();
+    // We are currently sitting on the status line; write to the line above and restore cursor.
+    va_list ap;
+    va_start(ap, fmt);
+    fprintf(stderr, "\033[s\033[1A\r[ha] ");
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\033[K\033[u");
+    va_end(ap);
+    fflush(stderr);
 }
 
 static void die_errno(const char *msg) {
@@ -888,6 +935,12 @@ static int json_extract_state_value(const char *state_obj_json, char *out, size_
     return 0;
 }
 
+static const char *short_entity(const char *entity_id) {
+    if (!entity_id) return "";
+    const char *dot = strrchr(entity_id, '.');
+    return dot && dot[1] ? dot + 1 : entity_id;
+}
+
 static int ha_ws_send_auth(HaConn *c, const char *token) {
     char esc[4096];
     if (json_escape(token ? token : "", esc, sizeof(esc)) != 0) return -1;
@@ -998,15 +1051,8 @@ static void *ha_thread_main(void *arg) {
             if (have_req) {
                 int rc = 0;
                 if (req.type == HA_REQ_CALL) {
-                    {
-                        char tmp[512];
-                        snprintf(tmp, sizeof(tmp), "tx call id=%d %s.%s", req.req_id, req.domain ? req.domain : "", req.service ? req.service : "");
-                        log_msg("%s", tmp);
-                        if (req.service_data_json) log_json_preview("tx service_data", req.service_data_json);
-                    }
                     rc = ha_ws_send_call(&conn, req.req_id, req.domain, req.service, req.service_data_json);
                 } else if (req.type == HA_REQ_GET_STATES) {
-                    log_msg("tx get_states id=%d", req.req_id);
                     rc = ha_ws_send_get_states(&conn, req.req_id);
                 }
                 if (rc != 0) {
@@ -1228,9 +1274,11 @@ int main(int argc, char **argv) {
     signal(SIGTERM, on_signal);
     signal(SIGPIPE, SIG_IGN);
 
+    g_ha_log_is_tty = isatty(STDERR_FILENO) ? 1 : 0;
+
     int listen_fd = make_unix_listen(sock_path);
     if (listen_fd < 0) die_errno("listen socket");
-    log_msg("listening on %s", sock_path);
+    ha_log_status("listening %s", sock_path);
 
     int ha_in_pipe[2];
     int ha_out_pipe[2];
@@ -1290,7 +1338,7 @@ int main(int argc, char **argv) {
                 }
                 Client *c = clients_add(&clients, &client_len, &client_cap, cfd);
                 (void)c;
-                log_msg("client connected fd=%d", cfd);
+                ha_log_status("client+ fd=%d clients=%zu", cfd, client_len);
                 if (ha_connected) (void)write_all(cfd, "evt connected\n", 14);
                 else (void)write_all(cfd, "evt disconnected\n", 17);
             }
@@ -1307,12 +1355,12 @@ int main(int argc, char **argv) {
                 if (m->type == QMSG_CONNECTED) {
                     int was = ha_connected;
                     ha_connected = 1;
-                    if (!was) log_msg("ws connected");
+                    if (!was) ha_log_status("ws up clients=%zu", client_len);
                     for (size_t ci = 0; ci < client_len; ci++) (void)send_line(&clients[ci], "evt connected\n");
                 } else if (m->type == QMSG_DISCONNECTED) {
                     int was = ha_connected;
                     ha_connected = 0;
-                    if (was) log_msg("ws disconnected");
+                    if (was) ha_log_status("ws down clients=%zu", client_len);
                     for (size_t ci = 0; ci < client_len; ci++) (void)send_line(&clients[ci], "evt disconnected\n");
                 } else if (m->type == QMSG_RESULT) {
                     Pending *p = pending_find(pending, sizeof(pending)/sizeof(pending[0]), m->req_id);
@@ -1320,13 +1368,13 @@ int main(int argc, char **argv) {
                         Client *c = clients_find(clients, client_len, p->client_fd);
                         if (c) {
                             if (!ha_connected) {
-                                log_msg("req id=%d result: err ha_disconnected", m->req_id);
+                                ha_log_status("res %d err(disconnected)", m->req_id);
                                 (void)send_line(c, "err ha_disconnected\n");
                             } else if (!m->success) {
-                                log_msg("req id=%d result: err ha_error", m->req_id);
+                                ha_log_status("res %d err(ha)", m->req_id);
                                 (void)send_line(c, "err ha_error\n");
                             } else if (p->type == REQ_GET) {
-                                log_msg("req id=%d result: ok (get entity_id=%s)", m->req_id, p->get_entity_id ? p->get_entity_id : "");
+                                ha_log_status("res %d ok get %s", m->req_id, p->get_entity_id ? short_entity(p->get_entity_id) : "");
                                 // payload_json is an array for get_states; extract entity here.
                                 const char *payload = m->payload_json ? m->payload_json : "[]";
                                 const char *want = p->get_entity_id ? p->get_entity_id : "";
@@ -1379,7 +1427,7 @@ int main(int argc, char **argv) {
                                     }
                                 }
                             } else {
-                                log_msg("req id=%d result: ok (call)", m->req_id);
+                                ha_log_status("res %d ok call", m->req_id);
                                 (void)send_line(c, "ok\n");
                             }
                         }
@@ -1392,9 +1440,9 @@ int main(int argc, char **argv) {
                     if (any_client_subscribed(clients, client_len, m->entity_id)) {
                         char st[96] = {0};
                         if (json_extract_state_value(m->payload_json, st, sizeof(st)) == 0 && st[0]) {
-                            log_msg("rx state entity=%s state=%s", m->entity_id, st);
+                            ha_log_event("evt %s=%s", short_entity(m->entity_id), st);
                         } else {
-                            log_msg("rx state entity=%s", m->entity_id);
+                            ha_log_event("evt %s", short_entity(m->entity_id));
                         }
                     }
                     for (size_t ci = 0; ci < client_len; ci++) {
@@ -1479,7 +1527,7 @@ int main(int argc, char **argv) {
                     c->subs[c->sub_count].id = id;
                     c->subs[c->sub_count].entity_id = xstrdup(entity);
                     c->sub_count++;
-                    log_msg("subscribe fd=%d sub_id=%d entity=%s", c->fd, id, entity);
+                    ha_log_status("sub %d:%d %s", c->fd, id, short_entity(entity));
                     char out[64];
                     snprintf(out, sizeof(out), "ok sub_id=%d\n", id);
                     (void)send_line(c, out);
@@ -1490,7 +1538,7 @@ int main(int argc, char **argv) {
                     int found = 0;
                     for (int si = 0; si < c->sub_count; si++) {
                         if (c->subs[si].id == id) {
-                            log_msg("unsubscribe fd=%d sub_id=%d entity=%s", c->fd, id, c->subs[si].entity_id ? c->subs[si].entity_id : "");
+                            ha_log_status("unsub %d:%d %s", c->fd, id, c->subs[si].entity_id ? short_entity(c->subs[si].entity_id) : "");
                             free(c->subs[si].entity_id);
                             memmove(&c->subs[si], &c->subs[si + 1], (size_t)(c->sub_count - si - 1) * sizeof(c->subs[0]));
                             c->sub_count--;
@@ -1498,7 +1546,7 @@ int main(int argc, char **argv) {
                             break;
                         }
                     }
-                    if (!found) log_msg("unsubscribe fd=%d sub_id=%d (not_found)", c->fd, id);
+                    if (!found) ha_log_status("unsub %d:%d (not_found)", c->fd, id);
                     (void)send_line(c, found ? "ok\n" : "err not_found\n");
                     continue;
                 }
@@ -1507,7 +1555,7 @@ int main(int argc, char **argv) {
                     char *entity = line + 4;
                     trim(entity);
                     if (!entity[0]) { (void)send_line(c, "err bad_args\n"); continue; }
-                    log_msg("cmd get fd=%d entity=%s", c->fd, entity);
+                    ha_log_status("get %d %s", c->fd, short_entity(entity));
                     Pending *p = pending_alloc(pending, sizeof(pending)/sizeof(pending[0]));
                     if (!p) { (void)send_line(c, "err busy\n"); continue; }
                     int id = next_req_id++;
@@ -1529,8 +1577,7 @@ int main(int argc, char **argv) {
                     char *domain = NULL, *service = NULL, *json = NULL;
                     if (cmd_parse_call(line, &domain, &service, &json) != 0) { (void)send_line(c, "err bad_args\n"); continue; }
                     if (json_validate_one_line(json) != 0) { (void)send_line(c, "err bad_json\n"); continue; }
-                    log_msg("cmd call fd=%d %s.%s", c->fd, domain, service);
-                    log_json_preview("cmd service_data", json);
+                    ha_log_status("call %d %s.%s", c->fd, domain, service);
                     Pending *p = pending_alloc(pending, sizeof(pending)/sizeof(pending[0]));
                     if (!p) { (void)send_line(c, "err busy\n"); continue; }
                     int id = next_req_id++;
