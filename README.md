@@ -58,6 +58,23 @@ Main config: `config/configuration.yml` (parsed with `libyaml`, no Python).
 - `presets:`: reusable styles for icons/text.
 - `pages:`: the page tree; each page has a `buttons:` list.
 
+### Wallpaper notes
+
+When `wallpaper` is enabled, `paging_daemon` renders the wallpaper into **14 tiles** and sends them with the page (buttons 1–13 are composed as `tile + icon`, and button 14 is the raw tile).
+
+Recommendations (tune based on your SBC and the image content):
+- Prefer **~360p wallpapers** for responsiveness.
+- All image sizes are supported, but you typically need to lower `quality` as the resolution goes up.
+  - **720p**: start around `quality: 30` (±10)
+  - **360p**: start around `quality: 60` (±10)
+
+Performance warning:
+- Wallpaper composition adds CPU work and extra file I/O. It is **not recommended** on very small SBCs (e.g. Raspberry Pi Zero / Banana Pi) if you want fast navigation.
+
+Storage warning:
+- Wallpaper tiling creates small render files **next to your wallpaper image** (a folder named `<wallpaper filename without .png>/` containing `<name>-1.png` ... `<name>-14.png`).
+- During runtime, additional session caches and temporary files are stored under `/dev/shm/goofydeck/paging/` and are cleared on daemon start.
+
 ### `presets:` (Button Style)
 
 A preset is a set of rendering defaults used by a button (and can also be overridden by a per-state entry).
@@ -156,15 +173,11 @@ HA_ACCESS_TOKEN=""
 
 Optional:
 - `USERNAME`: used by helper scripts like `bin/get_username.sh` (falls back to `whoami` if unset).
-- **Buttons**: 13 main buttons + 1 special button
-- **Resolution**: 1280x720 pixels for full images
-- **Format**: PNG recommended for icons
-- **Padding**: Automatically handled to avoid invalid bytes
 
-## 🤝 Contributing
+## Contributing
 
 The project is developed in C for optimal performance, with bash scripts for automation. Old Python versions are kept in `legacy/` for reference.
 
-## 📄 License
+## License
 
 [To be completed according to your license]

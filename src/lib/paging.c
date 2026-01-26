@@ -27,6 +27,7 @@
 #include <strings.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -515,6 +516,55 @@ static int write_blank_png(const char *path, int w, int h) {
     png_destroy_write_struct(&png, &info);
     fclose(fp);
     return 0;
+}
+
+static int png_read_wh(const char *path, int *out_w, int *out_h) {
+    if (out_w) *out_w = 0;
+    if (out_h) *out_h = 0;
+    if (!path || !out_w || !out_h) return -1;
+
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return -1;
+
+    uint8_t sig[8];
+    if (fread(sig, 1, 8, fp) != 8) {
+        fclose(fp);
+        return -1;
+    }
+    if (png_sig_cmp(sig, 0, 8) != 0) {
+        fclose(fp);
+        return -1;
+    }
+
+    png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    if (!png) {
+        fclose(fp);
+        return -1;
+    }
+    png_infop info = png_create_info_struct(png);
+    if (!info) {
+        png_destroy_read_struct(&png, NULL, NULL);
+        fclose(fp);
+        return -1;
+    }
+    if (setjmp(png_jmpbuf(png))) {
+        png_destroy_read_struct(&png, &info, NULL);
+        fclose(fp);
+        return -1;
+    }
+
+    png_init_io(png, fp);
+    png_set_sig_bytes(png, 8);
+    png_read_info(png, info);
+    png_uint_32 w = 0, h = 0;
+    int bit_depth = 0, color_type = 0, interlace = 0, compression = 0, filter = 0;
+    png_get_IHDR(png, info, &w, &h, &bit_depth, &color_type, &interlace, &compression, &filter);
+    png_destroy_read_struct(&png, &info, NULL);
+    fclose(fp);
+
+    *out_w = (int)w;
+    *out_h = (int)h;
+    return (w > 0 && h > 0) ? 0 : -1;
 }
 
 static int run_exec(char *const argv[]) {
@@ -1143,6 +1193,17 @@ typedef struct {
     bool enabled;
 } WallpaperEff;
 
+static bool path_basename(const char *path, char *out, size_t cap) {
+    if (!out || cap == 0) return false;
+    out[0] = 0;
+    if (!path || !path[0]) return false;
+    const char *b = strrchr(path, '/');
+    b = b ? b + 1 : path;
+    if (!b[0]) return false;
+    snprintf(out, cap, "%s", b);
+    return out[0] != 0;
+}
+
 static WallpaperEff effective_wallpaper(const Config *cfg, const Page *page) {
     WallpaperEff out;
     memset(&out, 0, sizeof(out));
@@ -1255,6 +1316,83 @@ static int ensure_wallpaper_rendered(const Options *opt, const WallpaperEff *wp,
     }
 
     return wallpaper_tiles_exist(out_dir, out_prefix) ? 0 : -1;
+}
+
+static int wallpaper_session_tile(const Options *opt, const char *render_dir, const char *prefix,
+                                  const WallpaperEff *wp, int tile_num, char *out_path, size_t out_cap);
+
+static int wp_compose_cached(const Options *opt, uint32_t wp_sig, const char *render_dir, const char *prefix,
+                             const WallpaperEff *wp, int pos, const char *icon_path,
+                             char *out_png, size_t out_cap, bool *out_is_tmp) {
+    if (out_is_tmp) *out_is_tmp = false;
+    if (!opt || !wp || !wp->enabled || !render_dir || !prefix || !icon_path || !out_png || out_cap == 0) return -1;
+    out_png[0] = 0;
+    if (pos < 1 || pos > 13) return -1;
+
+    char tile[PATH_MAX];
+    if (wallpaper_session_tile(opt, render_dir, prefix, wp, pos, tile, sizeof(tile)) != 0 || tile[0] == 0) return -1;
+
+    // Only cache for non-temp, stable icons (already in cache/pregen).
+    bool can_cache = true;
+    char dir[PATH_MAX];
+    state_dir(opt, dir, sizeof(dir));
+    char tmpdir[PATH_MAX];
+    snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", dir);
+    if (strncmp(icon_path, tmpdir, strlen(tmpdir)) == 0) can_cache = false;
+
+    char base[PATH_MAX];
+    if (!path_basename(icon_path, base, sizeof(base))) return -1;
+
+    char cache_dir[PATH_MAX];
+    snprintf(cache_dir, sizeof(cache_dir), "%s/wp_comp/%08x/%02d", dir, (unsigned)wp_sig, pos);
+    if (can_cache) {
+        // This is a nested path; create parents best-effort. If it fails, fall back to tmp (no cache).
+        if (try_ensure_dir_parent(cache_dir) != 0 || try_ensure_dir(cache_dir) != 0) {
+            can_cache = false;
+        }
+    }
+    char cached[PATH_MAX];
+    snprintf(cached, sizeof(cached), "%s/%s", cache_dir, base);
+    if (can_cache && file_exists(cached)) {
+        snprintf(out_png, out_cap, "%s", cached);
+        return 0;
+    }
+
+    char draw_over_bin[PATH_MAX];
+    snprintf(draw_over_bin, sizeof(draw_over_bin), "%s/icons/draw_over", opt->root_dir);
+    if (access(draw_over_bin, X_OK) != 0) return -1;
+
+    ensure_dir(tmpdir);
+    pid_t pid = getpid();
+    long t = (long)time(NULL);
+    char tmp_out[PATH_MAX];
+    snprintf(tmp_out, sizeof(tmp_out), "%s/wp_comp_tmp_%d_%ld_%02d.png", tmpdir, (int)pid, t, pos);
+    if (copy_file(tile, tmp_out) != 0) return -1;
+
+    char *argv_over[] = { draw_over_bin, (char *)icon_path, tmp_out, NULL };
+    if (run_exec(argv_over) != 0) {
+        unlink(tmp_out);
+        return -1;
+    }
+
+    if (can_cache) {
+        // Best-effort atomic move into cache.
+        if (rename(tmp_out, cached) == 0) {
+            snprintf(out_png, out_cap, "%s", cached);
+            return 0;
+        }
+        // Cross-filesystem fallback.
+        if (copy_file(tmp_out, cached) == 0) {
+            unlink(tmp_out);
+            snprintf(out_png, out_cap, "%s", cached);
+            return 0;
+        }
+    }
+
+    // Fallback: use tmp directly (caller must unlink).
+    if (out_is_tmp) *out_is_tmp = true;
+    snprintf(out_png, out_cap, "%s", tmp_out);
+    return 0;
 }
 
 static int wallpaper_session_tile(const Options *opt, const char *render_dir, const char *prefix,
@@ -1725,6 +1863,16 @@ static int render_value_text_on_base_tmp(const Options *opt, const Preset *prese
     if (access(draw_text_bin, X_OK) != 0) { unlink(outpng); return -1; }
     if (access(draw_opt_bin, X_OK) != 0) { unlink(outpng); return -1; }
 
+    // If the target image isn't 196x196 (e.g. wallpaper tiles), scale text params so a config written for
+    // 196px keeps similar proportions, and avoid post-text aggressive optimization (it destroys gradients/AA).
+    int img_w = 0, img_h = 0;
+    bool have_wh = (png_read_wh(outpng, &img_w, &img_h) == 0);
+    int ref = 196;
+    int min_wh = (have_wh ? (img_w < img_h ? img_w : img_h) : ref);
+    double ratio = (have_wh && min_wh > 0) ? ((double)min_wh / (double)ref) : 1.0;
+    if (ratio <= 0.0) ratio = 1.0;
+    bool is_ref_size = (!have_wh) || (img_w == ref && img_h == ref);
+
     const char *tc = (preset && preset->text_color && preset->text_color[0]) ? preset->text_color : "FFFFFF";
     const char *ta = (preset && preset->text_align && preset->text_align[0]) ? preset->text_align : "center";
     const char *tf = (preset && preset->text_font && preset->text_font[0]) ? preset->text_font : "Roboto";
@@ -1732,6 +1880,17 @@ static int render_value_text_on_base_tmp(const Options *opt, const Preset *prese
     int ts = preset ? clamp_int(preset->text_size, 1, 64) : 40;
     int tox = preset ? preset->text_offset_x : 0;
     int toy = preset ? preset->text_offset_y : 0;
+
+    int ts_eff = ts;
+    int tox_eff = tox;
+    int toy_eff = toy;
+    if (!is_ref_size) {
+        ts_eff = (int)(ts * ratio + 0.5);
+        if (ts_eff < 6) ts_eff = 6;
+        if (ts_eff > 196) ts_eff = 196;
+        tox_eff = (int)(tox * ratio + (tox >= 0 ? 0.5 : -0.5));
+        toy_eff = (int)(toy * ratio + (toy >= 0 ? 0.5 : -0.5));
+    }
 
     char text_arg[768];
     snprintf(text_arg, sizeof(text_arg), "--text=%s", text);
@@ -1742,9 +1901,9 @@ static int render_value_text_on_base_tmp(const Options *opt, const Preset *prese
     char tf_arg[PATH_MAX];
     snprintf(tf_arg, sizeof(tf_arg), "--text_font=%s", tf);
     char ts_arg[64];
-    snprintf(ts_arg, sizeof(ts_arg), "--text_size=%d", ts);
+    snprintf(ts_arg, sizeof(ts_arg), "--text_size=%d", ts_eff);
     char to_arg[64];
-    snprintf(to_arg, sizeof(to_arg), "--text_offset=%d,%d", tox, toy);
+    snprintf(to_arg, sizeof(to_arg), "--text_offset=%d,%d", tox_eff, toy_eff);
 
     char *argv_text[] = { draw_text_bin, text_arg, tc_arg, ta_arg, tf_arg, ts_arg, to_arg, outpng, NULL };
     int rc = run_exec(argv_text);
@@ -1755,9 +1914,12 @@ static int render_value_text_on_base_tmp(const Options *opt, const Preset *prese
     }
     if (rc != 0) { unlink(outpng); return -1; }
 
-    // Optimize after drawing value text (keeps file size small; safe for non-transparent text overlays).
-    char *argv_opt[] = { draw_opt_bin, (char *)"-c", (char *)"4", outpng, NULL };
-    if (run_exec(argv_opt) != 0) { unlink(outpng); return -1; }
+    if (is_ref_size) {
+        // Optimize after drawing value text (keeps file size small) only for 196x196 icons.
+        // For wallpaper tiles, -c 4 destroys gradients and text anti-aliasing.
+        char *argv_opt[] = { draw_opt_bin, (char *)"-c", (char *)"4", outpng, NULL };
+        if (run_exec(argv_opt) != 0) { unlink(outpng); return -1; }
+    }
 
     snprintf(out_tmp_png, out_cap, "%s", outpng);
     return 0;
@@ -2140,6 +2302,7 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
 	char btn_label[14][64];
 	bool label_set[14] = {0};
 	bool cleanup_tmp[14] = {0};
+    bool wp_already_composed[14] = {0};
 	for (int i = 1; i <= 13; i++) {
 	    snprintf(btn_path[i], sizeof(btn_path[i]), "%s", blank_png);
 	    btn_set[i] = true;
@@ -2152,6 +2315,24 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
     if (show_back && back_pos >= 1 && back_pos <= 13) reserved[back_pos] = true;
     if (show_prev && prev_pos >= 1 && prev_pos <= 13) reserved[prev_pos] = true;
     if (show_next && next_pos >= 1 && next_pos <= 13) reserved[next_pos] = true;
+
+    // Optional wallpaper context for this page. We use it to cache composed tile+icon in /dev/shm, and
+    // to allow dynamic text updates (HA value) without re-running draw_over every time.
+    WallpaperEff wp = effective_wallpaper(cfg, p);
+    bool wp_active = false;
+    char wp_render_dir[PATH_MAX] = {0};
+    char wp_prefix[PATH_MAX] = {0};
+    char wp_tile14[PATH_MAX] = {0};
+    bool have_draw_over = false;
+    if (wp.enabled && wp.path && wp.path[0]) {
+        if (ensure_wallpaper_rendered(opt, &wp, wp_render_dir, sizeof(wp_render_dir), wp_prefix, sizeof(wp_prefix)) == 0) {
+            wp_active = true;
+            (void)wallpaper_session_tile(opt, wp_render_dir, wp_prefix, &wp, 14, wp_tile14, sizeof(wp_tile14));
+            char draw_over_bin[PATH_MAX];
+            snprintf(draw_over_bin, sizeof(draw_over_bin), "%s/icons/draw_over", opt->root_dir);
+            have_draw_over = (access(draw_over_bin, X_OK) == 0);
+        }
+    }
 
     // Fill items
     size_t item_i = offset;
@@ -2220,12 +2401,33 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
 
                 char base_png[PATH_MAX];
                 if (cached_or_generated_into_state(opt, cfg, page_name, item_i, &tmp_it, NULL, (const char *)"", pr_name, NULL, base_png, sizeof(base_png))) {
+                    const char *text_base = base_png;
+                    char composed_base[PATH_MAX] = {0};
+                    bool composed_is_tmp = false;
+                    bool cleanup_text_base = false;
+                    if (wp_active && have_draw_over) {
+                        // Compose tile+base icon once (cached), then draw_text on top for dynamic updates.
+                        if (wp_compose_cached(opt, wp_sig, wp_render_dir, wp_prefix, &wp, pos, base_png,
+                                              composed_base, sizeof(composed_base), &composed_is_tmp) == 0 &&
+                            composed_base[0]) {
+                            text_base = composed_base;
+                            cleanup_text_base = composed_is_tmp;
+                        }
+                    }
+
                     char tmp_out[PATH_MAX];
-                    if (render_value_text_on_base_tmp(opt, pr, page_name, pos, base_png, eff_text, tmp_out, sizeof(tmp_out)) == 0) {
+                    if (render_value_text_on_base_tmp(opt, pr, page_name, pos, text_base, eff_text, tmp_out, sizeof(tmp_out)) == 0) {
                         snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp_out);
                         btn_set[pos] = true;
                         cleanup_tmp[pos] = true;
                         have_icon = true;
+                        if (text_base != base_png) {
+                            // Already includes wallpaper tile.
+                            wp_already_composed[pos] = true;
+                        }
+                        if (cleanup_text_base) unlink(text_base);
+                    } else {
+                        if (cleanup_text_base) unlink(text_base);
                     }
                 }
             }
@@ -2276,66 +2478,37 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
         }
     }
 
-    // Optional wallpaper: pre-render 14 tiles from an image, then overlay each icon on its tile via draw_over.
-    // Tile 14 is sent as part of the same command (no overlay) when wallpaper is active.
-    char wp_tile14[PATH_MAX] = {0};
-    bool wp_active = false;
-    {
-        WallpaperEff wp = effective_wallpaper(cfg, p);
-        if (wp.enabled) {
-            char render_dir[PATH_MAX];
-            char prefix[PATH_MAX];
-            if (ensure_wallpaper_rendered(opt, &wp, render_dir, sizeof(render_dir), prefix, sizeof(prefix)) == 0) {
-                wp_active = true;
-                char dir[PATH_MAX];
-                state_dir(opt, dir, sizeof(dir));
-                char tmpdir[PATH_MAX];
-                snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", dir);
-                ensure_dir(tmpdir);
+    // Optional wallpaper: reuse cached composition tile+icon in /dev/shm.
+    // For dynamic value overlays we already produced a composed image (tile+base+text), so we skip those.
+    if (wp_active) {
+        for (int pos = 1; pos <= 13; pos++) {
+            if (wp_already_composed[pos]) continue;
 
-                // Precompute tile 14 for this render (no overlay).
-                (void)wallpaper_session_tile(opt, render_dir, prefix, &wp, 14, wp_tile14, sizeof(wp_tile14));
-
-                char draw_over_bin[PATH_MAX];
-                snprintf(draw_over_bin, sizeof(draw_over_bin), "%s/icons/draw_over", opt->root_dir);
-                bool have_draw_over = (access(draw_over_bin, X_OK) == 0);
-
-                char page_tag[96];
-                sanitize_suffix(page_name, page_tag, sizeof(page_tag));
-                if (page_tag[0] == 0) snprintf(page_tag, sizeof(page_tag), "page");
-
-                long t = (long)time(NULL);
-                pid_t pid = getpid();
-
-                for (int pos = 1; pos <= 13; pos++) {
-                    char tile[PATH_MAX];
-                    if (wallpaper_session_tile(opt, render_dir, prefix, &wp, pos, tile, sizeof(tile)) != 0 || tile[0] == 0) continue;
-
-                    // If the button is blank, show only the wallpaper tile (no overlay).
-                    if (strcmp(btn_path[pos], blank_png) == 0) {
-                        snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tile);
-                        btn_set[pos] = true;
-                        continue;
-                    }
-
-                    if (!have_draw_over) continue;
-
-                    // If the current icon is a temp file (e.g. dynamic sensor value), clean it after composing.
-                    char icon_top[PATH_MAX];
-                    snprintf(icon_top, sizeof(icon_top), "%s", btn_path[pos]);
-                    bool icon_top_is_tmp = cleanup_tmp[pos];
-
-                    char outpng[PATH_MAX];
-                    snprintf(outpng, sizeof(outpng), "%s/wp_%s_%d_%ld_%d.png", tmpdir, page_tag, (int)pid, t, pos);
-                    if (copy_file(tile, outpng) != 0) continue;
-                    char *argv_over[] = { draw_over_bin, icon_top, outpng, NULL };
-                    if (run_exec(argv_over) != 0) { unlink(outpng); continue; }
-
-                    if (icon_top_is_tmp) unlink(icon_top);
-                    cleanup_tmp[pos] = true;
-                    snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", outpng);
+            // Blank => wallpaper tile only.
+            if (strcmp(btn_path[pos], blank_png) == 0) {
+                char tile[PATH_MAX];
+                if (wallpaper_session_tile(opt, wp_render_dir, wp_prefix, &wp, pos, tile, sizeof(tile)) == 0 && tile[0]) {
+                    snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tile);
                     btn_set[pos] = true;
                 }
+                continue;
+            }
+
+            if (!have_draw_over) continue;
+
+            char icon_top[PATH_MAX];
+            snprintf(icon_top, sizeof(icon_top), "%s", btn_path[pos]);
+            bool icon_top_is_tmp = cleanup_tmp[pos];
+
+            char composed[PATH_MAX];
+            bool composed_is_tmp = false;
+            if (wp_compose_cached(opt, wp_sig, wp_render_dir, wp_prefix, &wp, pos, icon_top,
+                                  composed, sizeof(composed), &composed_is_tmp) == 0 &&
+                composed[0]) {
+                if (icon_top_is_tmp) unlink(icon_top);
+                cleanup_tmp[pos] = composed_is_tmp;
+                snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", composed);
+                btn_set[pos] = true;
             }
         }
     }
@@ -2390,6 +2563,51 @@ static void state_dir(const Options *opt, char *out, size_t cap) {
     }
     snprintf(out, cap, "%s/paging", (opt && opt->cache_root) ? opt->cache_root : ".cache");
     ensure_dir(out);
+}
+
+static int rm_tree_contents(const char *dir_path) {
+    if (!dir_path || !dir_path[0]) return -1;
+
+    DIR *d = opendir(dir_path);
+    if (!d) {
+        if (errno == ENOENT) return 0;
+        return -1;
+    }
+
+    int rc = 0;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+
+        char p[PATH_MAX];
+        snprintf(p, sizeof(p), "%s/%s", dir_path, ent->d_name);
+
+        struct stat st;
+        if (lstat(p, &st) != 0) {
+            rc = -1;
+            continue;
+        }
+
+        if (S_ISDIR(st.st_mode)) {
+            if (rm_tree_contents(p) != 0) rc = -1;
+            if (rmdir(p) != 0) rc = -1;
+        } else {
+            if (unlink(p) != 0) rc = -1;
+        }
+    }
+    closedir(d);
+    return rc;
+}
+
+static void wipe_paging_state_dir_at_startup(const Options *opt) {
+    char dir[PATH_MAX];
+    state_dir(opt, dir, sizeof(dir));
+
+    // Safety: only wipe the RAM-backed state dir.
+    const char *primary = "/dev/shm/goofydeck/paging";
+    if (strcmp(dir, primary) != 0) return;
+
+    (void)rm_tree_contents(dir);
 }
 
 static int join_path(char *out, size_t cap, const char *a, const char *b) {
@@ -2692,53 +2910,36 @@ static void ulanzi_send_partial_wallpaper(const Options *opt, const Config *cfg,
         return;
     }
 
-    char tile[PATH_MAX];
-    if (wallpaper_session_tile(opt, render_dir, prefix, &wp, pos, tile, sizeof(tile)) != 0 || tile[0] == 0) {
-        ulanzi_send_partial(opt, pos, png_path, label_src);
-        return;
-    }
-
     // Blank => wallpaper tile only.
     if (blank_png && strcmp(png_path, blank_png) == 0) {
-        ulanzi_send_partial(opt, pos, tile, label_src);
-        return;
-    }
-
-    char draw_over_bin[PATH_MAX];
-    snprintf(draw_over_bin, sizeof(draw_over_bin), "%s/icons/draw_over", opt->root_dir);
-    if (access(draw_over_bin, X_OK) != 0) {
+        char tile[PATH_MAX];
+        if (wallpaper_session_tile(opt, render_dir, prefix, &wp, pos, tile, sizeof(tile)) == 0 && tile[0]) {
+            ulanzi_send_partial(opt, pos, tile, label_src);
+            return;
+        }
         ulanzi_send_partial(opt, pos, png_path, label_src);
         return;
     }
 
-    char dir[PATH_MAX];
-    state_dir(opt, dir, sizeof(dir));
-    char tmpdir[PATH_MAX];
-    snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", dir);
-    ensure_dir(tmpdir);
+    // Signature for caching composed images.
+    uint32_t wp_sig = 0;
+    if (wp.path && wp.path[0]) {
+        char wkey[1024];
+        snprintf(wkey, sizeof(wkey), "path:%s\nq:%d\nm:%d\nd:%d\n", wp.path, wp.quality, wp.magnify, wp.dithering ? 1 : 0);
+        wp_sig = fnv1a32(wkey, strlen(wkey));
+    }
 
-    char page_tag[96];
-    sanitize_suffix(page_name, page_tag, sizeof(page_tag));
-    if (page_tag[0] == 0) snprintf(page_tag, sizeof(page_tag), "page");
-
-    long t = (long)time(NULL);
-    pid_t pid = getpid();
-    char outpng[PATH_MAX];
-    snprintf(outpng, sizeof(outpng), "%s/wp_partial_%s_%d_%ld_%d.png", tmpdir, page_tag, (int)pid, t, pos);
-    if (copy_file(tile, outpng) != 0) {
-        ulanzi_send_partial(opt, pos, png_path, label_src);
+    char composed[PATH_MAX];
+    bool composed_is_tmp = false;
+    if (wp_compose_cached(opt, wp_sig, render_dir, prefix, &wp, pos, png_path, composed, sizeof(composed), &composed_is_tmp) == 0 &&
+        composed[0]) {
+        ulanzi_send_partial(opt, pos, composed, label_src);
+        if (composed_is_tmp) unlink(composed);
         return;
     }
 
-    char *argv_over[] = { draw_over_bin, (char *)png_path, outpng, NULL };
-    if (run_exec(argv_over) != 0) {
-        unlink(outpng);
-        ulanzi_send_partial(opt, pos, png_path, label_src);
-        return;
-    }
-
-    ulanzi_send_partial(opt, pos, outpng, label_src);
-    unlink(outpng);
+    // Fallback: send without wallpaper if composition fails.
+    ulanzi_send_partial(opt, pos, png_path, label_src);
 }
 
 static void ha_partial_update_visible(const Options *opt, const Config *cfg, const char *page_name, size_t offset,
@@ -2819,12 +3020,45 @@ static void ha_partial_update_visible(const Options *opt, const Config *cfg, con
                     tmp_it.text = (char *)"";
                     char base_png[PATH_MAX];
                     if (cached_or_generated_into_state(opt, cfg, page_name, item_i, &tmp_it, NULL, (const char *)"", pr_name, NULL, base_png, sizeof(base_png))) {
-                        char tmp_out[PATH_MAX];
-                        if (render_value_text_on_base_tmp(opt, pr, page_name, pos, base_png, eff_text, tmp_out, sizeof(tmp_out)) == 0) {
-                            snprintf(icon_path, sizeof(icon_path), "%s", tmp_out);
-                            ulanzi_send_partial_wallpaper(opt, cfg, page_name, pos, icon_path, label_src, blank_png);
-                            unlink(icon_path);
-                            sent = true;
+                        // If wallpaper is active, compose tile+base once (cached) and draw the value text on top,
+                        // so updates don't need draw_over every time.
+                        const Page *page = config_get_page((Config *)cfg, page_name);
+                        WallpaperEff wp = effective_wallpaper(cfg, page);
+                        if (wp.enabled && wp.path && wp.path[0]) {
+                            char render_dir[PATH_MAX];
+                            char prefix[PATH_MAX];
+                            char draw_over_bin[PATH_MAX];
+                            snprintf(draw_over_bin, sizeof(draw_over_bin), "%s/icons/draw_over", opt->root_dir);
+                            if (access(draw_over_bin, X_OK) == 0 &&
+                                ensure_wallpaper_rendered(opt, &wp, render_dir, sizeof(render_dir), prefix, sizeof(prefix)) == 0) {
+                                uint32_t wp_sig = 0;
+                                char wkey[1024];
+                                snprintf(wkey, sizeof(wkey), "path:%s\nq:%d\nm:%d\nd:%d\n", wp.path, wp.quality, wp.magnify, wp.dithering ? 1 : 0);
+                                wp_sig = fnv1a32(wkey, strlen(wkey));
+
+                                char composed_base[PATH_MAX] = {0};
+                                bool composed_tmp = false;
+                                if (wp_compose_cached(opt, wp_sig, render_dir, prefix, &wp, pos, base_png,
+                                                      composed_base, sizeof(composed_base), &composed_tmp) == 0 &&
+                                    composed_base[0]) {
+                                    char tmp_out[PATH_MAX];
+                                    if (render_value_text_on_base_tmp(opt, pr, page_name, pos, composed_base, eff_text, tmp_out, sizeof(tmp_out)) == 0) {
+                                        ulanzi_send_partial(opt, pos, tmp_out, label_src);
+                                        unlink(tmp_out);
+                                        sent = true;
+                                    }
+                                    if (composed_tmp) unlink(composed_base);
+                                }
+                            }
+                        }
+                        if (!sent) {
+                            char tmp_out[PATH_MAX];
+                            if (render_value_text_on_base_tmp(opt, pr, page_name, pos, base_png, eff_text, tmp_out, sizeof(tmp_out)) == 0) {
+                                snprintf(icon_path, sizeof(icon_path), "%s", tmp_out);
+                                ulanzi_send_partial_wallpaper(opt, cfg, page_name, pos, icon_path, label_src, blank_png);
+                                unlink(icon_path);
+                                sent = true;
+                            }
                         }
                     }
                 }
@@ -3285,6 +3519,9 @@ int main(int argc, char **argv) {
     signal(SIGTERM, on_signal);
     // Avoid crashing if a client disconnects while we write to a socket (e.g. control socket piped via socat).
     signal(SIGPIPE, SIG_IGN);
+
+    // Start with a clean RAM-backed state (tmp files, wallpaper session copies, etc).
+    wipe_paging_state_dir_at_startup(&opt);
 
     Config cfg;
     config_init_defaults(&cfg);

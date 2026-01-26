@@ -6,8 +6,8 @@ sleep:
   sleep_timeout: 3600
 
 wallpaper:
-  path: "mymedia/wallpapers/neige.png"
-  quality: 60
+  path: "mymedia/wallpapers/valley.png"
+  quality: 30
   magnify: 100
   dithering: yes
 
@@ -574,8 +574,8 @@ presets:
 pages:
   $root:
     wallpaper:
-      path: "mymedia/wallpapers/valley.png"
-      quality: 30
+      path: "mymedia/wallpapers/neige.png"
+      quality: 60
       magnify: 100
       dithering: yes
     buttons:
@@ -712,6 +712,13 @@ pages:
 
   salon:
     buttons:
+      - name: ""
+      - name: ""
+      - name: ""
+      - name: ""
+      - name: "Temperature"
+        entity_id: sensor.tz3000_utwgoauk_snzb_02_temperature
+        presets: [base_button]
       - name: "Lampe droite"
         entity_id: light.lampe_droite
         presets: [base_button]
@@ -766,9 +773,7 @@ pages:
           "off":
             name: "Écrans allumés"
             presets: [screen_off]
-      - name: "Temperature"
-        entity_id: sensor.tz3000_utwgoauk_snzb_02_temperature
-        presets: [base_button]
+
 
 
   settings:
