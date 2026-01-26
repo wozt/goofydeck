@@ -139,7 +139,7 @@ start_byobu() {
 
   # Pane 1: pagging daemon (delayed)
   "${mux_bin}" split-window -t "${TMUX_SESSION}:stack.0" -h
-  "${mux_bin}" send-keys -t "${TMUX_SESSION}:stack.1" "cd \"${ROOT}\"; echo \\$\\$ >\"${PID_DIR}/pagging_demon.pid\"; echo '[launch] sleep 10s before paging...' >&2; sleep 10; exec ./lib/pagging_demon" C-m
+  "${mux_bin}" send-keys -t "${TMUX_SESSION}:stack.1" "cd \"${ROOT}\"; echo \\$\\$ >\"${PID_DIR}/pagging_demon.pid\"; echo '[launch] sleep 5s before paging...' >&2; sleep 5; exec ./lib/pagging_demon" C-m
 
   # Pane 2: ha_demon
   "${mux_bin}" split-window -t "${TMUX_SESSION}:stack.1" -h

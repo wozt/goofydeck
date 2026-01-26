@@ -122,12 +122,21 @@ rm -f c_std.png 2>/dev/null || true
 
 
 
-./icons/draw_square 111111 ./c_std.png
+./icons/draw_square FFFFFF ./c_std.png
 ./icons/draw_border 00FF00 --size=196 --radius=20 ./c_std.png >/dev/null
 ./icons/draw_border FFFFFF --size=172 --radius=20 ./c_std.png >/dev/null
-./icons/draw_mdi mdi:dev-to tansparent --size=120 ./c_std.png      
-#need to implement transparent color
-./icons/draw_optimize -c 64 ./c_std.png >/dev/null
+./icons/draw_mdi mdi:dev-to transparent --size=120 ./c_std.png      
+./icons/draw_optimize -c 4 ./c_std.png >/dev/null
+
+
+
+./icons/draw_square FFFFFF ./c_std.png
+./icons/draw_border 00FF00 --size=196 --radius=20 ./c_std.png >/dev/null
+./icons/draw_border FFFFFF --size=172 --radius=20 ./c_std.png >/dev/null
+./icons/draw_optimize ./c_std.png >/dev/null
+./icons/draw_mdi mdi:dev-to transparent --size=120 ./c_std.png      
+
+
 
 
 

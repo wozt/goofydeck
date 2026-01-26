@@ -1447,6 +1447,7 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
     const char *bg = (preset && preset->icon_background_color && preset->icon_background_color[0]) ? preset->icon_background_color : "transparent";
     const char *border_c = (preset && preset->icon_border_color && preset->icon_border_color[0]) ? preset->icon_border_color : "FFFFFF";
     const char *ic_color = (preset && preset->icon_color && preset->icon_color[0]) ? preset->icon_color : "FFFFFF";
+    bool icon_color_transparent = (ic_color && strcasecmp(ic_color, "transparent") == 0);
     int rad = preset ? clamp_int(preset->icon_border_radius, 0, 50) : 0;
     int border_size = preset ? clamp_int(preset->icon_border_size, 98, 196) : 196;
     int bw = preset ? clamp_int(preset->icon_border_width, 0, 98) : 0;
@@ -1491,9 +1492,11 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
     }
 
     // draw_mdi (optional)
+    bool mdi_transparent = false;
     if (it->icon && strncmp(it->icon, "mdi:", 4) == 0) {
         if (access(draw_mdi_bin, X_OK) != 0) return -1;
         if (ensure_mdi_svg(opt, it->icon) != 0) return -1;
+        mdi_transparent = icon_color_transparent;
         int max_allowed = 196 - 2 * (bw + pad);
         max_allowed = clamp_int(max_allowed, 1, 196);
         int icon_size = preset ? preset->icon_size : 128;
@@ -1511,7 +1514,9 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
     }
 
     // draw_optimize (mandatory)
-    {
+    // For transparent MDI mode, skip this first optimize pass for now.
+    // (We still optimize after draw_text if text is present.)
+    if (!mdi_transparent) {
         char *argv[] = { draw_opt_bin, (char *)"-c", (char *)"4", (char *)out_png, NULL };
         if (run_exec(argv) != 0) return -1;
     }
@@ -1554,9 +1559,11 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
         }
         if (rc != 0) return -1;
 
-        // RE draw_optimize
-        char *argv2[] = { draw_opt_bin, (char *)"-c", (char *)"4", (char *)out_png, NULL };
-        if (run_exec(argv2) != 0) return -1;
+        // Second optimize pass: keep it, except when icon_color is transparent (for now).
+        if (!icon_color_transparent) {
+            char *argv2[] = { draw_opt_bin, (char *)"-c", (char *)"4", (char *)out_png, NULL };
+            if (run_exec(argv2) != 0) return -1;
+        }
     }
 
     return 0;
@@ -1622,6 +1629,7 @@ static int render_value_text_on_base_tmp(const Options *opt, const Preset *prese
     }
     if (rc != 0) { unlink(outpng); return -1; }
 
+    // Optimize after drawing value text (keeps file size small; safe for non-transparent text overlays).
     char *argv_opt[] = { draw_opt_bin, (char *)"-c", (char *)"4", outpng, NULL };
     if (run_exec(argv_opt) != 0) { unlink(outpng); return -1; }
 

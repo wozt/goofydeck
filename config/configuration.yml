@@ -136,7 +136,7 @@ presets:
     icon_brightness: 99
   p05:
     icon_background_color: "e66100"
-    icon_border_radius: 12
+    icon_border_radius: 20
     icon_size: 160
     icon_color: transparent
     text_color: "FFFFFF"
@@ -144,10 +144,10 @@ presets:
     text_font: ""
     text_size: 48
     text_offset: 0,0
-    icon_border_width: 1
+    icon_border_width: 8
     icon_border_color: "FFFFFF"
     icon_padding: 0
-    icon_offset: -8,0
+    icon_offset: 0,0
     icon_brightness: 99
   p06:
     icon_background_color: "f6d32d"
@@ -201,7 +201,7 @@ presets:
     icon_color: transparent
     text_color: "FFFFFF"
     text_align: "bottom"
-    text_font: ""
+    text_font: "DejaVuSans.ttf"
     text_size: 48
     text_offset: 0,0
     icon_border_width: 1
@@ -564,7 +564,7 @@ presets:
     icon_padding: 0
     icon_offset: 0,0
     icon_brightness: 99
-    icon_color: "FFFFFF"
+    icon_color: "transparent"
     text_color: "FFFFFF"
     text_align: "bottom"
     text_font: ""
@@ -618,6 +618,7 @@ pages:
         text: "TOP"
       - name: "Item 09"
         presets: [p09]
+        text: "pls work"
         icon: mdi:numeric-9-circle
       - name: "Item 10"
         presets: [p10]

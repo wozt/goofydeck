@@ -445,6 +445,10 @@ int main(int argc, char **argv) {
         for (uint32_t x=0;x<png.width;x++) {
             uint8_t r=px[0],g=px[1],b=px[2],a=px[3];
             px +=4;
+            // // Important: for fully transparent pixels, discard RGB to avoid "color bleed" in
+            // // indexed PNG palettes (tRNS). This preserves transparency while making the
+            // // transparent color stable (RGB=0).
+            // if (a == 0) { r = 0; g = 0; b = 0; }
             uint32_t key = pack_rgba(r,g,b,a);
             hist_inc(&hist, key);
             if (!seen_white && r==255 && g==255 && b==255 && a==255) seen_white = 1;
@@ -490,6 +494,7 @@ int main(int argc, char **argv) {
         for (uint32_t x=0;x<png.width;x++) {
             uint8_t r=px[0],g=px[1],b=px[2],a=px[3];
             px +=4;
+            // if (a == 0) { r = 0; g = 0; b = 0; }
             int idx = nearest_palette(palette, pal_sz, r,g,b,a);
             idxbuf[pos++] = (uint8_t)idx;
         }
