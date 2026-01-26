@@ -1155,6 +1155,17 @@ static Client *clients_find(Client *arr, size_t len, int fd) {
     return NULL;
 }
 
+static int any_client_subscribed(Client *clients, size_t client_len, const char *entity_id) {
+    if (!clients || client_len == 0 || !entity_id || !entity_id[0]) return 0;
+    for (size_t ci = 0; ci < client_len; ci++) {
+        Client *c = &clients[ci];
+        for (int si = 0; si < c->sub_count; si++) {
+            if (c->subs[si].entity_id && strcmp(c->subs[si].entity_id, entity_id) == 0) return 1;
+        }
+    }
+    return 0;
+}
+
 static void clients_remove_at(Client *arr, size_t *len, size_t idx) {
     client_free(&arr[idx]);
     if (idx + 1 < *len) memmove(&arr[idx], &arr[idx + 1], (*len - idx - 1) * sizeof(Client));
@@ -1377,7 +1388,8 @@ int main(int argc, char **argv) {
                     }
                 } else if (m->type == QMSG_STATE) {
                     if (!m->entity_id || !m->payload_json) continue;
-                    {
+                    // Only log state updates that at least one client has subscribed to.
+                    if (any_client_subscribed(clients, client_len, m->entity_id)) {
                         char st[96] = {0};
                         if (json_extract_state_value(m->payload_json, st, sizeof(st)) == 0 && st[0]) {
                             log_msg("rx state entity=%s state=%s", m->entity_id, st);
