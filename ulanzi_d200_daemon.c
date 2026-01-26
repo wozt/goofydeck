@@ -282,11 +282,25 @@ static void log_sendzip(size_t len, int pad, int patched, size_t patched_count) 
     } else {
         // Short, fixed-width format to avoid "blinking" in the console.
         // Example:
-        //   26-01-26|22-32-57 zip=00166012b total=34.12MB
-        strftime(ts, sizeof(ts), "%y-%m-%d|%H-%M-%S", tm);
+        //   01/27|00:10:28 zip=001.4KB total=17.78MB
+        //   01/27|00:10:28 zip=00852-B total=17.78MB
+        strftime(ts, sizeof(ts), "%m/%d|%H:%M:%S", tm);
+
+        char zbuf[32];
+        if (len < 1024) {
+            // Bytes-only special format, fixed width.
+            snprintf(zbuf, sizeof(zbuf), "%05zu-B", len);
+        } else {
+            double kb = (double)len / 1024.0;
+            // Fixed width: 5 chars with leading zeros + 1 decimal (e.g. 001.4)
+            // Clamp to 999.9 to keep width stable.
+            if (kb > 999.9) kb = 999.9;
+            snprintf(zbuf, sizeof(zbuf), "%05.1fKB", kb);
+        }
+
         double hval; const char *hunit;
         human_bytes(TOTAL_BYTES_SENT, &hval, &hunit);
-        fprintf(stderr, "\r%s zip=%08zub total=%.2f%s\033[K", ts, len, hval, hunit);
+        fprintf(stderr, "\r%s zip=%s total=%.2f%s\033[K", ts, zbuf, hval, hunit);
     }
     fflush(stderr);
 }
