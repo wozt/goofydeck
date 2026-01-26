@@ -1,7 +1,7 @@
 # GoofyDeck
 
 GoofyDeck controls an Ulanzi D200 with C daemons and config-driven paging, with optional Home Assistant integration (`ha_daemon`).
-This project is still under construction.
+/!\\ This project is still under construction /!\\
 
 The previous (long) README has been archived to `legacy/README.md`.
 
