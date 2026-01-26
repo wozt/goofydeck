@@ -1559,11 +1559,9 @@ static int generate_icon_pipeline(const Options *opt, const Preset *preset, cons
         }
         if (rc != 0) return -1;
 
-        // Second optimize pass: keep it, except when icon_color is transparent (for now).
-        if (!icon_color_transparent) {
-            char *argv2[] = { draw_opt_bin, (char *)"-c", (char *)"4", (char *)out_png, NULL };
-            if (run_exec(argv2) != 0) return -1;
-        }
+        // Second optimize pass (after draw_text).
+        char *argv2[] = { draw_opt_bin, (char *)"-c", (char *)"4", (char *)out_png, NULL };
+        if (run_exec(argv2) != 0) return -1;
     }
 
     return 0;
@@ -1674,15 +1672,20 @@ static bool cached_or_generated_into_state(const Options *opt, const Config *cfg
     const char *ic = (icon_override != NULL) ? icon_override :
                      (it->icon && it->icon[0]) ? it->icon :
                      (preset && preset->icon) ? preset->icon : "";
-    const char *tx = (text_override != NULL) ? text_override :
-                     (it->text && it->text[0]) ? it->text :
-                     (preset && preset->text) ? preset->text : "";
+	const char *tx = (text_override != NULL) ? text_override :
+	                     (it->text && it->text[0]) ? it->text :
+	                     (preset && preset->text) ? preset->text : "";
 
-    bool is_defined = (it->icon && it->icon[0]) || (it->text && it->text[0]) || (it->preset && it->preset[0]) ||
-                      (it->entity_id && it->entity_id[0]) || (it->tap_action && it->tap_action[0]) || (it->state_count > 0);
-    if (!is_defined) return false; // empty/unconfigured => no cache
+	bool is_defined = (it->icon && it->icon[0]) || (it->text && it->text[0]) || (it->preset && it->preset[0]) ||
+	                      (it->entity_id && it->entity_id[0]) || (it->tap_action && it->tap_action[0]) || (it->state_count > 0);
+	if (!is_defined) return false; // empty/unconfigured => no cache
     if (ic[0] == 0 && tx[0] == 0 && it->state_count == 0 && !(it->entity_id && it->entity_id[0])) {
-        return false; // plain empty
+        // return false; // plain empty
+        // Allow "base-only" icons (background/border) when preset styling is visible.
+        bool has_bg = (preset && preset->icon_background_color && preset->icon_background_color[0] &&
+                       strcasecmp(preset->icon_background_color, "transparent") != 0);
+        bool has_border = (preset && preset->icon_border_width > 0);
+        if (!has_bg && !has_border) return false;
     }
 
     uint32_t file_h = item_file_hash(page, item_index, it);
@@ -1703,6 +1706,95 @@ static bool cached_or_generated_into_state(const Options *opt, const Config *cfg
     if (generate_icon_pipeline(opt, preset, &tmp, out_path) != 0) {
         (void)copy_file(opt->error_icon, out_path);
     }
+    return true;
+}
+
+static bool item_has_static_text_variant(const Item *it, const Preset *preset, const char **out_eff_text) {
+    if (out_eff_text) *out_eff_text = NULL;
+    if (!it) return false;
+    // If bound to a Home Assistant entity without explicit states, text is typically dynamic (sensor value).
+    // Keep these as runtime overlays (/dev/shm), not cached variants.
+    if (it->entity_id && it->entity_id[0] && it->state_count == 0) return false;
+    if (it->state_count > 0) return false;
+
+    const char *tx = (it->text && it->text[0]) ? it->text : (preset && preset->text) ? preset->text : "";
+    if (!tx || tx[0] == 0) return false;
+    if (out_eff_text) *out_eff_text = tx;
+    return true;
+}
+
+static bool cached_or_generated_static_text_into(const Options *opt, const Config *cfg, const char *page, size_t item_index, const Item *it,
+                                                 char *out_path, size_t out_cap) {
+    if (!opt || !cfg || !page || !it || !out_path || out_cap == 0) return false;
+
+    const char *pr_name = (it->preset && it->preset[0]) ? it->preset : "default";
+    const Preset *preset = config_get_preset(cfg, pr_name);
+    if (!preset) preset = config_get_preset(cfg, "default");
+
+    const char *eff_text = NULL;
+    if (!item_has_static_text_variant(it, preset, &eff_text)) return false;
+
+    // Ensure base icon exists (no text).
+    char base_png[PATH_MAX];
+    if (!cached_or_generated_into_state(opt, cfg, page, item_index, it, NULL, (const char *)"", pr_name, NULL, base_png, sizeof(base_png))) {
+        return false;
+    }
+
+    uint32_t file_h = item_file_hash(page, item_index, it);
+    int btn = (int)item_index + 1;
+    snprintf(out_path, out_cap, "%s/%s/%d-%08x-text.png", opt->cache_root, page, btn, file_h);
+    if (file_exists(out_path)) return true;
+
+    ensure_dir_parent(out_path);
+    if (copy_file(base_png, out_path) != 0) return false;
+
+    // Apply draw_text (static) onto the cached base icon.
+    char draw_text_bin[PATH_MAX];
+    char draw_opt_bin[PATH_MAX];
+    snprintf(draw_text_bin, sizeof(draw_text_bin), "%s/icons/draw_text", opt->root_dir);
+    snprintf(draw_opt_bin, sizeof(draw_opt_bin), "%s/icons/draw_optimize", opt->root_dir);
+    if (access(draw_text_bin, X_OK) != 0) { unlink(out_path); return false; }
+    if (access(draw_opt_bin, X_OK) != 0) { unlink(out_path); return false; }
+
+    const char *tc = (preset && preset->text_color && preset->text_color[0]) ? preset->text_color : "FFFFFF";
+    const char *ta = (preset && preset->text_align && preset->text_align[0]) ? preset->text_align : "center";
+    const char *tf = (preset && preset->text_font && preset->text_font[0]) ? preset->text_font : "Roboto";
+    bool used_default_font = !(preset && preset->text_font && preset->text_font[0]);
+    int ts = preset ? clamp_int(preset->text_size, 1, 64) : 40;
+    int tox = preset ? preset->text_offset_x : 0;
+    int toy = preset ? preset->text_offset_y : 0;
+
+    char text_arg[768];
+    snprintf(text_arg, sizeof(text_arg), "--text=%s", eff_text);
+    char tc_arg[64];
+    snprintf(tc_arg, sizeof(tc_arg), "--text_color=%s", tc);
+    char ta_arg[64];
+    snprintf(ta_arg, sizeof(ta_arg), "--text_align=%s", ta);
+    char tf_arg[PATH_MAX];
+    snprintf(tf_arg, sizeof(tf_arg), "--text_font=%s", tf);
+    char ts_arg[64];
+    snprintf(ts_arg, sizeof(ts_arg), "--text_size=%d", ts);
+    char to_arg[64];
+    snprintf(to_arg, sizeof(to_arg), "--text_offset=%d,%d", tox, toy);
+
+    int rc = 0;
+    if (tf && tf[0]) {
+        char *argv[] = { draw_text_bin, text_arg, tc_arg, ta_arg, tf_arg, ts_arg, to_arg, out_path, NULL };
+        rc = run_exec(argv);
+        if (rc != 0 && used_default_font) {
+            char *argv2[] = { draw_text_bin, text_arg, tc_arg, ta_arg, ts_arg, to_arg, out_path, NULL };
+            rc = run_exec(argv2);
+        }
+    } else {
+        char *argv[] = { draw_text_bin, text_arg, tc_arg, ta_arg, ts_arg, to_arg, out_path, NULL };
+        rc = run_exec(argv);
+    }
+    if (rc != 0) { unlink(out_path); return false; }
+
+    // Optimize after drawing static text.
+    char *argv_opt[] = { draw_opt_bin, (char *)"-c", (char *)"4", out_path, NULL };
+    if (run_exec(argv_opt) != 0) { unlink(out_path); return false; }
+
     return true;
 }
 
@@ -1915,17 +2007,17 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
 
     log_msg("render page='%s' offset=%zu slots=%zu items=%zu", page_name, offset, item_slots, p->count);
 
-    char btn_path[14][PATH_MAX];
-    bool btn_set[14] = {0};
-    char btn_label[14][64];
-    bool label_set[14] = {0};
-    bool cleanup_tmp[14] = {0};
-    for (int i = 1; i <= 13; i++) {
-        snprintf(btn_path[i], sizeof(btn_path[i]), "%s", blank_png);
-        btn_set[i] = true;
-        btn_label[i][0] = 0;
-        label_set[i] = false;
-    }
+	char btn_path[14][PATH_MAX];
+	bool btn_set[14] = {0};
+	char btn_label[14][64];
+	bool label_set[14] = {0};
+	bool cleanup_tmp[14] = {0};
+	for (int i = 1; i <= 13; i++) {
+	    snprintf(btn_path[i], sizeof(btn_path[i]), "%s", blank_png);
+	    btn_set[i] = true;
+	    btn_label[i][0] = 0;
+	    label_set[i] = false;
+	}
 
     // Reserve back/prev/next
     bool reserved[14] = {0};
@@ -1935,15 +2027,15 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
 
     // Fill items
     size_t item_i = offset;
-    for (int pos = 1; pos <= 13 && item_i < p->count; pos++) {
-        if (reserved[pos]) continue;
-        const Item *it = page_item_at(p, item_i);
-        const char *label_src = (it && it->name && it->name[0]) ? it->name : NULL;
-        char tmp[PATH_MAX];
-        bool have_icon = false;
+	for (int pos = 1; pos <= 13 && item_i < p->count; pos++) {
+	    if (reserved[pos]) continue;
+	    const Item *it = page_item_at(p, item_i);
+	    const char *label_src = (it && it->name && it->name[0]) ? it->name : NULL;
+	    char tmp[PATH_MAX];
+	    bool have_icon = false;
 
-        // HA-driven states: pick state variant if known.
-        if (it && it->entity_id && it->entity_id[0] && it->state_count > 0 && ha_map) {
+	    // HA-driven states: pick state variant if known.
+	    if (it && it->entity_id && it->entity_id[0] && it->state_count > 0 && ha_map) {
             const char *cur_state = NULL;
             for (size_t si = 0; si < ha_map->len; si++) {
                 if (ha_map->items[si].entity_id && strcmp(ha_map->items[si].entity_id, it->entity_id) == 0) {
@@ -2012,7 +2104,10 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
         }
 
         if (!have_icon) {
-            if (cached_or_generated_into(opt, cfg, page_name, item_i, it, tmp, sizeof(tmp))) {
+            if (cached_or_generated_static_text_into(opt, cfg, page_name, item_i, it, tmp, sizeof(tmp))) {
+                snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp);
+                btn_set[pos] = true;
+            } else if (cached_or_generated_into(opt, cfg, page_name, item_i, it, tmp, sizeof(tmp))) {
                 snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp);
                 btn_set[pos] = true;
             } else {
@@ -2369,13 +2464,21 @@ static void precache_state_icons(const Options *opt, const Config *cfg) {
             const Item *it = &p->items[ii];
             if (!it) continue;
 
-            // Always generate a base icon for configured buttons (including HA value-only buttons).
-            {
+            // Precache:
+            // - HA states: base + variants
+            // - HA value-only: base without dynamic text
+            // - Static text-only: base + "-text" cached variant
+            // - Others: normal cached icon
+            if (it->state_count > 0) {
                 char tmp[PATH_MAX];
-                if (it->state_count > 0) {
-                    (void)cached_or_generated_into_state(opt, cfg, p->name, ii, it, NULL, NULL, NULL, "base", tmp, sizeof(tmp));
-                } else {
-                    (void)cached_or_generated_into_state(opt, cfg, p->name, ii, it, NULL, (const char *)"", NULL, NULL, tmp, sizeof(tmp));
+                (void)cached_or_generated_into_state(opt, cfg, p->name, ii, it, NULL, NULL, NULL, "base", tmp, sizeof(tmp));
+            } else if (it->entity_id && it->entity_id[0]) {
+                char tmp[PATH_MAX];
+                (void)cached_or_generated_into_state(opt, cfg, p->name, ii, it, NULL, (const char *)"", NULL, NULL, tmp, sizeof(tmp));
+            } else {
+                char tmp[PATH_MAX];
+                if (!cached_or_generated_static_text_into(opt, cfg, p->name, ii, it, tmp, sizeof(tmp))) {
+                    (void)cached_or_generated_into(opt, cfg, p->name, ii, it, tmp, sizeof(tmp));
                 }
             }
 

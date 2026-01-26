@@ -200,7 +200,7 @@ presets:
     icon_size: 128
     icon_color: transparent
     text_color: "FFFFFF"
-    text_align: "bottom"
+    text_align: "center"
     text_font: "DejaVuSans.ttf"
     text_size: 48
     text_offset: 0,0
@@ -574,7 +574,7 @@ presets:
 pages:
   $root:
     wallpaper:
-      path: "mymedia/wallpapers/neige.png"
+      path: "mymedia/wallpapers/valley.png"
       quality: 51
       magnify: 100
       dithering: yes
@@ -611,7 +611,6 @@ pages:
         presets: [p06]
         text: "TEXT_ONLY"
       - name: "Item 07"
-        presets: [p07]
       - name: "Item 08"
         presets: [p08]
         icon: mdi:numeric-8-circle
@@ -626,9 +625,7 @@ pages:
       - name: "Item 11"
         presets: [p11]
         icon: mdi:star
-      - name: "Item 12"
-        presets: [p12]
-        icon: mdi:heart-outline
+      - name: ""
       - name: "Item 13"
         presets: [p13]
         icon: mdi:home-outline
