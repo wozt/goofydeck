@@ -146,6 +146,7 @@ static volatile sig_atomic_t g_running = 1;
 static int g_ulanzi_send_debounce_ms = 300;
 static int64_t g_ulanzi_last_send_end_ns = 0;
 static int64_t g_last_action_ns = 0;
+static bool g_ulanzi_device_ready = true;
 
 typedef enum { BR_NORMAL = 0, BR_DIM = 1, BR_SLEEP = 2 } BrightnessState;
 
@@ -248,6 +249,29 @@ static void log_msg(const char *fmt, ...) {
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
+}
+
+static int file_exists(const char *path);
+static int send_line_and_read_reply(const char *sock_path, const char *line, char *reply, size_t reply_cap);
+
+static int ulanzi_apply_default_label_style(const Options *opt) {
+    if (!opt) return -1;
+    char style_json[PATH_MAX];
+    snprintf(style_json, sizeof(style_json), "%s/assets/json/default.json", opt->root_dir);
+    if (!file_exists(style_json)) {
+        log_msg("WARN: missing label style JSON: %s", style_json);
+        return -1;
+    }
+    char cmd[PATH_MAX + 64];
+    snprintf(cmd, sizeof(cmd), "set-label-style %s", style_json);
+    char reply[64] = {0};
+    int rc = send_line_and_read_reply(opt->ulanzi_sock, cmd, reply, sizeof(reply));
+    if (rc != 0) {
+        log_msg("WARN: set-label-style failed (rc=%d, resp='%s')", rc, reply[0] ? reply : "<empty>");
+        return -1;
+    }
+    log_msg("set-label-style resp='%s'", reply[0] ? reply : "<empty>");
+    return 0;
 }
 
 static char *xstrdup(const char *s) {
@@ -410,20 +434,38 @@ static int send_line_and_read_reply(const char *sock_path, const char *line, cha
     }
 
     int fd = unix_connect(sock_path);
-    if (fd < 0) return -1;
+    if (fd < 0) {
+        g_ulanzi_device_ready = false;
+        return -1;
+    }
     size_t n = strlen(line);
     if (write(fd, line, n) != (ssize_t)n) {
         close(fd);
+        g_ulanzi_device_ready = false;
         return -1;
     }
     if (n == 0 || line[n - 1] != '\n') (void)write(fd, "\n", 1);
     ssize_t r = read(fd, reply, reply_cap - 1);
-    if (r < 0) r = 0;
-    reply[r] = 0;
+    if (r <= 0) {
+        close(fd);
+        g_ulanzi_device_ready = false;
+        return -1;
+    }
+    reply[(size_t)r] = 0;
     trim(reply);
     close(fd);
     g_ulanzi_last_send_end_ns = now_ns_monotonic();
-    return 0;
+    if (reply[0] == 0) return -1;
+    if (strncmp(reply, "ok", 2) == 0) {
+        g_ulanzi_device_ready = true;
+        return 0;
+    }
+    if (strcmp(reply, "err no_device") == 0) {
+        g_ulanzi_device_ready = false;
+        return -2;
+    }
+    // Any other response is treated as an error (caller may log it).
+    return -1;
 }
 
 static int write_blank_png(const char *path, int w, int h) {
@@ -2323,7 +2365,7 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
         for (int pos = 1; pos <= 13; pos++) {
             if (cleanup_tmp[pos]) unlink(btn_path[pos]);
         }
-        log_msg("send failed: connect/write");
+        log_msg("send failed (rc=%d, resp='%s')", sr, reply[0] ? reply : "<empty>");
         return;
     }
     free(cmd);
@@ -3253,22 +3295,7 @@ int main(int argc, char **argv) {
     }
 
     // Initialize label style once at startup (best-effort).
-    {
-        char style_json[PATH_MAX];
-        snprintf(style_json, sizeof(style_json), "%s/assets/json/default.json", opt.root_dir);
-        if (file_exists(style_json)) {
-            char cmd[PATH_MAX + 64];
-            snprintf(cmd, sizeof(cmd), "set-label-style %s", style_json);
-            char reply[64] = {0};
-            if (send_line_and_read_reply(opt.ulanzi_sock, cmd, reply, sizeof(reply)) != 0) {
-                log_msg("WARN: set-label-style failed");
-            } else {
-                log_msg("set-label-style resp='%s'", reply[0] ? reply : "<empty>");
-            }
-        } else {
-            log_msg("WARN: missing label style JSON: %s", style_json);
-        }
-    }
+    (void)ulanzi_apply_default_label_style(&opt);
     if (dump_config) {
         fprintf(stderr, "[paging] dump-config: pages=%zu presets=%zu\n", cfg.page_count, cfg.preset_count);
         for (size_t i = 0; i < cfg.page_count; i++) {
@@ -3378,6 +3405,10 @@ int main(int argc, char **argv) {
     char inbuf[4096];
     size_t inlen = 0;
 
+    bool prev_device_ready = g_ulanzi_device_ready;
+    bool need_resync_on_reconnect = !g_ulanzi_device_ready;
+    double next_device_probe = 0.0;
+
     while (g_running) {
         struct pollfd fds[3];
         memset(fds, 0, sizeof(fds));
@@ -3392,6 +3423,38 @@ int main(int argc, char **argv) {
         if (pr < 0) {
             if (errno == EINTR) continue;
             die_errno("poll");
+        }
+
+        // If the USB device disappears and comes back (USB reset), re-apply label style + current page.
+        {
+            double now = now_sec_monotonic();
+
+            if (prev_device_ready && !g_ulanzi_device_ready) {
+                log_msg("ulanzi device disconnected");
+                need_resync_on_reconnect = true;
+                last_sig[0] = 0; // force full resend on reconnect
+            }
+
+            if (!g_ulanzi_device_ready) {
+                if (now >= next_device_probe) {
+                    char reply[64] = {0};
+                    int rc = send_line_and_read_reply(opt.ulanzi_sock, "ping", reply, sizeof(reply));
+                    if (rc == 0) {
+                        log_msg("ulanzi device reconnected");
+                        if (need_resync_on_reconnect) {
+                            (void)ulanzi_apply_default_label_style(&opt);
+                            // Force brightness/page refresh to restore on-screen state.
+                            last_sent_brightness = -1;
+                            render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
+                            persist_last_page(&opt, cur_page, offset);
+                            need_resync_on_reconnect = false;
+                        }
+                    }
+                    next_device_probe = now + 0.5;
+                }
+            }
+
+            prev_device_ready = g_ulanzi_device_ready;
         }
 
         // Idle brightness management (does not depend on control_enabled).
@@ -3560,6 +3623,28 @@ int main(int argc, char **argv) {
                 trim(evline);
                 if (evline[0] == 0) continue;
                 if (strcmp(evline, "ok") == 0) continue;
+
+                if (strncmp(evline, "evt ", 4) == 0) {
+                    if (strcmp(evline, "evt disconnected") == 0) {
+                        if (g_ulanzi_device_ready) {
+                            log_msg("ulanzi device disconnected");
+                        }
+                        g_ulanzi_device_ready = false;
+                        need_resync_on_reconnect = true;
+                        last_sig[0] = 0; // force full resend on reconnect
+                    } else if (strcmp(evline, "evt connected") == 0) {
+                        log_msg("ulanzi device reconnected");
+                        g_ulanzi_device_ready = true;
+                        if (need_resync_on_reconnect) {
+                            (void)ulanzi_apply_default_label_style(&opt);
+                            last_sent_brightness = -1;
+                            render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
+                            persist_last_page(&opt, cur_page, offset);
+                            need_resync_on_reconnect = !g_ulanzi_device_ready;
+                        }
+                    }
+                    continue;
+                }
 
                 int btn = 0;
                 char evt_word[32] = {0};

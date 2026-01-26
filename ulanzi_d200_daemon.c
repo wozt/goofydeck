@@ -754,6 +754,14 @@ static void trim_line(char *line) {
     }
 }
 
+static void notify_rb_event(int *rb_fd, const char *msg) {
+    if (!rb_fd || *rb_fd < 0 || !msg) return;
+    if (write(*rb_fd, msg, strlen(msg)) < 0) {
+        close(*rb_fd);
+        *rb_fd = -1;
+    }
+}
+
 static int make_listen_socket(void) {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) { perror("socket"); exit(1); }
@@ -800,6 +808,14 @@ int main(void) {
     const double LONGHOLD_THRESHOLD = 5.0;  // seconds
     const double TAP_THRESHOLD = 0.02;      // seconds
     time_t last_keepalive = time(NULL);
+
+    // Remember last "small window" state so keep-alive does not force mode=1 (CLOCK).
+    // Legacy: mode 0=STATS, 1=CLOCK, 2=BACKGROUND
+    int sw_mode = 1;
+    int sw_cpu = 0;
+    int sw_mem = 0;
+    int sw_gpu = 0;
+
     while (running) {
         // Auto-reconnect to HID device if it disappeared (USB reset / unplug).
         if (!dev) {
@@ -816,6 +832,7 @@ int main(void) {
                     memset(tap_pending, 0, sizeof(tap_pending));
                     last_keepalive = time(NULL);
                     if (debug) fprintf(stderr, "[debug] Reconnected to HID device\n");
+                    notify_rb_event(&rb_fd, "evt connected\n");
                 } else {
                     next_reconnect = now + 0.5;
                 }
@@ -831,6 +848,14 @@ int main(void) {
             if (n > 0) {
                 line[n] = '\0';
                 trim_line(line);
+
+                // ping is a daemon health/status check. It must work even if the USB HID device is missing.
+                // This is used by paging_daemon to detect device reconnect and resync state.
+                if (strncmp(line, "ping", 4) == 0) {
+                    if (dev) write(cfd, "ok\n", 3);
+                    else write(cfd, "err no_device\n", 14);
+                    goto cmd_done;
+                }
 
                 // If the USB device is disconnected, only allow read-buttons subscription to stay open.
                 // Other commands require an active HID device.
@@ -926,6 +951,11 @@ int main(void) {
                     int mode=1,cpu=0,mem=0,gpu=0;
                     char timestr[32]="00:00:00";
                     sscanf(line+17, "%d %d %d %31s %d", &mode,&cpu,&mem,timestr,&gpu);
+                    // Persist the requested state (even if time_str is synthetic) for future keep-alive.
+                    sw_mode = mode;
+                    sw_cpu = cpu;
+                    sw_mem = mem;
+                    sw_gpu = gpu;
                     char payload[64];
                     snprintf(payload,sizeof(payload),"%d|%d|%d|%s|%d",mode,cpu,mem,timestr,gpu);
                     if (send_command(dev,0x0006,(uint8_t*)payload,strlen(payload))>=0)
@@ -1138,13 +1168,6 @@ int main(void) {
                         if (items[i].data) free(items[i].data);
                     }
                     for (int i=0;i<13;i++) free(labels[i]);
-                } else if (strncmp(line,"ping",4)==0) {
-                    time_t t=time(NULL); struct tm *tm=localtime(&t); char buf[16]; strftime(buf,sizeof(buf),"%H:%M:%S",tm);
-                    char payload[64]; snprintf(payload,sizeof(payload),"%d|%d|%d|%s|%d",1,0,0,buf,0);
-                    if (send_command(dev,0x0006,(uint8_t*)payload,strlen(payload))>=0)
-                        write(cfd,"ok\n",3);
-                    else write(cfd,"err\n",4);
-                    last_keepalive = time(NULL);
                 } else if (strncmp(line,"read-buttons",12)==0) {
                     rb_fd = cfd;
                     write(cfd,"ok\n",3);
@@ -1170,8 +1193,16 @@ cmd_done:
                 uint16_t cmd=((uint16_t)buf[2]<<8)|buf[3];
                 if (cmd==0x0101 || cmd==0x0102) {
                     if (debug) fprintf(stderr, "[dbg] packet cmd=0x%04x len=%d\n", cmd, r);
+                    // Legacy python exposes this as ButtonPress.state (first byte of data[8:12]).
+                    // For button index 13 (the small window/clock/background button), this value
+                    // changes when the user cycles modes on-device. Track it so keep-alive can
+                    // preserve the current mode instead of forcing CLOCK.
+                    int pkt_state = (int)buf[8];
                     int idx=buf[9];
                     if (idx < 0 || idx >= 14) continue;
+                    if (idx == 13 && pkt_state >= 0 && pkt_state <= 2) {
+                        sw_mode = pkt_state;
+                    }
                     uint8_t raw_press = buf[11];
                     int pressed = (raw_press == 0x01);
                     int release_evt = (raw_press != 0x01);
@@ -1251,7 +1282,12 @@ cmd_done:
                 }
             } else {
                 const wchar_t *err = hid_error(dev);
-                fprintf(stderr, "[debug] hid_read_timeout failed: %d (%ls)\n", r, err ? err : L"?");
+                if (debug) {
+                    fprintf(stderr, "[debug] hid_read_timeout failed: %d (%ls)\n", r, err ? err : L"?");
+                } else {
+                    fprintf(stderr, "[ulanzi] device disconnected (hid_read_timeout=%d)\n", r);
+                }
+                notify_rb_event(&rb_fd, "evt disconnected\n");
                 hid_close(dev);
                 dev = NULL;
                 next_reconnect = 0.0;
@@ -1270,9 +1306,10 @@ cmd_done:
             struct tm *tm = localtime(&now_keep);
             strftime(buf_time,sizeof(buf_time),"%H:%M:%S",tm);
             char payload[64];
-            snprintf(payload,sizeof(payload),"%d|%d|%d|%s|%d",1,0,0,buf_time,0);
+            snprintf(payload,sizeof(payload),"%d|%d|%d|%s|%d",sw_mode,sw_cpu,sw_mem,buf_time,sw_gpu);
             if (dev) {
                 if (send_command(dev,0x0006,(uint8_t*)payload,strlen(payload)) < 0) {
+                    notify_rb_event(&rb_fd, "evt disconnected\n");
                     hid_close(dev);
                     dev = NULL;
                     next_reconnect = 0.0;
