@@ -141,6 +141,8 @@ static volatile sig_atomic_t g_running = 1;
 static int g_ulanzi_send_debounce_ms = 300;
 static int64_t g_ulanzi_last_send_end_ns = 0;
 static int64_t g_last_action_ns = 0;
+
+typedef enum { BR_NORMAL = 0, BR_DIM = 1, BR_SLEEP = 2 } BrightnessState;
 // After a page transition, drop any queued TAPs that arrived during rendering and
 // ignore any immediate follow-up TAPs for a short window to avoid triggering an
 // action on the newly-entered page (double-tap on a folder button).
@@ -2799,6 +2801,264 @@ static int ha_call_from_item(const Options *opt, int ha_fd, const Item *it) {
     return (rc == 0) ? 0 : -1;
 }
 
+static int parse_sim_button_arg(const char *arg, char *evt_out, size_t evt_cap, int *btn_out) {
+    if (!arg || !evt_out || evt_cap == 0 || !btn_out) return -1;
+
+    while (*arg == ' ' || *arg == '\t') arg++;
+    if (*arg == 0) return -1;
+
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%s", arg);
+    trim(buf);
+
+    // Allow quotes: "TAP1" or 'TAP1'
+    size_t n = strlen(buf);
+    if (n >= 2 && ((buf[0] == '"' && buf[n - 1] == '"') || (buf[0] == '\'' && buf[n - 1] == '\''))) {
+        buf[n - 1] = 0;
+        memmove(buf, buf + 1, n - 1);
+        trim(buf);
+    }
+
+    // Uppercase for comparison (ASCII).
+    for (size_t i = 0; buf[i]; i++) {
+        if (buf[i] >= 'a' && buf[i] <= 'z') buf[i] = (char)(buf[i] - 'a' + 'A');
+    }
+
+    const char *p = buf;
+    const char *evt = NULL;
+    size_t evt_len = 0;
+
+    if (strncmp(p, "LONGHOLD", 8) == 0) {
+        evt = "LONGHOLD";
+        evt_len = 8;
+    } else if (strncmp(p, "RELEASED", 8) == 0) {
+        evt = "RELEASE";
+        evt_len = 8;
+    } else if (strncmp(p, "RELEASE", 7) == 0) {
+        evt = "RELEASE";
+        evt_len = 7;
+    } else if (strncmp(p, "HOLD", 4) == 0) {
+        evt = "HOLD";
+        evt_len = 4;
+    } else if (strncmp(p, "TAP", 3) == 0) {
+        evt = "TAP";
+        evt_len = 3;
+    } else {
+        return -1;
+    }
+
+    const char *num = p + evt_len;
+    if (*num == 0) return -1;
+    char *end = NULL;
+    long v = strtol(num, &end, 10);
+    if (!end || *end != 0) return -1;
+    if (v < 1 || v > 14) return -1;
+
+    snprintf(evt_out, evt_cap, "%s", evt);
+    *btn_out = (int)v;
+    return 0;
+}
+
+static void handle_button_event(const Options *opt,
+                                Config *cfg,
+                                char *blank_png,
+                                int rb_fd,
+                                size_t *inlen,
+                                int btn,
+                                const char *evt,
+                                BrightnessState *br_state,
+                                int *last_sent_brightness,
+                                double *next_brightness_retry,
+                                double *last_activity,
+                                bool *control_enabled,
+                                char *cur_page,
+                                size_t cur_page_cap,
+                                size_t *offset,
+                                char page_stack[][256],
+                                int page_stack_cap,
+                                int *page_stack_len,
+                                int *ha_fd,
+                                char *ha_buf,
+                                size_t *ha_len,
+                                HaStateMap *ha_map,
+                                HaSubs *ha_subs,
+                                char *last_sig,
+                                size_t last_sig_cap) {
+    if (!opt || !cfg || !blank_png || !br_state || !last_sent_brightness || !next_brightness_retry || !last_activity || !control_enabled ||
+        !cur_page || cur_page_cap == 0 || !offset || !page_stack_len || !ha_fd || !ha_buf || !ha_len || !ha_map || !ha_subs ||
+        !last_sig || last_sig_cap == 0 || !evt)
+        return;
+    if (btn < 1 || btn > 14) return;
+
+    // Any button event counts as activity (even when stop-control).
+    *last_activity = now_sec_monotonic();
+
+    // Wake behavior: if screen is in sleep (brightness 0), any button wakes WITHOUT triggering actions.
+    if (*br_state == BR_SLEEP) {
+        int b = clamp_int(cfg->base_brightness, 0, 100);
+        if (b != *last_sent_brightness) {
+            char cmd[64];
+            snprintf(cmd, sizeof(cmd), "set-brightness %d", b);
+            char reply[64] = {0};
+            if (send_line_and_read_reply(opt->ulanzi_sock, cmd, reply, sizeof(reply)) == 0) {
+                *last_sent_brightness = b;
+            } else {
+                *next_brightness_retry = now_sec_monotonic() + 1.0;
+            }
+        }
+        *br_state = BR_NORMAL;
+        return;
+    }
+
+    // If dimmed, restore base brightness but keep normal button handling.
+    if (*br_state == BR_DIM) {
+        int b = clamp_int(cfg->base_brightness, 0, 100);
+        if (b != *last_sent_brightness) {
+            char cmd[64];
+            snprintf(cmd, sizeof(cmd), "set-brightness %d", b);
+            char reply[64] = {0};
+            if (send_line_and_read_reply(opt->ulanzi_sock, cmd, reply, sizeof(reply)) == 0) {
+                *last_sent_brightness = b;
+            } else {
+                *next_brightness_retry = now_sec_monotonic() + 1.0;
+            }
+        }
+        *br_state = BR_NORMAL;
+    }
+
+    // Emergency resume: LONGHOLD 5s on button 14 forces start-control.
+    if (btn == 14 && strcmp(evt, "LONGHOLD") == 0) {
+        if (!*control_enabled) {
+            log_msg("start-control (forced by button 14 LONGHOLD)");
+            *control_enabled = true;
+            last_sig[0] = 0; // force refresh
+            render_and_send(opt, cfg, cur_page, *offset, ha_map, blank_png, last_sig, last_sig_cap);
+            persist_last_page(opt, cur_page, *offset);
+        }
+        return;
+    }
+
+    if (!*control_enabled) return;
+    if (strcmp(evt, "TAP") != 0) return;
+
+    // Drop any very recent TAPs after a page transition.
+    {
+        int64_t now = now_ns_monotonic();
+        if (g_ignore_taps_until_ns > 0 && now < g_ignore_taps_until_ns) {
+            return;
+        }
+    }
+
+    // Action debounce: ignore rapid successive TAPs (avoid queuing renders).
+    {
+        int ms = g_ulanzi_send_debounce_ms;
+        if (ms > 0) {
+            int64_t now = now_ns_monotonic();
+            int64_t min_gap = (int64_t)ms * 1000000LL;
+            if (g_last_action_ns > 0 && (now - g_last_action_ns) < min_gap) {
+                return;
+            }
+            g_last_action_ns = now;
+        }
+    }
+
+    const Page *p = config_get_page(cfg, cur_page);
+    if (!p) {
+        snprintf(cur_page, cur_page_cap, "%s", "$root");
+        *offset = 0;
+        p = config_get_page(cfg, cur_page);
+    }
+    if (!p) return;
+
+    bool show_back = strcmp(cur_page, "$root") != 0;
+    SheetLayout sheet = compute_sheet_layout(p->count, show_back, *offset);
+    *offset = sheet.start;
+
+    bool reserved_back = show_back;
+    bool reserved_prev = sheet.show_prev;
+    bool reserved_next = sheet.show_next;
+    int back_pos = cfg->pos_back;
+    int prev_pos = cfg->pos_prev;
+    int next_pos = cfg->pos_next;
+
+    // System button presses
+    if (reserved_back && btn == back_pos) {
+        bool changed = false;
+        if (*page_stack_len > 0) {
+            (*page_stack_len)--;
+            snprintf(cur_page, cur_page_cap, "%s", page_stack[*page_stack_len]);
+            changed = true;
+        } else {
+            const char *par = parent_page(cur_page);
+            if (strcmp(par, cur_page) != 0) {
+                snprintf(cur_page, cur_page_cap, "%s", par);
+                changed = true;
+            }
+        }
+        if (changed) {
+            *offset = 0;
+            ha_enter_page(opt, cfg, cur_page, ha_fd, ha_buf, ha_len, ha_map, ha_subs);
+            render_and_send(opt, cfg, cur_page, *offset, ha_map, blank_png, last_sig, last_sig_cap);
+            persist_last_page(opt, cur_page, *offset);
+            flush_pending_button_events(rb_fd, inlen, NULL);
+        }
+        return;
+    }
+    if (reserved_prev && btn == prev_pos) {
+        *offset = sheet.prev_start;
+        render_and_send(opt, cfg, cur_page, *offset, ha_map, blank_png, last_sig, last_sig_cap);
+        persist_last_page(opt, cur_page, *offset);
+        return;
+    }
+    if (reserved_next && btn == next_pos) {
+        *offset = sheet.next_start;
+        render_and_send(opt, cfg, cur_page, *offset, ha_map, blank_png, last_sig, last_sig_cap);
+        persist_last_page(opt, cur_page, *offset);
+        return;
+    }
+
+    // Content button mapping: positions excluding reserved.
+    size_t item_i = *offset;
+    size_t pressed_item = (size_t)-1;
+    for (int pos = 1; pos <= 13; pos++) {
+        bool reserved = false;
+        if (reserved_back && pos == back_pos) reserved = true;
+        if (reserved_prev && pos == prev_pos) reserved = true;
+        if (reserved_next && pos == next_pos) reserved = true;
+        if (reserved) continue;
+        if (item_i >= p->count) break;
+        if (pos == btn) {
+            pressed_item = item_i;
+            break;
+        }
+        item_i++;
+    }
+
+    if (pressed_item == (size_t)-1) return;
+    const Item *it = page_item_at(p, pressed_item);
+    if (!it) return;
+
+    if (is_action_goto(it->tap_action) && it->tap_data && it->tap_data[0]) {
+        if (*page_stack_len < page_stack_cap) {
+            snprintf(page_stack[*page_stack_len], sizeof(page_stack[*page_stack_len]), "%s", cur_page);
+            (*page_stack_len)++;
+        }
+        snprintf(cur_page, cur_page_cap, "%s", it->tap_data);
+        *offset = 0;
+        ha_enter_page(opt, cfg, cur_page, ha_fd, ha_buf, ha_len, ha_map, ha_subs);
+        render_and_send(opt, cfg, cur_page, *offset, ha_map, blank_png, last_sig, last_sig_cap);
+        persist_last_page(opt, cur_page, *offset);
+        flush_pending_button_events(rb_fd, inlen, NULL);
+        return;
+    }
+
+    if (it->tap_action && it->tap_action[0] && it->tap_action[0] != '$') {
+        if (ha_call_from_item(opt, *ha_fd, it) != 0) {
+            log_msg("ha call failed (action='%s')", it->tap_action ? it->tap_action : "");
+        }
+    }
+}
+
 int main(int argc, char **argv) {
     Options opt;
     memset(&opt, 0, sizeof(opt));
@@ -2869,6 +3129,8 @@ int main(int argc, char **argv) {
 
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
+    // Avoid crashing if a client disconnects while we write to a socket (e.g. control socket piped via socat).
+    signal(SIGPIPE, SIG_IGN);
 
     Config cfg;
     config_init_defaults(&cfg);
@@ -2976,7 +3238,7 @@ int main(int argc, char **argv) {
     bool control_enabled = true;
 
     // Brightness/sleep state machine (driven by config).
-    enum { BR_NORMAL = 0, BR_DIM = 1, BR_SLEEP = 2 } br_state = BR_NORMAL;
+    BrightnessState br_state = BR_NORMAL;
     int last_sent_brightness = -1;
     double last_activity = now_sec_monotonic();
     double next_brightness_retry = 0.0;
@@ -3070,6 +3332,28 @@ int main(int argc, char **argv) {
                     control_enabled = false;
                 } else if (strcmp(cmdline, "start-control") == 0) {
                     control_enabled = true;
+                } else if (strncmp(cmdline, "simule-button", 12) == 0 || strncmp(cmdline, "simulate-button", 15) == 0) {
+                    const char *p = strchr(cmdline, ' ');
+                    if (!p) {
+                        resp = "err bad_args\n";
+                    } else {
+                        while (*p == ' ') p++;
+                        char evt[32] = {0};
+                        int btn = 0;
+                        if (parse_sim_button_arg(p, evt, sizeof(evt), &btn) != 0) {
+                            resp = "err bad_args\n";
+                        } else {
+                            log_msg("simulate button %d %s", btn, evt);
+                            handle_button_event(&opt, &cfg, blank_png, rb_fd, &inlen, btn, evt,
+                                                &br_state, &last_sent_brightness, &next_brightness_retry, &last_activity,
+                                                &control_enabled,
+                                                cur_page, sizeof(cur_page), &offset,
+                                                page_stack, (int)(sizeof(page_stack) / sizeof(page_stack[0])), &page_stack_len,
+                                                &ha_fd, ha_buf, &ha_len, &ha_map, &ha_subs,
+                                                last_sig, sizeof(last_sig));
+                            resp = "ok\n";
+                        }
+                    }
                 } else if (strcmp(cmdline, "load-last-page") == 0) {
                     char lp[256] = {0};
                     size_t lo = 0;
