@@ -114,18 +114,39 @@ typedef struct {
 
 static volatile sig_atomic_t g_running = 1;
 
+// Set to 0 to silence informational logs from this daemon.
+// Errors (prefixed with "[ha] ERROR") are always printed.
+static int g_ha_verbose_logs = 1;
+
 static void on_signal(int sig) {
     (void)sig;
     g_running = 0;
 }
 
 static void log_msg(const char *fmt, ...) {
+    if (!g_ha_verbose_logs) return;
     va_list ap;
     va_start(ap, fmt);
     fprintf(stderr, "[ha] ");
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
+}
+
+static void log_json_preview(const char *prefix, const char *json) {
+    if (!prefix) prefix = "json";
+    if (!json) json = "";
+    char buf[241];
+    size_t n = strlen(json);
+    size_t cpy = n;
+    if (cpy > sizeof(buf) - 1) cpy = sizeof(buf) - 1;
+    memcpy(buf, json, cpy);
+    buf[cpy] = 0;
+    for (size_t i = 0; buf[i]; i++) {
+        if (buf[i] == '\n' || buf[i] == '\r' || buf[i] == '\t') buf[i] = ' ';
+    }
+    if (n > cpy) log_msg("%s: %s ...(%zu bytes)", prefix, buf, n);
+    else log_msg("%s: %s", prefix, buf);
 }
 
 static void die_errno(const char *msg) {
@@ -833,6 +854,40 @@ static void ha_send_state(OutQueue *out, const char *entity_id, const char *stat
     outq_push(out, m);
 }
 
+static int json_extract_state_value(const char *state_obj_json, char *out, size_t cap) {
+    if (!out || cap == 0) return -1;
+    out[0] = 0;
+    if (!state_obj_json || !state_obj_json[0]) return -1;
+    jsmn_parser p;
+    jsmn_init(&p);
+    int rc = jsmn_parse(&p, state_obj_json, strlen(state_obj_json), NULL, 0);
+    if (rc < 0) return -1;
+    jsmntok_t *toks = calloc((size_t)rc + 16, sizeof(jsmntok_t));
+    if (!toks) return -1;
+    jsmn_init(&p);
+    rc = jsmn_parse(&p, state_obj_json, strlen(state_obj_json), toks, (unsigned int)((size_t)rc + 16));
+    if (rc < 0 || toks[0].type != JSMN_OBJECT) {
+        free(toks);
+        return -1;
+    }
+    int st_idx = json_find_key_linear(state_obj_json, toks, rc, 0, "state");
+    if (st_idx < 0 || toks[st_idx].type != JSMN_STRING) {
+        free(toks);
+        return -1;
+    }
+    int n = toks[st_idx].end - toks[st_idx].start;
+    if (n <= 0) {
+        free(toks);
+        return -1;
+    }
+    size_t cpy = (size_t)n;
+    if (cpy + 1 > cap) cpy = cap - 1;
+    memcpy(out, state_obj_json + toks[st_idx].start, cpy);
+    out[cpy] = 0;
+    free(toks);
+    return 0;
+}
+
 static int ha_ws_send_auth(HaConn *c, const char *token) {
     char esc[4096];
     if (json_escape(token ? token : "", esc, sizeof(esc)) != 0) return -1;
@@ -943,8 +998,15 @@ static void *ha_thread_main(void *arg) {
             if (have_req) {
                 int rc = 0;
                 if (req.type == HA_REQ_CALL) {
+                    {
+                        char tmp[512];
+                        snprintf(tmp, sizeof(tmp), "tx call id=%d %s.%s", req.req_id, req.domain ? req.domain : "", req.service ? req.service : "");
+                        log_msg("%s", tmp);
+                        if (req.service_data_json) log_json_preview("tx service_data", req.service_data_json);
+                    }
                     rc = ha_ws_send_call(&conn, req.req_id, req.domain, req.service, req.service_data_json);
                 } else if (req.type == HA_REQ_GET_STATES) {
+                    log_msg("tx get_states id=%d", req.req_id);
                     rc = ha_ws_send_get_states(&conn, req.req_id);
                 }
                 if (rc != 0) {
@@ -1217,6 +1279,7 @@ int main(int argc, char **argv) {
                 }
                 Client *c = clients_add(&clients, &client_len, &client_cap, cfd);
                 (void)c;
+                log_msg("client connected fd=%d", cfd);
                 if (ha_connected) (void)write_all(cfd, "evt connected\n", 14);
                 else (void)write_all(cfd, "evt disconnected\n", 17);
             }
@@ -1231,10 +1294,14 @@ int main(int argc, char **argv) {
             for (size_t i = 0; i < n; i++) {
                 QueueMsg *m = &items[i];
                 if (m->type == QMSG_CONNECTED) {
+                    int was = ha_connected;
                     ha_connected = 1;
+                    if (!was) log_msg("ws connected");
                     for (size_t ci = 0; ci < client_len; ci++) (void)send_line(&clients[ci], "evt connected\n");
                 } else if (m->type == QMSG_DISCONNECTED) {
+                    int was = ha_connected;
                     ha_connected = 0;
+                    if (was) log_msg("ws disconnected");
                     for (size_t ci = 0; ci < client_len; ci++) (void)send_line(&clients[ci], "evt disconnected\n");
                 } else if (m->type == QMSG_RESULT) {
                     Pending *p = pending_find(pending, sizeof(pending)/sizeof(pending[0]), m->req_id);
@@ -1242,10 +1309,13 @@ int main(int argc, char **argv) {
                         Client *c = clients_find(clients, client_len, p->client_fd);
                         if (c) {
                             if (!ha_connected) {
+                                log_msg("req id=%d result: err ha_disconnected", m->req_id);
                                 (void)send_line(c, "err ha_disconnected\n");
                             } else if (!m->success) {
+                                log_msg("req id=%d result: err ha_error", m->req_id);
                                 (void)send_line(c, "err ha_error\n");
                             } else if (p->type == REQ_GET) {
+                                log_msg("req id=%d result: ok (get entity_id=%s)", m->req_id, p->get_entity_id ? p->get_entity_id : "");
                                 // payload_json is an array for get_states; extract entity here.
                                 const char *payload = m->payload_json ? m->payload_json : "[]";
                                 const char *want = p->get_entity_id ? p->get_entity_id : "";
@@ -1298,6 +1368,7 @@ int main(int argc, char **argv) {
                                     }
                                 }
                             } else {
+                                log_msg("req id=%d result: ok (call)", m->req_id);
                                 (void)send_line(c, "ok\n");
                             }
                         }
@@ -1306,6 +1377,14 @@ int main(int argc, char **argv) {
                     }
                 } else if (m->type == QMSG_STATE) {
                     if (!m->entity_id || !m->payload_json) continue;
+                    {
+                        char st[96] = {0};
+                        if (json_extract_state_value(m->payload_json, st, sizeof(st)) == 0 && st[0]) {
+                            log_msg("rx state entity=%s state=%s", m->entity_id, st);
+                        } else {
+                            log_msg("rx state entity=%s", m->entity_id);
+                        }
+                    }
                     for (size_t ci = 0; ci < client_len; ci++) {
                         Client *c = &clients[ci];
                         for (int si = 0; si < c->sub_count; si++) {
@@ -1388,6 +1467,7 @@ int main(int argc, char **argv) {
                     c->subs[c->sub_count].id = id;
                     c->subs[c->sub_count].entity_id = xstrdup(entity);
                     c->sub_count++;
+                    log_msg("subscribe fd=%d sub_id=%d entity=%s", c->fd, id, entity);
                     char out[64];
                     snprintf(out, sizeof(out), "ok sub_id=%d\n", id);
                     (void)send_line(c, out);
@@ -1398,6 +1478,7 @@ int main(int argc, char **argv) {
                     int found = 0;
                     for (int si = 0; si < c->sub_count; si++) {
                         if (c->subs[si].id == id) {
+                            log_msg("unsubscribe fd=%d sub_id=%d entity=%s", c->fd, id, c->subs[si].entity_id ? c->subs[si].entity_id : "");
                             free(c->subs[si].entity_id);
                             memmove(&c->subs[si], &c->subs[si + 1], (size_t)(c->sub_count - si - 1) * sizeof(c->subs[0]));
                             c->sub_count--;
@@ -1405,6 +1486,7 @@ int main(int argc, char **argv) {
                             break;
                         }
                     }
+                    if (!found) log_msg("unsubscribe fd=%d sub_id=%d (not_found)", c->fd, id);
                     (void)send_line(c, found ? "ok\n" : "err not_found\n");
                     continue;
                 }
@@ -1413,6 +1495,7 @@ int main(int argc, char **argv) {
                     char *entity = line + 4;
                     trim(entity);
                     if (!entity[0]) { (void)send_line(c, "err bad_args\n"); continue; }
+                    log_msg("cmd get fd=%d entity=%s", c->fd, entity);
                     Pending *p = pending_alloc(pending, sizeof(pending)/sizeof(pending[0]));
                     if (!p) { (void)send_line(c, "err busy\n"); continue; }
                     int id = next_req_id++;
@@ -1434,6 +1517,8 @@ int main(int argc, char **argv) {
                     char *domain = NULL, *service = NULL, *json = NULL;
                     if (cmd_parse_call(line, &domain, &service, &json) != 0) { (void)send_line(c, "err bad_args\n"); continue; }
                     if (json_validate_one_line(json) != 0) { (void)send_line(c, "err bad_json\n"); continue; }
+                    log_msg("cmd call fd=%d %s.%s", c->fd, domain, service);
+                    log_json_preview("cmd service_data", json);
                     Pending *p = pending_alloc(pending, sizeof(pending)/sizeof(pending[0]));
                     if (!p) { (void)send_line(c, "err busy\n"); continue; }
                     int id = next_req_id++;
