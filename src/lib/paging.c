@@ -243,13 +243,63 @@ static void die_errno(const char *msg) {
     exit(1);
 }
 
+static int g_log_is_tty = -1;
+static bool g_log_status_active = false;
+// Set to 1 if you want verbose render/send logs in the console.
+static int g_paging_verbose_render_logs = 0;
+// Set to 1 if you want to see stdout/stderr from icon-generation tools (draw_*, sort, etc).
+static int g_paging_verbose_tool_logs = 0;
+
+static void log_clear_status_line(void) {
+    if (g_log_is_tty <= 0) return;
+    if (!g_log_status_active) return;
+    fprintf(stderr, "\r\033[K");
+    fflush(stderr);
+    g_log_status_active = false;
+}
+
 static void log_msg(const char *fmt, ...) {
+    log_clear_status_line();
     va_list ap;
     va_start(ap, fmt);
     fprintf(stderr, "[paging] ");
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
+}
+
+static void log_render(const char *fmt, ...) {
+    if (!g_paging_verbose_render_logs) return;
+    log_clear_status_line();
+    va_list ap;
+    va_start(ap, fmt);
+    fprintf(stderr, "[paging] ");
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
+}
+
+// Status-style log line (overwrites the previous status line).
+// Used for high-frequency button events to avoid spamming the console.
+static void log_status(const char *fmt, ...) {
+    if (g_log_is_tty <= 0) {
+        va_list ap;
+        va_start(ap, fmt);
+        fprintf(stderr, "[paging] ");
+        vfprintf(stderr, fmt, ap);
+        fprintf(stderr, "\n");
+        va_end(ap);
+        return;
+    }
+
+    va_list ap;
+    va_start(ap, fmt);
+    fprintf(stderr, "\r[paging] ");
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\033[K");
+    va_end(ap);
+    fflush(stderr);
+    g_log_status_active = true;
 }
 
 static int file_exists(const char *path);
@@ -571,6 +621,14 @@ static int run_exec(char *const argv[]) {
     pid_t pid = fork();
     if (pid < 0) return -1;
     if (pid == 0) {
+        if (!g_paging_verbose_tool_logs) {
+            int dn = open("/dev/null", O_WRONLY);
+            if (dn >= 0) {
+                (void)dup2(dn, STDOUT_FILENO);
+                (void)dup2(dn, STDERR_FILENO);
+                if (dn > STDERR_FILENO) close(dn);
+            }
+        }
         execvp(argv[0], argv);
         _exit(127);
     }
@@ -2295,7 +2353,7 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
         return;
     }
 
-    log_msg("render page='%s' offset=%zu slots=%zu items=%zu", page_name, offset, item_slots, p->count);
+    log_render("render page='%s' offset=%zu slots=%zu items=%zu", page_name, offset, item_slots, p->count);
 
 	char btn_path[14][PATH_MAX];
 	bool btn_set[14] = {0};
@@ -2543,7 +2601,7 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
     }
     free(cmd);
     snprintf(last_sig, last_sig_cap, "%s", sig);
-    log_msg("send resp='%s'", reply[0] ? reply : "<empty>");
+    log_render("send resp='%s'", reply[0] ? reply : "<empty>");
 
     // Cleanup any temporary per-render images created in /dev/shm.
     for (int pos = 1; pos <= 13; pos++) {
@@ -3520,6 +3578,8 @@ int main(int argc, char **argv) {
     // Avoid crashing if a client disconnects while we write to a socket (e.g. control socket piped via socat).
     signal(SIGPIPE, SIG_IGN);
 
+    g_log_is_tty = isatty(STDERR_FILENO) ? 1 : 0;
+
     // Start with a clean RAM-backed state (tmp files, wallpaper session copies, etc).
     wipe_paging_state_dir_at_startup(&opt);
 
@@ -3856,7 +3916,11 @@ int main(int argc, char **argv) {
                 start += nl + 1;
 
                 rtrim_only(evline);
-                log_msg("rx ulanzi: %s", evline);
+                if (strncmp(evline, "button ", 7) == 0) {
+                    log_status("rx ulanzi: %s", evline);
+                } else {
+                    log_msg("rx ulanzi: %s", evline);
+                }
                 trim(evline);
                 if (evline[0] == 0) continue;
                 if (strcmp(evline, "ok") == 0) continue;
