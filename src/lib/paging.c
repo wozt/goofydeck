@@ -1341,6 +1341,49 @@ static int resolve_path_root(const Options *opt, const char *in, char *out, size
     return 0;
 }
 
+static bool is_under_prefix(const char *path, const char *prefix) {
+    if (!path || !prefix) return false;
+    size_t n = strlen(prefix);
+    if (n == 0) return false;
+    return strncmp(path, prefix, n) == 0 && (path[n] == 0 || path[n] == '/');
+}
+
+static int session_cache_icon(const Options *opt, const char *src_png, char *out_png, size_t out_cap) {
+    if (!opt || !src_png || !src_png[0] || !out_png || out_cap == 0) return -1;
+    out_png[0] = 0;
+    if (!file_exists(src_png)) return -1;
+
+    // Skip temp files under the paging state dir (/dev/shm) - they are already RAM-backed.
+    char sdir[PATH_MAX];
+    state_dir(opt, sdir, sizeof(sdir));
+    if (is_under_prefix(src_png, sdir)) return -1;
+
+    struct stat st;
+    if (stat(src_png, &st) != 0) return -1;
+    if (!S_ISREG(st.st_mode) || st.st_size <= 0) return -1;
+
+    char base[PATH_MAX];
+    if (!path_basename(src_png, base, sizeof(base))) return -1;
+
+    char dir[PATH_MAX];
+    state_dir(opt, dir, sizeof(dir));
+    char cdir[PATH_MAX];
+    snprintf(cdir, sizeof(cdir), "%s/icon_cache", dir);
+    ensure_dir(cdir);
+
+    char key[PATH_MAX + 64];
+    snprintf(key, sizeof(key), "%s|%lld|%lld", src_png, (long long)st.st_mtime, (long long)st.st_size);
+    uint32_t h = fnv1a32(key, strlen(key));
+
+    char dst[PATH_MAX];
+    snprintf(dst, sizeof(dst), "%s/%08x_%s", cdir, (unsigned)h, base);
+    if (!file_exists(dst)) {
+        if (copy_file(src_png, dst) != 0) return -1;
+    }
+    snprintf(out_png, out_cap, "%s", dst);
+    return 0;
+}
+
 static int wallpaper_render_dir_and_prefix(const char *wallpaper_abs_png,
                                            char *out_dir, size_t dir_cap,
                                            char *out_prefix, size_t prefix_cap) {
@@ -2573,9 +2616,9 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
 
     // Optional wallpaper: reuse cached composition tile+icon in /dev/shm.
     // For dynamic value overlays we already produced a composed image (tile+base+text), so we skip those.
-    if (wp_active) {
-        for (int pos = 1; pos <= 13; pos++) {
-            if (wp_already_composed[pos]) continue;
+	    if (wp_active) {
+	        for (int pos = 1; pos <= 13; pos++) {
+	            if (wp_already_composed[pos]) continue;
 
             // Blank => wallpaper tile only.
             if (strcmp(btn_path[pos], blank_png) == 0) {
@@ -2603,13 +2646,29 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
                 snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", composed);
                 btn_set[pos] = true;
             }
-        }
-    }
+	        }
+	    }
 
-    // Build command
-    char *cmd = NULL;
-    size_t w = 0;
-    size_t cap = 0;
+	    // Without wallpaper, keep current stable icons in a session RAM cache to reduce disk reads.
+	    if (!wp_active) {
+	        for (int pos = 1; pos <= 13; pos++) {
+	            if (!btn_set[pos]) continue;
+	            if (cleanup_tmp[pos]) continue; // temp overlays are already in /dev/shm and will be deleted
+	            if (btn_path[pos][0] == 0) continue;
+	            if (blank_png && strcmp(btn_path[pos], blank_png) == 0) continue;
+
+	            char cached[PATH_MAX];
+	            if (session_cache_icon(opt, btn_path[pos], cached, sizeof(cached)) == 0 && cached[0]) {
+	                snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", cached);
+	                btn_set[pos] = true;
+	            }
+	        }
+	    }
+
+	    // Build command
+	    char *cmd = NULL;
+	    size_t w = 0;
+	    size_t cap = 0;
     appendf_dyn(&cmd, &w, &cap, "%s", wp_active ? "set-buttons-explicit-14" : "set-buttons-explicit");
     for (int pos = 1; pos <= 13; pos++) {
         if (!btn_set[pos]) snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", blank_png);
@@ -2974,9 +3033,16 @@ static void ulanzi_send_partial(const Options *opt, int pos, const char *png_pat
     char label[64] = {0};
     if (label_src && label_src[0]) make_device_label(label_src, label, sizeof(label));
 
+    // Session cache: even without wallpaper, keep stable icons in RAM to avoid disk reads.
+    const char *send_png = png_path;
+    char cached_png[PATH_MAX] = {0};
+    if (session_cache_icon(opt, png_path, cached_png, sizeof(cached_png)) == 0 && cached_png[0]) {
+        send_png = cached_png;
+    }
+
     char cmd[PATH_MAX + 256];
-    if (label[0]) snprintf(cmd, sizeof(cmd), "set-partial-explicit --button-%d=%s --label-%d=%s", pos, png_path, pos, label);
-    else snprintf(cmd, sizeof(cmd), "set-partial-explicit --button-%d=%s", pos, png_path);
+    if (label[0]) snprintf(cmd, sizeof(cmd), "set-partial-explicit --button-%d=%s --label-%d=%s", pos, send_png, pos, label);
+    else snprintf(cmd, sizeof(cmd), "set-partial-explicit --button-%d=%s", pos, send_png);
 
     char reply[128] = {0};
     if (send_line_and_read_reply(opt->ulanzi_sock, cmd, reply, sizeof(reply)) != 0) {
