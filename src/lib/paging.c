@@ -2052,7 +2052,10 @@ static int wp_compose_cached(const Options *opt, uint32_t wp_sig, const char *re
         }
     }
     char cached[PATH_MAX];
-    snprintf(cached, sizeof(cached), "%s/%s", cache_dir, base);
+    // IMPORTANT: include the position in the filename (not just the directory). The Ulanzi daemon
+    // may use basenames when preparing zips/patches, and without this we can end up with multiple
+    // different images collapsing into the same entry if the same icon is reused across positions.
+    snprintf(cached, sizeof(cached), "%s/%02d_%s", cache_dir, pos, base);
     if (can_cache && file_exists(cached)) {
         snprintf(out_png, out_cap, "%s", cached);
         return 0;

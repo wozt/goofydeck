@@ -736,10 +736,10 @@ pages:
     buttons:
       - name: "FF 01"
         presets: [p12]
-        icon: "local:firefoxtest.png"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
       - name: "FF 02"
         presets: [p12]
-        icon: "local:Firefox_logo,_2019.svg"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
       - name: "FF 03"
         presets: [p12]
         icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
@@ -748,10 +748,10 @@ pages:
         icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
       - name: "FF 05"
         presets: [p12]
-        icon: "local:firefoxtest.png"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
       - name: "FF 06"
         presets: [p12]
-        icon: "local:Firefox_logo,_2019.svg"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
       - name: "FF 07"
         presets: [p12]
         icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
@@ -760,10 +760,10 @@ pages:
         icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
       - name: "FF 09"
         presets: [p12]
-        icon: "local:firefoxtest.png"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
       - name: "FF 10"
         presets: [p12]
-        icon: "local:Firefox_logo,_2019.svg"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
       - name: "FF 11"
         presets: [p12]
         icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
@@ -772,10 +772,10 @@ pages:
         icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
       - name: "FF 13"
         presets: [p12]
-        icon: "local:firefoxtest.png"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
       - name: "FF 14"
         presets: [p12]
-        icon: "local:Firefox_logo,_2019.svg"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
       - name: "FF 15"
         presets: [p12]
         icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
@@ -784,10 +784,10 @@ pages:
         icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
       - name: "FF 17"
         presets: [p12]
-        icon: "local:firefoxtest.png"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
       - name: "FF 18"
         presets: [p12]
-        icon: "local:Firefox_logo,_2019.svg"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
       - name: "FF 19"
         presets: [p12]
         icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
@@ -796,10 +796,10 @@ pages:
         icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
       - name: "FF 21"
         presets: [p12]
-        icon: "local:firefoxtest.png"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
       - name: "FF 22"
         presets: [p12]
-        icon: "local:Firefox_logo,_2019.svg"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
       - name: "FF 23"
         presets: [p12]
         icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
@@ -808,10 +808,10 @@ pages:
         icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
       - name: "FF 25"
         presets: [p12]
-        icon: "local:firefoxtest.png"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
       - name: "FF 26"
         presets: [p12]
-        icon: "local:Firefox_logo,_2019.svg"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
       - name: "FF 27"
         presets: [p12]
         icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
@@ -820,10 +820,10 @@ pages:
         icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
       - name: "FF 29"
         presets: [p12]
-        icon: "local:firefoxtest.png"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
       - name: "FF 30"
         presets: [p12]
-        icon: "local:Firefox_logo,_2019.svg"
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
 
   salon:
     buttons:
