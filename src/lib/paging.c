@@ -3061,7 +3061,49 @@ static int render_value_text_on_base_tmp(const Options *opt, const Preset *prese
     char outpng[PATH_MAX];
     snprintf(outpng, sizeof(outpng), "%s/value_%s_%d_%ld_%d.png", tmpdir, page_tag, (int)pid, t, pos);
 
-    if (copy_file(base_png, outpng) != 0) return -1;
+    // If base_png is the minimal 1x1 empty.png (used to keep zips small), drawing text on it produces a
+    // single pixel that the device scales up. In that case, create a proper 196x196 base first.
+    int bw = 0, bh = 0;
+    bool base_is_1x1 = (png_read_wh(base_png, &bw, &bh) == 0 && bw == 1 && bh == 1);
+    if (!base_is_1x1) {
+        if (copy_file(base_png, outpng) != 0) return -1;
+    } else {
+        char draw_square_bin[PATH_MAX];
+        char draw_border_bin[PATH_MAX];
+        snprintf(draw_square_bin, sizeof(draw_square_bin), "%s/icons/draw_square", opt->root_dir);
+        snprintf(draw_border_bin, sizeof(draw_border_bin), "%s/icons/draw_border", opt->root_dir);
+        if (access(draw_square_bin, X_OK) != 0) return -1;
+
+        const char *bg = (preset && preset->icon_background_color && preset->icon_background_color[0]) ? preset->icon_background_color : "transparent";
+        int bwid = preset ? clamp_int(preset->icon_border_width, 0, 98) : 0;
+        int rad = preset ? clamp_int(preset->icon_border_radius, 0, 50) : 0;
+        int border_size = preset ? clamp_int(preset->icon_border_size, 98, 196) : 196;
+        const char *border_c = (preset && preset->icon_border_color && preset->icon_border_color[0]) ? preset->icon_border_color : "FFFFFF";
+
+        // Same rule as icon pipeline: if border is enabled, start from transparent square; borders define the fill.
+        const char *sq_color = (bwid > 0) ? "transparent" : bg;
+        char size_arg[32];
+        snprintf(size_arg, sizeof(size_arg), "--size=196");
+        char *argv_sq[] = { draw_square_bin, (char *)sq_color, size_arg, outpng, NULL };
+        if (run_exec(argv_sq) != 0) { unlink(outpng); return -1; }
+
+        if (bwid > 0) {
+            if (access(draw_border_bin, X_OK) != 0) { unlink(outpng); return -1; }
+            char size_outer[32];
+            char rad_arg[32];
+            snprintf(size_outer, sizeof(size_outer), "--size=%d", border_size);
+            snprintf(rad_arg, sizeof(rad_arg), "--radius=%d", rad);
+            char *argv_outer[] = { draw_border_bin, (char *)border_c, size_outer, rad_arg, outpng, NULL };
+            if (run_exec(argv_outer) != 0) { unlink(outpng); return -1; }
+
+            int inner = border_size - 2 * bwid;
+            inner = clamp_int(inner, 1, 196);
+            char size_inner[32];
+            snprintf(size_inner, sizeof(size_inner), "--size=%d", inner);
+            char *argv_inner[] = { draw_border_bin, (char *)bg, size_inner, rad_arg, outpng, NULL };
+            if (run_exec(argv_inner) != 0) { unlink(outpng); return -1; }
+        }
+    }
 
     char draw_text_bin[PATH_MAX];
     char draw_opt_bin[PATH_MAX];
