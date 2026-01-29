@@ -186,11 +186,11 @@ static int64_t g_ulanzi_last_send_end_ns = 0;
 static int64_t g_last_action_ns = 0;
 static bool g_ulanzi_device_ready = true;
 
-static int g_cmd_logs = 1;
+static int g_cmd_logs = 0;
 static int g_cmd_logs_verbose = 0;
 
-static int g_paging_persist_debug_log = 1;
-static int g_paging_debug_fd = -1;
+// 0 = normal (only button press status line), 1 = debug (verbose console logs)
+static int g_paging_debug = 0;
 
 typedef enum { 
     BR_NORMAL = 0,
@@ -294,10 +294,6 @@ static void flush_pending_button_events(int rb_fd, size_t *inlen, size_t *parse_
 
 static void die_errno(const char *msg) {
     fprintf(stderr, "[pg] ERROR: %s: %s\n", msg, strerror(errno));
-    if (g_paging_debug_fd >= 0) {
-        dprintf(g_paging_debug_fd, "[pg] ERROR: %s: %s\n", msg, strerror(errno));
-        fsync(g_paging_debug_fd);
-    }
     exit(1);
 }
 
@@ -307,6 +303,24 @@ static int g_paging_verbose_render_logs = 0;
 static int g_paging_verbose_tool_logs = 0;
 static int g_paging_refresh_logs = 1;
 static char g_last_action_line[256] = {0};
+
+static void paging_apply_log_mode(void) {
+    if (g_paging_debug) {
+        // Debug: log everything to the console (no refresh UI).
+        g_cmd_logs = 1;
+        g_cmd_logs_verbose = 1;
+        g_paging_verbose_render_logs = 1;
+        g_paging_verbose_tool_logs = 1;
+        g_paging_refresh_logs = 0;
+    } else {
+        // Normal: only the button press status line (TTY refresh) + errors.
+        g_cmd_logs = 0;
+        g_cmd_logs_verbose = 0;
+        g_paging_verbose_render_logs = 0;
+        g_paging_verbose_tool_logs = 0;
+        g_paging_refresh_logs = 1;
+    }
+}
 
 static void log_clear_status_line(void) {
     if (g_log_is_tty <= 0) return;
@@ -318,6 +332,7 @@ static void log_clear_status_line(void) {
 }
 
 static void log_msg(const char *fmt, ...) {
+    if (!g_paging_debug) return;
     log_clear_status_line();
     
     va_list ap;
@@ -328,16 +343,6 @@ static void log_msg(const char *fmt, ...) {
     fprintf(stderr, "\n");
     
     va_end(ap);
-
-    if (g_paging_debug_fd >= 0) {
-        va_list ap2;
-        va_start(ap2, fmt);
-        dprintf(g_paging_debug_fd, "[pg] ");
-        vdprintf(g_paging_debug_fd, fmt, ap2);
-        dprintf(g_paging_debug_fd, "\n");
-        va_end(ap2);
-        fsync(g_paging_debug_fd);
-    }
 }
 
 static void log_render(const char *fmt, ...) {
@@ -396,6 +401,7 @@ static void log_status(const char *fmt, ...) {
 }
 
 static void log_action(const char *fmt, ...) {
+    if (!g_paging_debug) return;
     if (!g_paging_refresh_logs || g_log_is_tty <= 0) {
         va_list ap;
         va_start(ap, fmt);
@@ -2625,32 +2631,6 @@ static int cmd_engine_start(CmdEngine *e) {
     return 0;
 }
 
-static int try_open_debug_log(void) {
-    if (!g_paging_persist_debug_log) return -1;
-    if (g_paging_debug_fd >= 0) return g_paging_debug_fd;
-
-    // Prefer /tmp so we can always write even if /dev/shm is restricted.
-    const char *paths[] = {
-        "/tmp/goofydeck_paging_debug.log",
-        "/dev/shm/goofydeck/paging/debug.log",
-        "/dev/shm/goofydeck_paging_debug.log",
-    };
-    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
-        const char *p = paths[i];
-        // best-effort create parents for /dev/shm/goofydeck/paging
-        if (strncmp(p, "/dev/shm/goofydeck/paging/", 22) == 0) {
-            mkdir("/dev/shm/goofydeck", 0777);
-            mkdir("/dev/shm/goofydeck/paging", 0777);
-        }
-        int fd = open(p, O_CREAT | O_WRONLY | O_APPEND, 0644);
-        if (fd >= 0) {
-            g_paging_debug_fd = fd;
-            return fd;
-        }
-    }
-    return -1;
-}
-
 static void crash_handler(int sig) {
     const char *hdr = "\n[pg] FATAL: paging_daemon crashed\n";
     (void)write(STDERR_FILENO, hdr, strlen(hdr));
@@ -2658,27 +2638,6 @@ static void crash_handler(int sig) {
     void *bt[64];
     int n = backtrace(bt, (int)(sizeof(bt) / sizeof(bt[0])));
     backtrace_symbols_fd(bt, n, STDERR_FILENO);
-
-    // Best-effort dump into a persistent place for later inspection.
-    const char *paths[] = {
-        "/tmp/goofydeck_paging_crash.log",
-        "/dev/shm/goofydeck/paging/crash.log",
-        "/dev/shm/goofydeck_paging_crash.log",
-    };
-    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
-        const char *p = paths[i];
-        if (strncmp(p, "/dev/shm/goofydeck/paging/", 22) == 0) {
-            mkdir("/dev/shm/goofydeck", 0777);
-            mkdir("/dev/shm/goofydeck/paging", 0777);
-        }
-        int fd = open(p, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-        if (fd >= 0) {
-            dprintf(fd, "signal=%d\n", sig);
-            backtrace_symbols_fd(bt, n, fd);
-            close(fd);
-            break;
-        }
-    }
     _exit(128 + sig);
 }
 
@@ -5182,15 +5141,6 @@ int main(int argc, char **argv) {
     // Broken pipe on socket write must not kill the daemon (device disconnects are expected).
     signal(SIGPIPE, SIG_IGN);
 
-    // Persistent debug log (useful when the daemon crashes too fast to read the pane).
-    if (g_paging_persist_debug_log) {
-        (void)try_open_debug_log();
-        if (g_paging_debug_fd >= 0) {
-            dprintf(g_paging_debug_fd, "\n[pg] start pid=%d\n", (int)getpid());
-            fsync(g_paging_debug_fd);
-        }
-    }
-
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = crash_handler;
@@ -5281,6 +5231,7 @@ int main(int argc, char **argv) {
     signal(SIGPIPE, SIG_IGN);
 
     g_log_is_tty = isatty(STDERR_FILENO) ? 1 : 0;
+    paging_apply_log_mode();
 
     wipe_paging_state_dir_at_startup(&opt);
 
@@ -5290,7 +5241,7 @@ int main(int argc, char **argv) {
     if (load_config(opt.config_path, &cfg) != 0) die_errno("load_config");
     
     if (!config_get_page(&cfg, "$root")) {
-        log_msg("config missing $root page");
+        fprintf(stderr, "[pg] ERROR: config missing $root page\n");
         return 1;
     }
 
