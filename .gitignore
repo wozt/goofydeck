@@ -41,6 +41,8 @@ icons/draw_optimize
 icons/draw_over
 icons/draw_square
 icons/draw_text
+icons/draw_normalize
+icons/draw_svg
 ulanzi_d200_daemon
 send_video_page
 bin/paging_daemon

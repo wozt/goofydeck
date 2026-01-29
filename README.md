@@ -63,6 +63,8 @@ Main config: `config/configuration.yml` (parsed with `libyaml`, no Python).
 
 When `wallpaper` is enabled, `paging_daemon` renders the wallpaper into **14 tiles** and sends them with the page (buttons 1–13 are composed as `tile + icon`, and button 14 is the raw tile).
 
+Navigation buttons (`$page.previous/$page.next/$page.back`) are also composed against the current page wallpaper and cached per page.
+
 Recommendations (tune based on your SBC and the image content):
 - Prefer **~360p wallpapers** for responsiveness.
 - All image sizes are supported, but you typically need to lower `quality` as the resolution goes up.
@@ -74,7 +76,20 @@ Performance warning:
 
 Storage warning:
 - Wallpaper tiling creates small render files **next to your wallpaper image** (a folder named `<wallpaper filename without .png>/` containing `<name>-1.png` ... `<name>-14.png`).
-- During runtime, additional session caches and temporary files are stored under `/dev/shm/goofydeck/paging/` and are cleared on daemon start.
+- During runtime, additional session caches and temporary files are stored under `/dev/shm/goofydeck_<uid>/paging/` and are cleared on daemon start.
+
+### External icons (`local:` / `url:`)
+
+Buttons can use custom icons:
+- `icon: local:<path>` for local PNG/SVG
+- `icon: url:<url>` for remote PNG/SVG
+
+The daemon normalizes them (crop to square, resize if needed, dither + palette reduction) so they fit the device constraints.
+Normalized results are cached on disk under `.cache/external_icons/` and also copied to `/dev/shm/goofydeck_<uid>/paging/external_icons_session/` for the current session.
+
+Notes:
+- If the icon is still too large after normalization, the daemon falls back to `assets/pregen/filetobig.png`.
+- SVG generally gives the best quality/size ratio.
 
 ### `presets:` (Button Style)
 
@@ -139,7 +154,11 @@ pages:
 Button fields:
 - `name`: label sent to the device (and used by HA state overrides via `states: ... name:`).
 - `presets`: list of presets to apply (later items override earlier items).
-- `icon`: `mdi:<name>` or empty.
+- `icon`:
+  - `mdi:<name>` (built-in Material Design Icons)
+  - `local:<path>` (local file, PNG or SVG)
+  - `url:<url>` (downloaded file, PNG or SVG)
+  - empty string to omit
 - `text`: optional icon text (static).
 - `entity_id`: enables Home Assistant state tracking on that button when HA is enabled.
 - `tap_action:` / `hold_action:` / `longhold_action:` / `released_action:`:

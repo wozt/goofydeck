@@ -55,9 +55,9 @@ bin/send_image_page: src/lib/send_image_page.c | dir_bin
 bin/send_video_page_wrapper: src/lib/send_video_page_wrapper.c | dir_bin
 	$(CC) $(CFLAGS) $(FFMPEG_CFLAGS) -o $@ $< $(FFMPEG_LIBS) $(PNG_LIBS) $(ZLIB_LIBS) $(PTHREAD_LIBS) $(MATH_LIBS)
 
-icons: icons/draw_border icons/draw_optimize icons/draw_over icons/draw_square icons/draw_text
+icons: icons/draw_border icons/draw_optimize icons/draw_over icons/draw_square icons/draw_text icons/draw_normalize
 ifeq ($(HAVE_MDI),1)
-icons: icons/draw_mdi
+icons: icons/draw_mdi icons/draw_svg
 else
 icons:
 	@echo "Skipping icons/draw_mdi (missing cairo/librsvg dev libs or pkg-config)"
@@ -66,9 +66,20 @@ endif
 icons/draw_%: src/icons/draw_%.c | dir_icons
 	$(CC) $(CFLAGS) -o $@ $< $(ZLIB_LIBS)
 
+icons/draw_normalize: src/icons/draw_normalize.c | dir_icons
+	$(CC) $(CFLAGS) -o $@ $< $(PNG_LIBS) $(ZLIB_LIBS)
+
 icons/draw_mdi: src/icons/draw_mdi.c | dir_icons
 ifeq ($(HAVE_MDI),1)
 	$(CC) $(CFLAGS) $(MDI_CFLAGS) -o $@ $< $(ZLIB_LIBS) $(MDI_LIBS)
+else
+	@echo "Cannot build $@: missing cairo/librsvg dev libs or pkg-config" >&2
+	@exit 1
+endif
+
+icons/draw_svg: src/icons/draw_svg.c | dir_icons
+ifeq ($(HAVE_MDI),1)
+	$(CC) $(CFLAGS) $(MDI_CFLAGS) -o $@ $< $(MDI_LIBS)
 else
 	@echo "Cannot build $@: missing cairo/librsvg dev libs or pkg-config" >&2
 	@exit 1
@@ -94,5 +105,5 @@ clean:
 	rm -f bin/ha_daemon
 	rm -f bin/send_video_page_wrapper
 	rm -f bin/send_image_page
-	rm -f icons/draw_border icons/draw_mdi icons/draw_optimize icons/draw_over icons/draw_square icons/draw_text
+	rm -f icons/draw_border icons/draw_mdi icons/draw_svg icons/draw_normalize icons/draw_optimize icons/draw_over icons/draw_square icons/draw_text
 	rm -f standalone/draw_optimize_std

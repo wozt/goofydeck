@@ -1,5 +1,5 @@
 // Minimal PNG optimizer: quantize to <=256 colors and rewrite as indexed PNG with zlib compression.
-// Usage: draw_optimize [-c N<=256] <filename.png>
+// Usage: draw_optimize [-d] [-c N<=256|-c=N] <filename.png>
 // Operates on the given path in place (if relative, it is resolved relative to the project root). No stdout on success.
 
 #include <stdio.h>
@@ -402,8 +402,14 @@ int main(int argc, char **argv) {
     int color_limit = DEFAULT_COLORS;
     const char *fname = NULL;
     for (int i=1;i<argc;i++) {
-        if ((strcmp(argv[i],"-c")==0 || strcmp(argv[i],"--color")==0) && i+1<argc) {
+        if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--dither") == 0) {
+            // Dithering is handled by draw_normalize in this project.
+            // Keep this flag for compatibility with scripts.
+            continue;
+        } else if ((strcmp(argv[i],"-c")==0 || strcmp(argv[i],"--color")==0) && i+1<argc) {
             color_limit = atoi(argv[++i]);
+        } else if (strncmp(argv[i], "-c=", 3) == 0) {
+            color_limit = atoi(argv[i] + 3);
         } else if (strncmp(argv[i],"--color=",8)==0) {
             color_limit = atoi(argv[i]+8);
         } else {

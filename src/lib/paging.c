@@ -3067,8 +3067,8 @@ static int render_value_text_on_base_tmp(const Options *opt, const Preset *prese
     if (access(draw_text_bin, X_OK) != 0) { unlink(outpng); return -1; }
     if (access(draw_opt_bin, X_OK) != 0) { unlink(outpng); return -1; }
 
-    // If the target image isn't 196x196 (e.g. wallpaper tiles), scale text params so a config written for
-    // 196px keeps similar proportions, and avoid post-text aggressive optimization (it destroys gradients/AA).
+    // If the target image isn't 196x196 (e.g. wallpaper tiles / external icons), scale text params so a config
+    // written for 196px keeps similar proportions.
     int img_w = 0, img_h = 0;
     bool have_wh = (png_read_wh(outpng, &img_w, &img_h) == 0);
     int ref = 196;
@@ -3118,11 +3118,19 @@ static int render_value_text_on_base_tmp(const Options *opt, const Preset *prese
     }
     if (rc != 0) { unlink(outpng); return -1; }
 
+    // Post-text optimize:
+    // - Classic 196x196 icons: keep the existing 4-color behavior (fast + small ZIPs).
+    // - Other sizes (wallpaper tiles, external icons): never quantize to 4 colors; only optimize if needed for the
+    //   device icon size constraint (<= 6KB), and then use 128 colors.
     if (is_ref_size) {
-        // Optimize after drawing value text (keeps file size small) only for 196x196 icons.
-        // For wallpaper tiles, -c 4 destroys gradients and text anti-aliasing.
-        char *argv_opt[] = { draw_opt_bin, (char *)"-c", (char *)"4", outpng, NULL };
+        char *argv_opt[] = { draw_opt_bin, (char *)"-d", (char *)"-c=4", outpng, NULL };
         if (run_exec(argv_opt) != 0) { unlink(outpng); return -1; }
+    } else {
+        struct stat st;
+        if (stat(outpng, &st) == 0 && st.st_size > 6 * 1024) {
+            char *argv_opt[] = { draw_opt_bin, (char *)"-d", (char *)"-c=128", outpng, NULL };
+            if (run_exec(argv_opt) != 0) { unlink(outpng); return -1; }
+        }
     }
 
     snprintf(out_tmp_png, out_cap, "%s", outpng);
@@ -3143,6 +3151,291 @@ static void sanitize_suffix(const char *in, char *out, size_t cap) {
         }
     }
     out[w] = 0;
+}
+
+static const char *file_too_big_png(const Options *opt) {
+    static const char *fallback = "assets/pregen/filetobig.png";
+    if (!opt) return fallback;
+    static char buf[PATH_MAX];
+    snprintf(buf, sizeof(buf), "%s/filetobig.png", opt->sys_pregen_dir ? opt->sys_pregen_dir : "assets/pregen");
+    if (file_exists(buf)) return buf;
+    if (opt->error_icon && file_exists(opt->error_icon)) return opt->error_icon;
+    return fallback;
+}
+
+static bool icon_is_prefixed(const char *s, const char *prefix) {
+    if (!s || !prefix) return false;
+    size_t n = strlen(prefix);
+    return strncmp(s, prefix, n) == 0;
+}
+
+static int validate_external_png_final(const char *path) {
+    if (!path || !path[0]) return -1;
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+    if (st.st_size <= 0) return -1;
+    if (st.st_size > 6 * 1024) return -2;
+    int w = 0, h = 0;
+    if (png_read_wh(path, &w, &h) != 0) return -3;
+    if (w != h) return -4;
+    if (w > 196 || h > 196) return -5;
+    return 0;
+}
+
+typedef enum {
+    EXT_FILE_UNKNOWN = 0,
+    EXT_FILE_PNG = 1,
+    EXT_FILE_SVG = 2,
+} ExtFileType;
+
+static bool str_endswith_ci(const char *s, const char *suf) {
+    if (!s || !suf) return false;
+    size_t sl = strlen(s);
+    size_t su = strlen(suf);
+    if (su > sl) return false;
+    return strcasecmp(s + (sl - su), suf) == 0;
+}
+
+static ExtFileType sniff_external_file_type(const char *path) {
+    if (!path || !path[0]) return EXT_FILE_UNKNOWN;
+    if (str_endswith_ci(path, ".svg")) return EXT_FILE_SVG;
+    if (str_endswith_ci(path, ".png")) return EXT_FILE_PNG;
+
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return EXT_FILE_UNKNOWN;
+    unsigned char hdr[256];
+    size_t n = fread(hdr, 1, sizeof(hdr), fp);
+    fclose(fp);
+    if (n >= 8 && memcmp(hdr, "\x89PNG\r\n\x1a\n", 8) == 0) return EXT_FILE_PNG;
+
+    // Skip leading whitespace.
+    size_t i = 0;
+    while (i < n && (hdr[i] == ' ' || hdr[i] == '\t' || hdr[i] == '\n' || hdr[i] == '\r')) i++;
+    if (i < n && hdr[i] == '<') {
+        // Very cheap check for svg/XML.
+        for (size_t j = i; j + 3 < n; j++) {
+            if ((hdr[j] == '<' || hdr[j] == ' ') &&
+                (hdr[j + 1] == 's' || hdr[j + 1] == 'S') &&
+                (hdr[j + 2] == 'v' || hdr[j + 2] == 'V') &&
+                (hdr[j + 3] == 'g' || hdr[j + 3] == 'G'))
+                return EXT_FILE_SVG;
+        }
+        // Could still be svg even if not matched; leave unknown.
+    }
+    return EXT_FILE_UNKNOWN;
+}
+
+static int download_url_to_file(const char *url, const char *out_path) {
+    if (!url || !url[0] || !out_path || !out_path[0]) return -1;
+
+    // Try curl first, then wget.
+    {
+        char *argv[] = {
+            (char *)"curl",
+            (char *)"-fsSL",
+            (char *)"--max-time",
+            (char *)"5",
+            (char *)"-o",
+            (char *)out_path,
+            (char *)url,
+            NULL,
+        };
+        int rc = run_exec(argv);
+        if (rc == 0) return 0;
+        // 127 is a good signal that the executable isn't present.
+        if (rc != 127) return -1;
+    }
+    {
+        char *argv[] = {
+            (char *)"wget",
+            (char *)"-q",
+            (char *)"-O",
+            (char *)out_path,
+            (char *)url,
+            NULL,
+        };
+        int rc = run_exec(argv);
+        return (rc == 0) ? 0 : -1;
+    }
+}
+
+static bool resolve_external_icon_session(const Options *opt, const char *spec, char *out_path, size_t out_cap) {
+    if (!opt || !spec || !spec[0] || !out_path || out_cap == 0) return false;
+    out_path[0] = 0;
+
+    const char *kind = NULL;
+    const char *val = NULL;
+    if (icon_is_prefixed(spec, "local:")) {
+        kind = "local";
+        val = spec + 6;
+    } else if (icon_is_prefixed(spec, "url:")) {
+        kind = "url";
+        val = spec + 4;
+    } else {
+        return false;
+    }
+    if (!val || !val[0]) return false;
+
+    uint32_t h = fnv1a32(spec, strlen(spec));
+
+    // Disk cache (normalized) under .cache
+    char cache_dir[PATH_MAX];
+    snprintf(cache_dir, sizeof(cache_dir), "%s/external_icons", opt->cache_root);
+    ensure_dir(cache_dir);
+
+    char disk[PATH_MAX];
+    snprintf(disk, sizeof(disk), "%s/%08x.png", cache_dir, (unsigned)h);
+
+    // Session cache under /dev/shm (copy of disk cache)
+    char sdir[PATH_MAX];
+    state_dir(opt, sdir, sizeof(sdir));
+    char sess_dir[PATH_MAX];
+    snprintf(sess_dir, sizeof(sess_dir), "%s/external_icons_session", sdir);
+    ensure_dir(sess_dir);
+    char sess[PATH_MAX];
+    snprintf(sess, sizeof(sess), "%s/%08x.png", sess_dir, (unsigned)h);
+
+    // If session copy exists and is valid, use it.
+    if (file_exists(sess) && validate_external_png_final(sess) == 0) {
+        snprintf(out_path, out_cap, "%s", sess);
+        return true;
+    }
+
+    // If disk cache exists and is valid, copy into session and use it.
+    if (file_exists(disk) && validate_external_png_final(disk) == 0) {
+        (void)copy_file(disk, sess);
+        if (file_exists(sess) && validate_external_png_final(sess) == 0) {
+            snprintf(out_path, out_cap, "%s", sess);
+            return true;
+        }
+        (void)unlink(sess);
+        return false;
+    }
+
+    // Build cache.
+    char tmp_out[PATH_MAX];
+    snprintf(tmp_out, sizeof(tmp_out), "%s/%08x.tmp.%d.png", cache_dir, (unsigned)h, (int)getpid());
+    (void)unlink(tmp_out);
+
+    char draw_norm_bin[PATH_MAX];
+    snprintf(draw_norm_bin, sizeof(draw_norm_bin), "%s/icons/draw_normalize", opt->root_dir);
+    char draw_svg_bin[PATH_MAX];
+    snprintf(draw_svg_bin, sizeof(draw_svg_bin), "%s/icons/draw_svg", opt->root_dir);
+
+    // Prepare an input file path (downloaded to /dev/shm/tmp for url:).
+    char input_path[PATH_MAX] = {0};
+    char dl_tmp[PATH_MAX] = {0};
+
+    if (strcmp(kind, "local") == 0) {
+        if (val[0] == '/') snprintf(input_path, sizeof(input_path), "%s", val);
+        else snprintf(input_path, sizeof(input_path), "%s/%s", opt->root_dir, val);
+        if (!file_exists(input_path)) return false;
+    } else {
+        char tmpdir[PATH_MAX];
+        snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", sdir);
+        ensure_dir(tmpdir);
+        snprintf(dl_tmp, sizeof(dl_tmp), "%s/url_%08x.bin", tmpdir, (unsigned)h);
+        (void)unlink(dl_tmp);
+        if (download_url_to_file(val, dl_tmp) != 0) {
+            (void)unlink(dl_tmp);
+            return false;
+        }
+        snprintf(input_path, sizeof(input_path), "%s", dl_tmp);
+    }
+
+    ExtFileType ft = sniff_external_file_type(input_path);
+    int gen_ok = -1;
+    if (ft == EXT_FILE_SVG) {
+        if (access(draw_svg_bin, X_OK) != 0) {
+            if (dl_tmp[0]) (void)unlink(dl_tmp);
+            return false;
+        }
+        if (access(draw_norm_bin, X_OK) != 0) {
+            if (dl_tmp[0]) (void)unlink(dl_tmp);
+            return false;
+        }
+        // Render SVG to a temporary PNG (196x196), then normalize to target size (default 128x128).
+        char tmp_svg[PATH_MAX];
+        snprintf(tmp_svg, sizeof(tmp_svg), "%s/%08x.svg.%d.png", cache_dir, (unsigned)h, (int)getpid());
+        (void)unlink(tmp_svg);
+        char *argv_svg[] = { draw_svg_bin, input_path, (char *)"keep", tmp_svg, NULL };
+        if (run_exec(argv_svg) == 0 && file_exists(tmp_svg)) {
+            char *argv_norm[] = { draw_norm_bin, tmp_svg, tmp_out, NULL };
+            gen_ok = run_exec(argv_norm);
+        } else {
+            gen_ok = -1;
+        }
+        (void)unlink(tmp_svg);
+    } else if (ft == EXT_FILE_PNG) {
+        if (access(draw_norm_bin, X_OK) != 0) {
+            if (dl_tmp[0]) (void)unlink(dl_tmp);
+            return false;
+        }
+        char *argv[] = { draw_norm_bin, input_path, tmp_out, NULL };
+        gen_ok = run_exec(argv);
+    } else {
+        if (dl_tmp[0]) (void)unlink(dl_tmp);
+        return false;
+    }
+
+    if (dl_tmp[0]) (void)unlink(dl_tmp);
+
+    if (gen_ok != 0 || !file_exists(tmp_out)) {
+        (void)unlink(tmp_out);
+        return false;
+    }
+
+    // If too large for the device ZIP, first try a lossless recompress pass (keep colors),
+    // then (if still too big) fall back to a gentler quantization (128 colors, not 4).
+    struct stat st;
+    if (stat(tmp_out, &st) == 0 && st.st_size > 6 * 1024) {
+        if (access(draw_norm_bin, X_OK) == 0) {
+            char tmp2[PATH_MAX];
+            snprintf(tmp2, sizeof(tmp2), "%s/%08x.repack.%d.png", cache_dir, (unsigned)h, (int)getpid());
+            (void)unlink(tmp2);
+            char *argv_repack[] = { draw_norm_bin, tmp_out, tmp2, NULL };
+            if (run_exec(argv_repack) == 0 && file_exists(tmp2)) {
+                (void)unlink(tmp_out);
+                (void)rename(tmp2, tmp_out);
+            } else {
+                (void)unlink(tmp2);
+            }
+        }
+    }
+
+    if (stat(tmp_out, &st) == 0 && st.st_size > 6 * 1024) {
+        // Quantize to 128 colors (still preserves gradients better than the 4-color pipeline).
+        char draw_opt_bin[PATH_MAX];
+        snprintf(draw_opt_bin, sizeof(draw_opt_bin), "%s/icons/draw_optimize", opt->root_dir);
+        if (access(draw_opt_bin, X_OK) == 0) {
+            char *argv_opt[] = { draw_opt_bin, (char *)"-d", (char *)"-c=128", tmp_out, NULL };
+            (void)run_exec(argv_opt);
+        }
+    }
+
+    // Validate final normalized file.
+    if (validate_external_png_final(tmp_out) != 0) {
+        (void)unlink(tmp_out);
+        return false;
+    }
+
+    // Move into disk cache.
+    (void)unlink(disk);
+    if (rename(tmp_out, disk) != 0) {
+        // Fallback copy if rename fails (cross-device), but it shouldn't since same dir.
+        (void)copy_file(tmp_out, disk);
+        (void)unlink(tmp_out);
+    }
+
+    if (file_exists(disk) && validate_external_png_final(disk) == 0) {
+        (void)copy_file(disk, sess);
+        if (file_exists(sess) && validate_external_png_final(sess) == 0) {
+            snprintf(out_path, out_cap, "%s", sess);
+            return true;
+        }
+    }
+    (void)unlink(sess);
+    return false;
 }
 
 static uint32_t item_file_hash(const char *page, size_t item_index, const Item *it) {
@@ -3168,9 +3461,9 @@ static bool cached_or_generated_into_state(const Options *opt, const Config *cfg
     const char *ic = (icon_override != NULL) ? icon_override :
                      (it->icon && it->icon[0]) ? it->icon :
                      (preset && preset->icon) ? preset->icon : "";
-	const char *tx = (text_override != NULL) ? text_override :
-		                     (it->text && it->text[0]) ? it->text :
-		                     (preset && preset->text) ? preset->text : "";
+		const char *tx = (text_override != NULL) ? text_override :
+			                     (it->text && it->text[0]) ? it->text :
+			                     (preset && preset->text) ? preset->text : "";
 
     // For $cmd buttons, icon text is dynamic: do not bake it into cached icons.
     if (text_override == NULL && item_has_cmd_features(it)) tx = "";
@@ -3187,7 +3480,18 @@ static bool cached_or_generated_into_state(const Options *opt, const Config *cfg
         if (!has_bg && !has_border) return false;
     }
 
-    uint32_t file_h = item_file_hash(page, item_index, it);
+    // Special-case: external icons (local:/url:) are used as-is (no pipeline composition) and cached in RAM per session.
+    if (ic && (icon_is_prefixed(ic, "local:") || icon_is_prefixed(ic, "url:"))) {
+        char ext[PATH_MAX];
+        if (resolve_external_icon_session(opt, ic, ext, sizeof(ext))) {
+            snprintf(out_path, out_cap, "%s", ext);
+            return true;
+        }
+        snprintf(out_path, out_cap, "%s", file_too_big_png(opt));
+        return true;
+    }
+
+	    uint32_t file_h = item_file_hash(page, item_index, it);
     char suf[128] = {0};
     if (variant && variant[0]) sanitize_suffix(variant, suf, sizeof(suf));
     int btn = (int)item_index + 1;
@@ -3304,9 +3608,19 @@ static bool cached_or_generated_static_text_into(const Options *opt, const Confi
     }
     if (rc != 0) { unlink(out_path); return false; }
 
-    // Optimize after drawing static text.
-    char *argv_opt[] = { draw_opt_bin, (char *)"-c", (char *)"4", out_path, NULL };
-    if (run_exec(argv_opt) != 0) { unlink(out_path); return false; }
+    bool is_external = (it->icon && (icon_is_prefixed(it->icon, "local:") || icon_is_prefixed(it->icon, "url:")));
+    if (!is_external) {
+        // Built icons: keep the existing 4-color behavior.
+        char *argv_opt[] = { draw_opt_bin, (char *)"-d", (char *)"-c=4", out_path, NULL };
+        if (run_exec(argv_opt) != 0) { unlink(out_path); return false; }
+    } else {
+        // External icons: preserve colors; only quantize if needed for the device icon size constraint (<= 6KB).
+        struct stat st;
+        if (stat(out_path, &st) == 0 && st.st_size > 6 * 1024) {
+            char *argv_opt[] = { draw_opt_bin, (char *)"-d", (char *)"-c=128", out_path, NULL };
+            if (run_exec(argv_opt) != 0) { unlink(out_path); return false; }
+        }
+    }
 
     return true;
 }
@@ -3434,6 +3748,133 @@ static int ensure_sys_icon(const Options *opt, const Config *cfg, const char *na
         (void)copy_file(opt->error_icon, out);
     }
     return file_exists(out) ? 0 : -1;
+}
+
+static void page_tag_for_cache_dir(const char *page_name, char *out, size_t cap) {
+    if (!out || cap == 0) return;
+    out[0] = 0;
+    if (!page_name || !page_name[0]) {
+        snprintf(out, cap, "page");
+        return;
+    }
+    if (strcmp(page_name, "$root") == 0) {
+        snprintf(out, cap, "root");
+        return;
+    }
+    sanitize_suffix(page_name, out, cap);
+    if (out[0] == 0) snprintf(out, cap, "page");
+}
+
+static bool nav_wallpaper_composed_cached(const Options *opt, const Config *cfg, const char *page_name,
+                                         const char *nav_name, const char *mdi_icon, int pos,
+                                         uint32_t wp_sig, const WallpaperEff *wp,
+                                         const char *wp_render_dir, const char *wp_prefix,
+                                         char *out_png, size_t out_cap, bool *out_is_tmp) {
+    if (out_is_tmp) *out_is_tmp = false;
+    if (!opt || !cfg || !page_name || !nav_name || !mdi_icon || !out_png || out_cap == 0) return false;
+    out_png[0] = 0;
+    if (pos < 1 || pos > 13) return false;
+    if (!wp || !wp->enabled) return false;
+    if (!wp_render_dir || !wp_prefix || !wp_render_dir[0] || !wp_prefix[0]) return false;
+
+    // Disk cache (persistent): .cache/nav/<page>/<wp_sig>/<nav>_<pos>.png
+    char page_tag[96];
+    page_tag_for_cache_dir(page_name, page_tag, sizeof(page_tag));
+
+    char disk_dir[PATH_MAX];
+    snprintf(disk_dir, sizeof(disk_dir), "%s/nav/%s", opt->cache_root, page_tag);
+    bool disk_ok = (try_ensure_dir_parent(disk_dir) == 0 && try_ensure_dir(disk_dir) == 0 && access(disk_dir, W_OK | X_OK) == 0);
+
+    char disk_png[PATH_MAX];
+    // IMPORTANT: include wp_sig in the filename (not just the directory) so the Ulanzi daemon,
+    // which may use basenames when creating zip entries, cannot accidentally treat two different
+    // wallpapers as the "same" nav file.
+    snprintf(disk_png, sizeof(disk_png), "%s/%s_%08x_%02d.png", disk_dir, nav_name, (unsigned)wp_sig, pos);
+
+    // Session RAM cache: /dev/shm/.../nav/<page>/<wp_sig>/<nav>_<pos>.png
+    char sdir[PATH_MAX];
+    state_dir(opt, sdir, sizeof(sdir));
+    char shm_dir[PATH_MAX];
+    snprintf(shm_dir, sizeof(shm_dir), "%s/nav/%s", sdir, page_tag);
+    bool shm_ok = (try_ensure_dir_parent(shm_dir) == 0 && try_ensure_dir(shm_dir) == 0 && access(shm_dir, W_OK | X_OK) == 0);
+
+    char shm_png[PATH_MAX];
+    snprintf(shm_png, sizeof(shm_png), "%s/%s_%08x_%02d.png", shm_dir, nav_name, (unsigned)wp_sig, pos);
+
+    // Prefer RAM copy.
+    if (shm_ok && file_exists(shm_png)) {
+        snprintf(out_png, out_cap, "%s", shm_png);
+        return true;
+    }
+
+    // If disk cache exists, copy to RAM and use.
+    if (disk_ok && file_exists(disk_png)) {
+        if (shm_ok) {
+            (void)copy_file(disk_png, shm_png);
+            if (file_exists(shm_png)) {
+                snprintf(out_png, out_cap, "%s", shm_png);
+                return true;
+            }
+        }
+        snprintf(out_png, out_cap, "%s", disk_png);
+        return true;
+    }
+
+    // Ensure base sys icon exists.
+    char base[PATH_MAX];
+    bool have_base = (ensure_sys_icon(opt, cfg, nav_name, mdi_icon, base, sizeof(base)) == 0 && file_exists(base));
+
+    // Compose tile(+icon) into a tmp RAM file, then persist both disk+RAM.
+    char tile[PATH_MAX];
+    if (wallpaper_session_tile(opt, wp_render_dir, wp_prefix, wp, pos, tile, sizeof(tile)) != 0 || !tile[0]) return false;
+
+    char draw_over_bin[PATH_MAX];
+    snprintf(draw_over_bin, sizeof(draw_over_bin), "%s/icons/draw_over", opt->root_dir);
+    bool have_draw_over = (access(draw_over_bin, X_OK) == 0);
+
+    // If we can't overlay (missing nav icon or draw_over), still ensure the nav background is correct by sending the tile.
+    // This avoids "stale wallpaper" artifacts from a previous page on the device.
+    if (!have_draw_over || !have_base) {
+        snprintf(out_png, out_cap, "%s", tile);
+        return true;
+    }
+
+    char tmpdir[PATH_MAX];
+    snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", sdir);
+    if (try_ensure_dir(tmpdir) != 0) return false;
+    char tmp_out[PATH_MAX];
+    snprintf(tmp_out, sizeof(tmp_out), "%s/nav_%s_%02d_%d.png", tmpdir, nav_name, pos, (int)getpid());
+    (void)unlink(tmp_out);
+
+    if (copy_file(tile, tmp_out) != 0) return false;
+    char *argv_over[] = { draw_over_bin, (char *)base, tmp_out, NULL };
+    if (run_exec(argv_over) != 0) {
+        unlink(tmp_out);
+        // Fallback to tile only if overlay fails.
+        snprintf(out_png, out_cap, "%s", tile);
+        return true;
+    }
+
+    // Persist to disk and RAM. Best-effort: if disk write fails, keep RAM.
+    if (disk_ok) (void)copy_file(tmp_out, disk_png);
+    if (shm_ok) (void)copy_file(tmp_out, shm_png);
+
+    if (shm_ok && file_exists(shm_png)) {
+        unlink(tmp_out);
+        snprintf(out_png, out_cap, "%s", shm_png);
+        return true;
+    }
+    if (disk_ok && file_exists(disk_png)) {
+        unlink(tmp_out);
+        snprintf(out_png, out_cap, "%s", disk_png);
+        return true;
+    }
+
+    // Fallback: use tmp directly for this render; caller must clean it.
+    if (out_is_tmp) *out_is_tmp = true;
+    snprintf(out_png, out_cap, "%s", tmp_out);
+
+    return true;
 }
 
 static void make_device_label(const char *src, char *out, size_t out_cap) {
@@ -3772,21 +4213,42 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
     // System icons (only if visible)
     if (show_back && back_pos >= 1 && back_pos <= 13) {
         char tmp[PATH_MAX];
-        if (ensure_sys_icon(opt, cfg, "page_back", "mdi:arrow-left", tmp, sizeof(tmp)) == 0) {
+        if (wp_active && wp_sig != 0 &&
+            nav_wallpaper_composed_cached(opt, cfg, page_name, "page_back", "mdi:arrow-left", back_pos,
+                                          wp_sig, &wp, wp_render_dir, wp_prefix,
+                                          tmp, sizeof(tmp), &cleanup_tmp[back_pos])) {
+            snprintf(btn_path[back_pos], sizeof(btn_path[back_pos]), "%s", tmp);
+            btn_set[back_pos] = true;
+            wp_already_composed[back_pos] = true;
+        } else if (ensure_sys_icon(opt, cfg, "page_back", "mdi:arrow-left", tmp, sizeof(tmp)) == 0) {
             snprintf(btn_path[back_pos], sizeof(btn_path[back_pos]), "%s", tmp);
             btn_set[back_pos] = true;
         }
     }
     if (show_prev && prev_pos >= 1 && prev_pos <= 13) {
         char tmp[PATH_MAX];
-        if (ensure_sys_icon(opt, cfg, "page_prev", "mdi:chevron-left", tmp, sizeof(tmp)) == 0) {
+        if (wp_active && wp_sig != 0 &&
+            nav_wallpaper_composed_cached(opt, cfg, page_name, "page_prev", "mdi:chevron-left", prev_pos,
+                                          wp_sig, &wp, wp_render_dir, wp_prefix,
+                                          tmp, sizeof(tmp), &cleanup_tmp[prev_pos])) {
+            snprintf(btn_path[prev_pos], sizeof(btn_path[prev_pos]), "%s", tmp);
+            btn_set[prev_pos] = true;
+            wp_already_composed[prev_pos] = true;
+        } else if (ensure_sys_icon(opt, cfg, "page_prev", "mdi:chevron-left", tmp, sizeof(tmp)) == 0) {
             snprintf(btn_path[prev_pos], sizeof(btn_path[prev_pos]), "%s", tmp);
             btn_set[prev_pos] = true;
         }
     }
     if (show_next && next_pos >= 1 && next_pos <= 13) {
         char tmp[PATH_MAX];
-        if (ensure_sys_icon(opt, cfg, "page_next", "mdi:chevron-right", tmp, sizeof(tmp)) == 0) {
+        if (wp_active && wp_sig != 0 &&
+            nav_wallpaper_composed_cached(opt, cfg, page_name, "page_next", "mdi:chevron-right", next_pos,
+                                          wp_sig, &wp, wp_render_dir, wp_prefix,
+                                          tmp, sizeof(tmp), &cleanup_tmp[next_pos])) {
+            snprintf(btn_path[next_pos], sizeof(btn_path[next_pos]), "%s", tmp);
+            btn_set[next_pos] = true;
+            wp_already_composed[next_pos] = true;
+        } else if (ensure_sys_icon(opt, cfg, "page_next", "mdi:chevron-right", tmp, sizeof(tmp)) == 0) {
             snprintf(btn_path[next_pos], sizeof(btn_path[next_pos]), "%s", tmp);
             btn_set[next_pos] = true;
         }
@@ -3796,7 +4258,15 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
     // For dynamic value overlays we already produced a composed image (tile+base+text), so we skip those.
 	    if (wp_active) {
 	        for (int pos = 1; pos <= 13; pos++) {
-	            if (wp_already_composed[pos]) continue;
+	            // Never skip wallpaper composition for navigation/system buttons. Those must always be refreshed
+	            // when page context changes (back/prev/next visibility), otherwise the device may keep stale
+	            // composed nav buttons from a previous sheet/page.
+	            bool is_nav_pos = false;
+	            if (show_back && pos == back_pos) is_nav_pos = true;
+	            if (show_prev && pos == prev_pos) is_nav_pos = true;
+	            if (show_next && pos == next_pos) is_nav_pos = true;
+
+	            if (wp_already_composed[pos] && !is_nav_pos) continue;
 
             // Blank => wallpaper tile only.
             if (strcmp(btn_path[pos], blank_png) == 0) {
