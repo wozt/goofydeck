@@ -1,5 +1,6 @@
 // Single paging daemon for GoofyDeck (no Python).
 //
+//
 // Responsibilities:
 // - Connect to ulanzi_d200_daemon unix socket (/tmp/ulanzi_device.sock)
 // - Subscribe to button events (read-buttons)
@@ -34,35 +35,59 @@
 #include <time.h>
 #include <unistd.h>
 #include <poll.h>
+#include <pthread.h>
 
 #include <zlib.h>
 #include <png.h>
 #include <yaml.h>
+#include <execinfo.h>
 
 #include "../third_party/jsmn.h"
 
 typedef struct {
-    char *key;    // e.g. "on", "off", "unavailable"
-    char *name;   // label override
-    char *icon;   // icon override (mdi:...)
-    char *preset; // preset override (first preset only)
-    char *text;   // text override (rendered on icon)
+    char *key;
+    char *name;
+    char *icon;
+    char *preset;
+    char *text;
 } StateOverride;
+
+typedef struct {
+    bool trim;
+    int max_len;
+} CmdTextOpts;
 
 typedef struct {
     char *name;
     char *icon;
     char *preset;
     char *text;
+    
     char *tap_action;
     char *tap_data;
+    CmdTextOpts tap_cmd_text;
+    
     char *hold_action;
     char *hold_data;
+    CmdTextOpts hold_cmd_text;
+    
     char *longhold_action;
     char *longhold_data;
+    CmdTextOpts longhold_cmd_text;
+    
     char *released_action;
     char *released_data;
+    CmdTextOpts released_cmd_text;
+    
     char *entity_id;
+    
+    int poll_every_ms;
+    char *poll_action;
+    char *poll_cmd;
+    CmdTextOpts poll_cmd_text;
+    
+    int state_every_ms;
+    char *state_cmd;
     StateOverride *states;
     size_t state_count;
     size_t state_cap;
@@ -70,25 +95,30 @@ typedef struct {
 
 typedef struct {
     char *name;
-    char *icon;                 // optional default icon for the preset (mdi:...)
-    char *text;                 // optional default text for the preset
-    char *icon_background_color; // "RRGGBB" or "transparent"
-    int icon_border_radius;      // percent (0..50)
-    int icon_border_size;        // px (98..196)
-    int icon_border_width;       // px (0..98)
-    char *icon_border_color;     // "RRGGBB" or "transparent"
-    int icon_size;               // px (0..196), 0=auto
-    int icon_padding;            // px (>=0)
-    int icon_offset_x;           // px
-    int icon_offset_y;           // px
-    int icon_brightness;         // percent (1..200)
-    char *icon_color;            // "RRGGBB" or "transparent"
-    char *text_color;            // "RRGGBB" or "transparent"
-    char *text_align;            // top|center|bottom
-    char *text_font;             // font filename or system font name
-    int text_size;               // px
-    int text_offset_x;           // px
-    int text_offset_y;           // px
+    char *icon;
+    char *text;
+    
+    char *icon_background_color;
+    
+    int icon_border_radius;
+    int icon_border_size;
+    int icon_border_width;
+    char *icon_border_color;
+    
+    int icon_size;
+    int icon_padding;
+    int icon_offset_x;
+    int icon_offset_y;
+    int icon_brightness;
+    
+    char *icon_color;
+    
+    char *text_color;
+    char *text_align;
+    char *text_font;
+    int text_size;
+    int text_offset_x;
+    int text_offset_y;
 } Preset;
 
 typedef struct {
@@ -96,18 +126,18 @@ typedef struct {
     Item *items;
     size_t count;
     size_t cap;
-    // Optional wallpaper override for this page.
+    
     char *wallpaper_path;
-    int wallpaper_quality;   // 10..100
-    int wallpaper_magnify;   // 50..300
+    int wallpaper_quality;
+    int wallpaper_magnify;
     bool wallpaper_dithering;
     bool wallpaper_set;
 } Page;
 
 typedef struct {
     char *path;
-    int quality;   // 10..100
-    int magnify;   // 50..300
+    int quality;
+    int magnify;
     bool dithering;
     bool set;
 } WallpaperCfg;
@@ -116,16 +146,22 @@ typedef struct {
     int pos_back;
     int pos_prev;
     int pos_next;
-    int base_brightness;        // 0..100
-    int sleep_dim_brightness;   // 0..100
-    int sleep_dim_timeout_sec;  // seconds, 0=disabled
-    int sleep_timeout_sec;      // seconds, 0=disabled
+    
+    int base_brightness;
+    int sleep_dim_brightness;
+    int sleep_dim_timeout_sec;
+    int sleep_timeout_sec;
+    
+    int cmd_timeout_ms;
+    
     Preset *presets;
     size_t preset_count;
     size_t preset_cap;
+    
     Page *pages;
     size_t page_count;
     size_t page_cap;
+    
     WallpaperCfg wallpaper;
 } Config;
 
@@ -140,16 +176,27 @@ typedef struct {
     char *root_dir;
 } Options;
 
-static volatile sig_atomic_t g_running = 1;
+typedef struct CmdEngine CmdEngine;
 
-// Minimum delay between successive actions (TAP) to avoid spamming back-to-back ZIP transfers.
-// Tune this quickly for testing.
+static volatile sig_atomic_t g_running = 1;
+static CmdEngine *g_cmd_engine = NULL;
+
 static int g_ulanzi_send_debounce_ms = 300;
 static int64_t g_ulanzi_last_send_end_ns = 0;
 static int64_t g_last_action_ns = 0;
 static bool g_ulanzi_device_ready = true;
 
-typedef enum { BR_NORMAL = 0, BR_DIM = 1, BR_SLEEP = 2 } BrightnessState;
+static int g_cmd_logs = 1;
+static int g_cmd_logs_verbose = 0;
+
+static int g_paging_persist_debug_log = 1;
+static int g_paging_debug_fd = -1;
+
+typedef enum { 
+    BR_NORMAL = 0,
+    BR_DIM = 1,
+    BR_SLEEP = 2
+} BrightnessState;
 
 typedef enum {
     BTN_EVT_UNKNOWN = 0,
@@ -169,35 +216,36 @@ static const char *button_event_name(ButtonEvent e) {
     }
 }
 
-// Fast parser for the 2nd token of "button N <evt>" coming from ulanzi_d200_daemon.
-// Accepts: TAP, HOLD, LONGHOLD, RELEASED.
 static ButtonEvent parse_button_event_word(const char *s) {
     if (!s || !s[0]) return BTN_EVT_UNKNOWN;
+    
     switch (s[0]) {
-        case 'T': // TAP
+        case 'T': // TAP event - Expected: "TAP"
             if (s[1] == 'A' && s[2] == 'P' && s[3] == 0) return BTN_EVT_TAP;
             return BTN_EVT_UNKNOWN;
-        case 'H': // HOLD
+            
+        case 'H': // HOLD event - Expected: "HOLD"
             if (s[1] == 'O' && s[2] == 'L' && s[3] == 'D' && s[4] == 0) return BTN_EVT_HOLD;
             return BTN_EVT_UNKNOWN;
-        case 'L': // LONGHOLD
+            
+        case 'L': // LONGHOLD event - Expected: "LONGHOLD"
             if (s[1] == 'O' && s[2] == 'N' && s[3] == 'G' && s[4] == 'H' && s[5] == 'O' && s[6] == 'L' &&
                 s[7] == 'D' && s[8] == 0)
                 return BTN_EVT_LONGHOLD;
             return BTN_EVT_UNKNOWN;
-        case 'R': // RELEASED
+            
+        case 'R': // RELEASED event - Expected: "RELEASED"
             if (s[1] == 'E' && s[2] == 'L' && s[3] == 'E' && s[4] == 'A' && s[5] == 'S' && s[6] == 'E' &&
                 s[7] == 'D' && s[8] == 0) {
                 return BTN_EVT_RELEASED;
             }
             return BTN_EVT_UNKNOWN;
+            
         default:
             return BTN_EVT_UNKNOWN;
     }
 }
-// After a page transition, drop any queued TAPs that arrived during rendering and
-// ignore any immediate follow-up TAPs for a short window to avoid triggering an
-// action on the newly-entered page (double-tap on a folder button).
+
 static int g_post_page_change_ignore_ms = 300;
 static int64_t g_ignore_taps_until_ns = 0;
 
@@ -214,9 +262,12 @@ static int64_t now_ns_monotonic(void) {
 
 static void drain_fd_nonblocking(int fd) {
     if (fd < 0) return;
+    
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0) return;
+    
     (void)fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    
     char buf[4096];
     for (;;) {
         ssize_t r = read(fd, buf, sizeof(buf));
@@ -224,13 +275,16 @@ static void drain_fd_nonblocking(int fd) {
         if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
         break;
     }
+    
     (void)fcntl(fd, F_SETFL, flags);
 }
 
 static void flush_pending_button_events(int rb_fd, size_t *inlen, size_t *parse_start) {
     if (inlen) *inlen = 0;
     if (parse_start) *parse_start = 0;
+    
     drain_fd_nonblocking(rb_fd);
+    
     if (g_post_page_change_ignore_ms > 0) {
         g_ignore_taps_until_ns = now_ns_monotonic() + (int64_t)g_post_page_change_ignore_ms * 1000000LL;
     } else {
@@ -240,22 +294,24 @@ static void flush_pending_button_events(int rb_fd, size_t *inlen, size_t *parse_
 
 static void die_errno(const char *msg) {
     fprintf(stderr, "[pg] ERROR: %s: %s\n", msg, strerror(errno));
+    if (g_paging_debug_fd >= 0) {
+        dprintf(g_paging_debug_fd, "[pg] ERROR: %s: %s\n", msg, strerror(errno));
+        fsync(g_paging_debug_fd);
+    }
     exit(1);
 }
 
 static int g_log_is_tty = -1;
 static bool g_log_status_active = false;
-// Set to 1 if you want verbose render/send logs in the console.
 static int g_paging_verbose_render_logs = 0;
-// Set to 1 if you want to see stdout/stderr from icon-generation tools (draw_*, sort, etc).
 static int g_paging_verbose_tool_logs = 0;
-// Set to 1 to print frequent status/action logs on fixed refresh lines (TTY only).
 static int g_paging_refresh_logs = 1;
 static char g_last_action_line[256] = {0};
 
 static void log_clear_status_line(void) {
     if (g_log_is_tty <= 0) return;
     if (!g_log_status_active) return;
+    
     fprintf(stderr, "\r\033[K");
     fflush(stderr);
     g_log_status_active = false;
@@ -263,66 +319,101 @@ static void log_clear_status_line(void) {
 
 static void log_msg(const char *fmt, ...) {
     log_clear_status_line();
+    
     va_list ap;
     va_start(ap, fmt);
+    
     fprintf(stderr, "[pg] ");
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
+    
     va_end(ap);
+
+    if (g_paging_debug_fd >= 0) {
+        va_list ap2;
+        va_start(ap2, fmt);
+        dprintf(g_paging_debug_fd, "[pg] ");
+        vdprintf(g_paging_debug_fd, fmt, ap2);
+        dprintf(g_paging_debug_fd, "\n");
+        va_end(ap2);
+        fsync(g_paging_debug_fd);
+    }
 }
 
 static void log_render(const char *fmt, ...) {
     if (!g_paging_verbose_render_logs) return;
+    
+    log_clear_status_line();
+    
+    va_list ap;
+    va_start(ap, fmt);
+    
+    fprintf(stderr, "[pg] ");
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\n");
+    
+    va_end(ap);
+}
+
+static void cmd_log(const char *fmt, ...) {
+    if (!g_cmd_logs) return;
     log_clear_status_line();
     va_list ap;
     va_start(ap, fmt);
-    fprintf(stderr, "[pg] ");
+    fprintf(stderr, "[pg] cmd ");
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
 }
 
-// Status-style log line (overwrites the previous status line).
-// Used for high-frequency button events to avoid spamming the console.
+static bool handle_cmd_action(const Options *opt, Config *cfg, const char *cur_page, size_t offset, size_t pressed_item,
+                              int btn, ButtonEvent evt, const Item *it, const char *action, const char *data,
+                              const char *blank_png);
+
 static void log_status(const char *fmt, ...) {
     if (!g_paging_refresh_logs || g_log_is_tty <= 0) {
         va_list ap;
         va_start(ap, fmt);
+        
         fprintf(stderr, "[pg] ");
         vfprintf(stderr, fmt, ap);
         fprintf(stderr, "\n");
+        
         va_end(ap);
         return;
     }
 
     va_list ap;
     va_start(ap, fmt);
+    
     fprintf(stderr, "\r[pg] ");
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\033[K");
+    
     va_end(ap);
     fflush(stderr);
     g_log_status_active = true;
 }
 
-// Action-style log line: printed "above" the status line (TTY only) so button events can keep refreshing below.
 static void log_action(const char *fmt, ...) {
     if (!g_paging_refresh_logs || g_log_is_tty <= 0) {
         va_list ap;
         va_start(ap, fmt);
+        
         fprintf(stderr, "[pg] ");
         vfprintf(stderr, fmt, ap);
         fprintf(stderr, "\n");
+        
         va_end(ap);
         return;
     }
 
-    // Format into a buffer so we can de-dup identical consecutive action lines.
     char line[256];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(line, sizeof(line), fmt, ap);
     va_end(ap);
+    
     if (strcmp(line, g_last_action_line) == 0) return;
     snprintf(g_last_action_line, sizeof(g_last_action_line), "%s", line);
 
@@ -332,7 +423,7 @@ static void log_action(const char *fmt, ...) {
         return;
     }
 
-    // We are currently sitting on the status line; write to the line above and restore cursor.
+    // \033[s = save cursor, \033[1A = move up one line, \r = start of line, \033[K = clear line, \033[u = restore cursor
     fprintf(stderr, "\033[s\033[1A\r[pg] %s\033[K\033[u", line);
     fflush(stderr);
 }
@@ -342,52 +433,67 @@ static int send_line_and_read_reply(const char *sock_path, const char *line, cha
 
 static int ulanzi_apply_default_label_style(const Options *opt) {
     if (!opt) return -1;
+    
     char style_json[PATH_MAX];
     snprintf(style_json, sizeof(style_json), "%s/assets/json/default.json", opt->root_dir);
+    
     if (!file_exists(style_json)) {
         log_msg("WARN: missing label style JSON: %s", style_json);
         return -1;
     }
+    
     char cmd[PATH_MAX + 64];
     snprintf(cmd, sizeof(cmd), "set-label-style %s", style_json);
+    
     char reply[64] = {0};
     int rc = send_line_and_read_reply(opt->ulanzi_sock, cmd, reply, sizeof(reply));
+    
     if (rc != 0) {
         log_msg("WARN: set-label-style failed (rc=%d, resp='%s')", rc, reply[0] ? reply : "<empty>");
         return -1;
     }
+    
     log_msg("set-label-style resp='%s'", reply[0] ? reply : "<empty>");
     return 0;
 }
 
 static char *xstrdup(const char *s) {
     if (!s) return NULL;
+    
     size_t n = strlen(s);
     char *p = malloc(n + 1);
+    
     if (!p) die_errno("malloc");
+    
     memcpy(p, s, n + 1);
     return p;
 }
 
 static void *xrealloc(void *p, size_t n) {
     void *r = realloc(p, n);
+    
     if (!r) die_errno("realloc");
+    
     return r;
 }
 
 static void trim(char *s) {
     if (!s) return;
+    
     size_t n = strlen(s);
     while (n && (s[n - 1] == '\n' || s[n - 1] == '\r' || s[n - 1] == ' ' || s[n - 1] == '\t')) {
         s[--n] = 0;
     }
+    
     size_t i = 0;
     while (s[i] == ' ' || s[i] == '\t') i++;
+    
     if (i) memmove(s, s + i, strlen(s + i) + 1);
 }
 
 static void rtrim_only(char *s) {
     if (!s) return;
+    
     size_t n = strlen(s);
     while (n && (s[n - 1] == '\n' || s[n - 1] == '\r' || s[n - 1] == ' ' || s[n - 1] == '\t')) {
         s[--n] = 0;
@@ -397,6 +503,7 @@ static void rtrim_only(char *s) {
 static uint32_t fnv1a32(const void *data, size_t len) {
     const uint8_t *p = (const uint8_t *)data;
     uint32_t h = 2166136261u;
+    
     for (size_t i = 0; i < len; i++) {
         h ^= p[i];
         h *= 16777619u;
@@ -406,19 +513,23 @@ static uint32_t fnv1a32(const void *data, size_t len) {
 
 static void ensure_dir(const char *path) {
     struct stat st;
+    
     if (stat(path, &st) == 0) {
         if (S_ISDIR(st.st_mode)) return;
         errno = ENOTDIR;
         die_errno("ensure_dir");
     }
+    
     if (mkdir(path, 0775) != 0 && errno != EEXIST) die_errno("mkdir");
 }
 
 static int try_ensure_dir(const char *path) {
     struct stat st;
+    
     if (stat(path, &st) == 0) {
         return S_ISDIR(st.st_mode) ? 0 : -1;
     }
+    
     if (mkdir(path, 0775) != 0 && errno != EEXIST) return -1;
     return 0;
 }
@@ -426,10 +537,13 @@ static int try_ensure_dir(const char *path) {
 static int try_ensure_dir_parent(const char *path) {
     char tmp[PATH_MAX];
     snprintf(tmp, sizeof(tmp), "%s", path);
+    
     for (size_t i = 1; tmp[i]; i++) {
         if (tmp[i] == '/') {
             tmp[i] = 0;
+            
             if (try_ensure_dir(tmp) != 0) return -1;
+            
             tmp[i] = '/';
         }
     }
@@ -439,10 +553,13 @@ static int try_ensure_dir_parent(const char *path) {
 static void ensure_dir_parent(const char *path) {
     char tmp[PATH_MAX];
     snprintf(tmp, sizeof(tmp), "%s", path);
+    
     for (size_t i = 1; tmp[i]; i++) {
         if (tmp[i] == '/') {
             tmp[i] = 0;
+            
             ensure_dir(tmp);
+            
             tmp[i] = '/';
         }
     }
@@ -454,28 +571,35 @@ static int is_abs_path(const char *p) {
 
 static char *resolve_path(const char *root_dir, const char *p) {
     if (!p) return xstrdup("");
+    
     if (is_abs_path(p)) return xstrdup(p);
+    
     char out[PATH_MAX];
     snprintf(out, sizeof(out), "%s/%s", root_dir ? root_dir : ".", p);
+    
     return xstrdup(out);
 }
 
 static int file_exists(const char *path) {
     struct stat st;
+    
     return stat(path, &st) == 0 && S_ISREG(st.st_mode);
 }
 
 static int unix_connect(const char *sock_path) {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) return -1;
+    
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", sock_path);
+    
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         close(fd);
         return -1;
     }
+    
     return fd;
 }
 
@@ -487,18 +611,22 @@ static int make_unix_listen_socket(const char *sock_path) {
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", sock_path);
+    
     unlink(sock_path);
 
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         close(fd);
         return -1;
     }
+    
     if (listen(fd, 16) != 0) {
         close(fd);
         return -1;
     }
+    
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags >= 0) (void)fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    
     return fd;
 }
 
@@ -508,9 +636,8 @@ static int send_line_and_read_reply(const char *sock_path, const char *line, cha
         int64_t now = now_ns_monotonic();
         int64_t min_gap = (int64_t)ms * 1000000LL;
         int64_t elapsed = now - g_ulanzi_last_send_end_ns;
+        
         if (elapsed < min_gap) {
-            // Rate-limit writes to the device: wait a tiny bit so the previous ZIP can be processed.
-            // Action spam is handled separately by the input-side debounce (we drop events there).
             int64_t rem = min_gap - elapsed;
             struct timespec ts;
             ts.tv_sec = (time_t)(rem / 1000000000LL);
@@ -524,55 +651,67 @@ static int send_line_and_read_reply(const char *sock_path, const char *line, cha
         g_ulanzi_device_ready = false;
         return -1;
     }
+    
     size_t n = strlen(line);
     if (write(fd, line, n) != (ssize_t)n) {
         close(fd);
         g_ulanzi_device_ready = false;
         return -1;
     }
+    
     if (n == 0 || line[n - 1] != '\n') (void)write(fd, "\n", 1);
+    
     ssize_t r = read(fd, reply, reply_cap - 1);
     if (r <= 0) {
         close(fd);
         g_ulanzi_device_ready = false;
         return -1;
     }
+    
     reply[(size_t)r] = 0;
     trim(reply);
     close(fd);
+    
     g_ulanzi_last_send_end_ns = now_ns_monotonic();
+    
     if (reply[0] == 0) return -1;
+    
     if (strncmp(reply, "ok", 2) == 0) {
         g_ulanzi_device_ready = true;
         return 0;
     }
+    
     if (strcmp(reply, "err no_device") == 0) {
         g_ulanzi_device_ready = false;
         return -2;
     }
-    // Any other response is treated as an error (caller may log it).
+    
     return -1;
 }
 
 static int write_blank_png(const char *path, int w, int h) {
     FILE *fp = fopen(path, "wb");
     if (!fp) return -1;
+    
     png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
     if (!png) {
         fclose(fp);
         return -1;
     }
+    
     png_infop info = png_create_info_struct(png);
     if (!info) {
         png_destroy_write_struct(&png, NULL);
         fclose(fp);
         return -1;
     }
+    
     if (setjmp(png_jmpbuf(png))) {
         png_destroy_write_struct(&png, &info);
         fclose(fp);
         return -1;
     }
+    
     png_init_io(png, fp);
     png_set_IHDR(png, info, w, h, 8, PNG_COLOR_TYPE_RGBA, PNG_INTERLACE_NONE,
                  PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
@@ -585,6 +724,7 @@ static int write_blank_png(const char *path, int w, int h) {
         fclose(fp);
         return -1;
     }
+    
     size_t rowbytes = (size_t)w * 4;
     uint8_t *buf = calloc((size_t)h, rowbytes);
     if (!buf) {
@@ -593,19 +733,24 @@ static int write_blank_png(const char *path, int w, int h) {
         fclose(fp);
         return -1;
     }
+    
     for (int y = 0; y < h; y++) rows[y] = (png_bytep)(buf + (size_t)y * rowbytes);
+    
     png_set_rows(png, info, rows);
     png_write_png(png, info, PNG_TRANSFORM_IDENTITY, NULL);
+    
     free(buf);
     free(rows);
     png_destroy_write_struct(&png, &info);
     fclose(fp);
+    
     return 0;
 }
 
 static int png_read_wh(const char *path, int *out_w, int *out_h) {
     if (out_w) *out_w = 0;
     if (out_h) *out_h = 0;
+    
     if (!path || !out_w || !out_h) return -1;
 
     FILE *fp = fopen(path, "rb");
@@ -626,12 +771,14 @@ static int png_read_wh(const char *path, int *out_w, int *out_h) {
         fclose(fp);
         return -1;
     }
+    
     png_infop info = png_create_info_struct(png);
     if (!info) {
         png_destroy_read_struct(&png, NULL, NULL);
         fclose(fp);
         return -1;
     }
+    
     if (setjmp(png_jmpbuf(png))) {
         png_destroy_read_struct(&png, &info, NULL);
         fclose(fp);
@@ -641,20 +788,24 @@ static int png_read_wh(const char *path, int *out_w, int *out_h) {
     png_init_io(png, fp);
     png_set_sig_bytes(png, 8);
     png_read_info(png, info);
+    
     png_uint_32 w = 0, h = 0;
     int bit_depth = 0, color_type = 0, interlace = 0, compression = 0, filter = 0;
     png_get_IHDR(png, info, &w, &h, &bit_depth, &color_type, &interlace, &compression, &filter);
+    
     png_destroy_read_struct(&png, &info, NULL);
     fclose(fp);
 
     *out_w = (int)w;
     *out_h = (int)h;
+    
     return (w > 0 && h > 0) ? 0 : -1;
 }
 
 static int run_exec(char *const argv[]) {
     pid_t pid = fork();
     if (pid < 0) return -1;
+    
     if (pid == 0) {
         if (!g_paging_verbose_tool_logs) {
             int dn = open("/dev/null", O_WRONLY);
@@ -664,29 +815,290 @@ static int run_exec(char *const argv[]) {
                 if (dn > STDERR_FILENO) close(dn);
             }
         }
+        
         execvp(argv[0], argv);
         _exit(127);
     }
+    
     int st = 0;
     if (waitpid(pid, &st, 0) < 0) return -1;
+    
     if (WIFEXITED(st)) return WEXITSTATUS(st);
+    
+    return 128;
+}
+
+static void str_trim_inplace(char *s) {
+    if (!s) return;
+    trim(s);
+}
+
+static int run_shell_capture_text(const char *cmd, int timeout_ms, char *out, size_t out_cap,
+                                  const CmdTextOpts *opts, bool is_state_cmd) {
+    if (!out || out_cap == 0) return -1;
+    out[0] = 0;
+    
+    if (!cmd || !cmd[0]) return -1;
+    
+    if (timeout_ms <= 0) timeout_ms = 3000;
+
+    int outp[2] = {-1, -1};
+    int errp[2] = {-1, -1};
+    
+    if (pipe(outp) != 0) return -1;
+    if (pipe(errp) != 0) {
+        close(outp[0]);
+        close(outp[1]);
+        return -1;
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(outp[0]);
+        close(outp[1]);
+        close(errp[0]);
+        close(errp[1]);
+        return -1;
+    }
+    
+    if (pid == 0) {
+        (void)dup2(outp[1], STDOUT_FILENO);
+        (void)dup2(errp[1], STDERR_FILENO);
+        close(outp[0]);
+        close(outp[1]);
+        close(errp[0]);
+        close(errp[1]);
+        
+        execl("/bin/sh", "sh", "-lc", cmd, (char *)NULL);
+        _exit(127);
+    }
+
+    close(outp[1]);
+    close(errp[1]);
+    
+    (void)fcntl(outp[0], F_SETFL, fcntl(outp[0], F_GETFL, 0) | O_NONBLOCK);
+    (void)fcntl(errp[0], F_SETFL, fcntl(errp[0], F_GETFL, 0) | O_NONBLOCK);
+
+    char obuf[4096] = {0};
+    char ebuf[4096] = {0};
+    size_t olen = 0;
+    size_t elen = 0;
+
+    int64_t start_ns = now_ns_monotonic();
+    bool out_open = true;
+    bool err_open = true;
+    bool timed_out = false;
+
+    while (out_open || err_open) {
+        int64_t now_ns = now_ns_monotonic();
+        int64_t elapsed_ms = (now_ns - start_ns) / 1000000LL;
+        
+        if (elapsed_ms >= timeout_ms) {
+            timed_out = true;
+            break;
+        }
+        
+        int wait_ms = timeout_ms - (int)elapsed_ms;
+        if (wait_ms > 100) wait_ms = 100;
+        if (wait_ms < 1) wait_ms = 1;
+
+        struct pollfd fds[2];
+        nfds_t nfds = 0;
+        
+        if (out_open) {
+            fds[nfds].fd = outp[0];
+            fds[nfds].events = POLLIN | POLLHUP | POLLERR;
+            nfds++;
+        }
+        
+        if (err_open) {
+            fds[nfds].fd = errp[0];
+            fds[nfds].events = POLLIN | POLLHUP | POLLERR;
+            nfds++;
+        }
+        
+        int pr = poll(fds, nfds, wait_ms);
+        
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        
+        if (pr == 0) continue;
+
+        for (nfds_t i = 0; i < nfds; i++) {
+            if (!(fds[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+            
+            int fd = fds[i].fd;
+            bool saw_hup = (fds[i].revents & (POLLHUP | POLLERR)) != 0;
+            
+            for (;;) {
+                char tmp[512];
+                ssize_t n = read(fd, tmp, sizeof(tmp));
+                
+                if (n < 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+                    n = 0;
+                }
+                
+                if (n == 0) {
+                    if (fd == outp[0]) out_open = false;
+                    if (fd == errp[0]) err_open = false;
+                    break;
+                }
+                
+                if (fd == outp[0]) {
+                    size_t copy = (size_t)n;
+                    
+                    if (olen + copy >= sizeof(obuf)) copy = (sizeof(obuf) - 1) - olen;
+                    
+                    if (copy > 0) {
+                        memcpy(obuf + olen, tmp, copy);
+                        olen += copy;
+                        obuf[olen] = 0;
+                    }
+                } else {
+                    size_t copy = (size_t)n;
+                    
+                    if (elen + copy >= sizeof(ebuf)) copy = (sizeof(ebuf) - 1) - elen;
+                    
+                    if (copy > 0) {
+                        memcpy(ebuf + elen, tmp, copy);
+                        elen += copy;
+                        ebuf[elen] = 0;
+                    }
+                }
+                
+                if ((fd == outp[0] && olen >= sizeof(obuf) - 1) || (fd == errp[0] && elen >= sizeof(ebuf) - 1)) {
+                    break;
+                }
+            }
+
+            // Some commands may exit quickly without producing further POLLIN events; POLLHUP indicates EOF.
+            // If we saw HUP/ERR but didn't observe EOF in the read loop (e.g. because there was no POLLIN),
+            // mark the stream closed to avoid timing out.
+            if (saw_hup) {
+                if (fd == outp[0]) out_open = false;
+                if (fd == errp[0]) err_open = false;
+            }
+        }
+    }
+
+    int st = 0;
+    
+    if (timed_out) {
+        (void)kill(pid, SIGKILL);
+        (void)waitpid(pid, &st, 0);
+    } else {
+        (void)waitpid(pid, &st, 0);
+    }
+
+    close(outp[0]);
+    close(errp[0]);
+
+    bool ok = !timed_out && WIFEXITED(st) && WEXITSTATUS(st) == 0;
+    
+    if (!ok) {
+        if (is_state_cmd) {
+            snprintf(out, out_cap, "%s", "err");
+        } else {
+            snprintf(out, out_cap, "%s", "ERR");
+        }
+        if (timed_out) return -2;
+        if (WIFEXITED(st)) return WEXITSTATUS(st); // non-zero
+        if (WIFSIGNALED(st)) return 128 + WTERMSIG(st);
+        return -4;
+    }
+
+    const char *picked = (obuf[0] != 0) ? obuf : ebuf;
+    
+    char tmp[4096];
+    snprintf(tmp, sizeof(tmp), "%s", picked ? picked : "");
+    
+    if (opts && opts->trim) str_trim_inplace(tmp);
+    
+    if (opts && opts->max_len > 0) {
+        int ml = opts->max_len;
+        if (ml < 1) ml = 1;
+        int hi = (int)sizeof(tmp) - 1;
+        if (ml > hi) ml = hi;
+        tmp[ml] = 0;
+    }
+    
+    snprintf(out, out_cap, "%s", tmp);
+    return 0;
+}
+
+static int run_shell_nocapture(const char *cmd, int timeout_ms) {
+    if (!cmd || !cmd[0]) return -1;
+    
+    if (timeout_ms <= 0) timeout_ms = 3000;
+    
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    
+    if (pid == 0) {
+        int dn = open("/dev/null", O_WRONLY);
+        if (dn >= 0) {
+            (void)dup2(dn, STDOUT_FILENO);
+            (void)dup2(dn, STDERR_FILENO);
+            if (dn > STDERR_FILENO) close(dn);
+        }
+        
+        execl("/bin/sh", "sh", "-lc", cmd, (char *)NULL);
+        _exit(127);
+    }
+    
+    int st = 0;
+    int64_t start_ns = now_ns_monotonic();
+    
+    for (;;) {
+        pid_t r = waitpid(pid, &st, WNOHANG);
+        
+        if (r == pid) break;
+        
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        
+        int64_t elapsed_ms = (now_ns_monotonic() - start_ns) / 1000000LL;
+        
+        if (elapsed_ms >= timeout_ms) {
+            (void)kill(pid, SIGKILL);
+            (void)waitpid(pid, &st, 0);
+            return -1;
+        }
+        
+        struct timespec ts = {.tv_sec = 0, .tv_nsec = 50 * 1000000L};
+        nanosleep(&ts, NULL);
+    }
+    
+    if (WIFEXITED(st)) return WEXITSTATUS(st);
+    
     return 128;
 }
 
 static yaml_node_t *yaml_mapping_get(yaml_document_t *doc, yaml_node_t *map, const char *key) {
     if (!doc || !map || map->type != YAML_MAPPING_NODE || !key) return NULL;
+    
     for (yaml_node_pair_t *p = map->data.mapping.pairs.start; p < map->data.mapping.pairs.top; p++) {
         yaml_node_t *k = yaml_document_get_node(doc, p->key);
         yaml_node_t *v = yaml_document_get_node(doc, p->value);
+        
         if (!k || k->type != YAML_SCALAR_NODE) continue;
+        
         const char *ks = (const char *)k->data.scalar.value;
+        
         if (ks && strcmp(ks, key) == 0) return v;
     }
+    
     return NULL;
 }
 
 static const char *yaml_scalar_cstr(yaml_node_t *n) {
     if (!n || n->type != YAML_SCALAR_NODE) return NULL;
+    
     return (const char *)n->data.scalar.value;
 }
 
@@ -694,35 +1106,92 @@ static int clamp_int(int v, int lo, int hi);
 
 static int parse_int_scalar(const char *s, int *out) {
     if (!s || !out) return -1;
+    
     char *end = NULL;
     long v = strtol(s, &end, 10);
+    
     if (end == s) return -1;
+    
     *out = (int)v;
     return 0;
 }
 
 static int parse_offset_scalar(const char *s, int *x, int *y) {
     if (!s || !x || !y) return -1;
+    
     int a = 0, b = 0;
+    
     if (sscanf(s, "%d,%d", &a, &b) == 2) {
         *x = a;
         *y = b;
         return 0;
     }
+    
     return -1;
 }
 
 static int parse_bool_scalar(const char *s, bool *out) {
     if (!s || !out) return -1;
-    if (strcasecmp(s, "1") == 0 || strcasecmp(s, "true") == 0 || strcasecmp(s, "yes") == 0 || strcasecmp(s, "on") == 0) {
+    
+    if (strcasecmp(s, "1") == 0 || strcasecmp(s, "true") == 0 || 
+        strcasecmp(s, "yes") == 0 || strcasecmp(s, "on") == 0) {
         *out = true;
         return 0;
     }
-    if (strcasecmp(s, "0") == 0 || strcasecmp(s, "false") == 0 || strcasecmp(s, "no") == 0 || strcasecmp(s, "off") == 0) {
+    
+    if (strcasecmp(s, "0") == 0 || strcasecmp(s, "false") == 0 || 
+        strcasecmp(s, "no") == 0 || strcasecmp(s, "off") == 0) {
         *out = false;
         return 0;
     }
+    
     return -1;
+}
+
+static CmdTextOpts cmd_text_opts_defaults(void) {
+    CmdTextOpts o;
+    o.trim = true;
+    o.max_len = 32;
+    return o;
+}
+
+static void parse_cmd_text_data_node(yaml_document_t *doc, yaml_node_t *node, char **out_cmd, CmdTextOpts *opts) {
+    (void)doc;
+    
+    if (out_cmd) *out_cmd = NULL;
+    if (opts) *opts = cmd_text_opts_defaults();
+    
+    if (!node) return;
+
+    const char *s = yaml_scalar_cstr(node);
+    
+    if (s) {
+        if (out_cmd && s[0]) *out_cmd = xstrdup(s);
+        return;
+    }
+
+    if (node->type != YAML_MAPPING_NODE) return;
+
+    yaml_node_t *cn = yaml_mapping_get(doc, node, "cmd");
+    if (out_cmd && yaml_scalar_cstr(cn) && yaml_scalar_cstr(cn)[0]) {
+        *out_cmd = xstrdup(yaml_scalar_cstr(cn));
+    }
+
+    if (!opts) return;
+    
+    yaml_node_t *tn = yaml_mapping_get(doc, node, "trim");
+    if (yaml_scalar_cstr(tn)) {
+        bool bv = true;
+        if (parse_bool_scalar(yaml_scalar_cstr(tn), &bv) == 0) opts->trim = bv;
+    }
+    
+    yaml_node_t *mn = yaml_mapping_get(doc, node, "max_len");
+    if (yaml_scalar_cstr(mn)) {
+        int v = 0;
+        if (parse_int_scalar(yaml_scalar_cstr(mn), &v) == 0) {
+            opts->max_len = clamp_int(v, 1, 256);
+        }
+    }
 }
 
 static void wallpaper_apply_defaults(WallpaperCfg *w) {
@@ -836,6 +1305,7 @@ static void config_init_defaults(Config *cfg) {
     cfg->sleep_dim_brightness = 20;
     cfg->sleep_dim_timeout_sec = 0;
     cfg->sleep_timeout_sec = 0;
+    cfg->cmd_timeout_ms = 3000;
     cfg->wallpaper.path = NULL;
     cfg->wallpaper.quality = 30;
     cfg->wallpaper.magnify = 100;
@@ -925,6 +1395,9 @@ static void config_free(Config *cfg) {
             free(p->items[j].released_action);
             free(p->items[j].released_data);
             free(p->items[j].entity_id);
+            free(p->items[j].poll_action);
+            free(p->items[j].poll_cmd);
+            free(p->items[j].state_cmd);
             for (size_t k = 0; k < p->items[j].state_count; k++) {
                 free(p->items[j].states[k].key);
                 free(p->items[j].states[k].name);
@@ -997,6 +1470,14 @@ static int load_config(const char *path, Config *out) {
             n = yaml_mapping_get(&doc, sn, "sleep_timeout");
             if (yaml_scalar_cstr(n) && parse_int_scalar(yaml_scalar_cstr(n), &v) == 0) cfg.sleep_timeout_sec = (v < 0) ? 0 : v;
         }
+    }
+
+    // cmd_timeout_ms (root scalar)
+    {
+        yaml_node_t *cn = yaml_mapping_get(&doc, root, "cmd_timeout_ms");
+        const char *cs = yaml_scalar_cstr(cn);
+        int v = 0;
+        if (cs && parse_int_scalar(cs, &v) == 0) cfg.cmd_timeout_ms = (v < 0) ? 0 : v;
     }
 
     // wallpaper (global): string path or mapping { path, quality, magnify, dithering }
@@ -1110,6 +1591,11 @@ static int load_config(const char *path, Config *out) {
 
                 Item out_item;
                 memset(&out_item, 0, sizeof(out_item));
+                out_item.tap_cmd_text = cmd_text_opts_defaults();
+                out_item.hold_cmd_text = cmd_text_opts_defaults();
+                out_item.longhold_cmd_text = cmd_text_opts_defaults();
+                out_item.released_cmd_text = cmd_text_opts_defaults();
+                out_item.poll_cmd_text = cmd_text_opts_defaults();
 
                 yaml_node_t *n;
                 n = yaml_mapping_get(&doc, item, "name");
@@ -1139,8 +1625,17 @@ static int load_config(const char *path, Config *out) {
                 if (n && n->type == YAML_MAPPING_NODE) {
                     yaml_node_t *a = yaml_mapping_get(&doc, n, "action");
                     yaml_node_t *d = yaml_mapping_get(&doc, n, "data");
-                    if (yaml_scalar_cstr(a)) out_item.tap_action = xstrdup(yaml_scalar_cstr(a));
-                    if (yaml_scalar_cstr(d)) out_item.tap_data = xstrdup(yaml_scalar_cstr(d));
+                    const char *as = yaml_scalar_cstr(a);
+                    if (as && as[0]) out_item.tap_action = xstrdup(as);
+                    if (as && strncmp(as, "$cmd.", 5) == 0) {
+                        char *cmd = NULL;
+                        CmdTextOpts o;
+                        parse_cmd_text_data_node(&doc, d, &cmd, &o);
+                        if (cmd) out_item.tap_data = cmd;
+                        out_item.tap_cmd_text = o;
+                    } else {
+                        if (yaml_scalar_cstr(d)) out_item.tap_data = xstrdup(yaml_scalar_cstr(d));
+                    }
                 }
 
                 // hold_action: { action: "...", data: "..." }
@@ -1148,8 +1643,17 @@ static int load_config(const char *path, Config *out) {
                 if (n && n->type == YAML_MAPPING_NODE) {
                     yaml_node_t *a = yaml_mapping_get(&doc, n, "action");
                     yaml_node_t *d = yaml_mapping_get(&doc, n, "data");
-                    if (yaml_scalar_cstr(a)) out_item.hold_action = xstrdup(yaml_scalar_cstr(a));
-                    if (yaml_scalar_cstr(d)) out_item.hold_data = xstrdup(yaml_scalar_cstr(d));
+                    const char *as = yaml_scalar_cstr(a);
+                    if (as && as[0]) out_item.hold_action = xstrdup(as);
+                    if (as && strncmp(as, "$cmd.", 5) == 0) {
+                        char *cmd = NULL;
+                        CmdTextOpts o;
+                        parse_cmd_text_data_node(&doc, d, &cmd, &o);
+                        if (cmd) out_item.hold_data = cmd;
+                        out_item.hold_cmd_text = o;
+                    } else {
+                        if (yaml_scalar_cstr(d)) out_item.hold_data = xstrdup(yaml_scalar_cstr(d));
+                    }
                 }
 
                 // longhold_action: { action: "...", data: "..." }
@@ -1157,8 +1661,17 @@ static int load_config(const char *path, Config *out) {
                 if (n && n->type == YAML_MAPPING_NODE) {
                     yaml_node_t *a = yaml_mapping_get(&doc, n, "action");
                     yaml_node_t *d = yaml_mapping_get(&doc, n, "data");
-                    if (yaml_scalar_cstr(a)) out_item.longhold_action = xstrdup(yaml_scalar_cstr(a));
-                    if (yaml_scalar_cstr(d)) out_item.longhold_data = xstrdup(yaml_scalar_cstr(d));
+                    const char *as = yaml_scalar_cstr(a);
+                    if (as && as[0]) out_item.longhold_action = xstrdup(as);
+                    if (as && strncmp(as, "$cmd.", 5) == 0) {
+                        char *cmd = NULL;
+                        CmdTextOpts o;
+                        parse_cmd_text_data_node(&doc, d, &cmd, &o);
+                        if (cmd) out_item.longhold_data = cmd;
+                        out_item.longhold_cmd_text = o;
+                    } else {
+                        if (yaml_scalar_cstr(d)) out_item.longhold_data = xstrdup(yaml_scalar_cstr(d));
+                    }
                 }
 
                 // released_action: { action: "...", data: "..." } (triggered on Ulanzi RELEASED)
@@ -1166,8 +1679,53 @@ static int load_config(const char *path, Config *out) {
                 if (n && n->type == YAML_MAPPING_NODE) {
                     yaml_node_t *a = yaml_mapping_get(&doc, n, "action");
                     yaml_node_t *d = yaml_mapping_get(&doc, n, "data");
-                    if (yaml_scalar_cstr(a)) out_item.released_action = xstrdup(yaml_scalar_cstr(a));
-                    if (yaml_scalar_cstr(d)) out_item.released_data = xstrdup(yaml_scalar_cstr(d));
+                    const char *as = yaml_scalar_cstr(a);
+                    if (as && as[0]) out_item.released_action = xstrdup(as);
+                    if (as && strncmp(as, "$cmd.", 5) == 0) {
+                        char *cmd = NULL;
+                        CmdTextOpts o;
+                        parse_cmd_text_data_node(&doc, d, &cmd, &o);
+                        if (cmd) out_item.released_data = cmd;
+                        out_item.released_cmd_text = o;
+                    } else {
+                        if (yaml_scalar_cstr(d)) out_item.released_data = xstrdup(yaml_scalar_cstr(d));
+                    }
+                }
+
+                // poll: { every_ms, action: { action, data: { cmd, trim, max_len } } }
+                n = yaml_mapping_get(&doc, item, "poll");
+                if (n && n->type == YAML_MAPPING_NODE) {
+                    yaml_node_t *en = yaml_mapping_get(&doc, n, "every_ms");
+                    int v = 0;
+                    if (yaml_scalar_cstr(en) && parse_int_scalar(yaml_scalar_cstr(en), &v) == 0) out_item.poll_every_ms = (v < 0) ? 0 : v;
+
+                    yaml_node_t *an = yaml_mapping_get(&doc, n, "action");
+                    if (an && an->type == YAML_MAPPING_NODE) {
+                        yaml_node_t *a = yaml_mapping_get(&doc, an, "action");
+                        yaml_node_t *d = yaml_mapping_get(&doc, an, "data");
+                        const char *as = yaml_scalar_cstr(a);
+                        if (as && as[0]) out_item.poll_action = xstrdup(as);
+                        if (as && strncmp(as, "$cmd.", 5) == 0) {
+                            char *cmd = NULL;
+                            CmdTextOpts o;
+                            parse_cmd_text_data_node(&doc, d, &cmd, &o);
+                            if (cmd) out_item.poll_cmd = cmd;
+                            out_item.poll_cmd_text = o;
+                        } else if (yaml_scalar_cstr(d)) {
+                            // allow scalar (cmd string) for convenience
+                            out_item.poll_cmd = xstrdup(yaml_scalar_cstr(d));
+                        }
+                    }
+                }
+
+                // state_cmd: { cmd, every_ms }
+                n = yaml_mapping_get(&doc, item, "state_cmd");
+                if (n && n->type == YAML_MAPPING_NODE) {
+                    yaml_node_t *cn = yaml_mapping_get(&doc, n, "cmd");
+                    if (yaml_scalar_cstr(cn) && yaml_scalar_cstr(cn)[0]) out_item.state_cmd = xstrdup(yaml_scalar_cstr(cn));
+                    yaml_node_t *en = yaml_mapping_get(&doc, n, "every_ms");
+                    int v = 0;
+                    if (yaml_scalar_cstr(en) && parse_int_scalar(yaml_scalar_cstr(en), &v) == 0) out_item.state_every_ms = (v < 0) ? 0 : v;
                 }
 
                 // states: { "on": { name, presets, icon, text }, ... }
@@ -1594,6 +2152,100 @@ typedef struct {
     size_t cap;
 } HaStateMap;
 
+typedef struct {
+    char page[256];
+    size_t item_index;
+
+    // Configured behavior (from YAML). These do NOT auto-start: they must be enabled via $cmd.poll_start.
+    int cfg_poll_every_ms;
+    const char *cfg_poll_cmd;
+    bool cfg_poll_is_text;
+    CmdTextOpts cfg_poll_opts;
+
+    int cfg_state_every_ms;
+    const char *cfg_state_cmd;
+
+    // Active behavior (runtime). Enabled/disabled via actions.
+    int poll_every_ms;
+    const char *poll_cmd;
+    bool poll_is_text;
+    CmdTextOpts poll_opts;
+
+    int state_every_ms;
+    const char *state_cmd;
+
+    pthread_mutex_t mu;
+    bool poll_running;
+    bool state_running;
+    int64_t next_poll_ns;
+    int64_t next_state_ns;
+
+    uint32_t poll_gen;
+    uint32_t state_gen;
+
+    char last_text[256];
+    char last_state[64];
+
+    // What we've already pushed to the device (current session).
+    char last_sent_text[256];
+    char last_sent_state[64];
+} CmdEntry;
+
+struct CmdEngine {
+    // IMPORTANT: CmdEntry contains a pthread_mutex_t, which must not be moved in memory.
+    // So we store pointers and allocate each entry independently.
+    CmdEntry **items;
+    size_t len;
+    size_t cap;
+    int timeout_ms;
+    int notify_r;
+    int notify_w;
+    pthread_t th;
+    bool th_started;
+    pthread_mutex_t mu;
+    bool stop;
+};
+
+static void cmd_engine_notify(const CmdEngine *e);
+
+static void cmd_state_on_enter_page(CmdEngine *e, const char *page) {
+    if (!e || !page || !page[0]) return;
+    pthread_mutex_lock(&e->mu);
+    for (size_t i = 0; i < e->len; i++) {
+        CmdEntry *ce = e->items ? e->items[i] : NULL;
+        if (!ce) continue;
+        if (strcmp(ce->page, page) != 0) continue;
+        if (ce->cfg_state_every_ms <= 0 || !ce->cfg_state_cmd || !ce->cfg_state_cmd[0]) continue;
+        pthread_mutex_lock(&ce->mu);
+        ce->state_gen++;
+        ce->state_every_ms = ce->cfg_state_every_ms;
+        ce->state_cmd = ce->cfg_state_cmd;
+        ce->next_state_ns = 0;
+        pthread_mutex_unlock(&ce->mu);
+    }
+    pthread_mutex_unlock(&e->mu);
+    cmd_engine_notify(e);
+}
+
+static void cmd_state_on_leave_page(CmdEngine *e, const char *page) {
+    if (!e || !page || !page[0]) return;
+    pthread_mutex_lock(&e->mu);
+    for (size_t i = 0; i < e->len; i++) {
+        CmdEntry *ce = e->items ? e->items[i] : NULL;
+        if (!ce) continue;
+        if (strcmp(ce->page, page) != 0) continue;
+        pthread_mutex_lock(&ce->mu);
+        ce->state_gen++;
+        ce->state_every_ms = 0;
+        ce->state_cmd = NULL;
+        ce->state_running = false;
+        ce->next_state_ns = 0;
+        pthread_mutex_unlock(&ce->mu);
+    }
+    pthread_mutex_unlock(&e->mu);
+    cmd_engine_notify(e);
+}
+
 static void ha_state_map_free(HaStateMap *m) {
     if (!m) return;
     for (size_t i = 0; i < m->len; i++) {
@@ -1620,6 +2272,463 @@ static HaEntityState *ha_state_get_mut(HaStateMap *m, const char *entity_id) {
     e->state = NULL;
     e->unit = NULL;
     return e;
+}
+
+static void cmd_engine_notify(const CmdEngine *e) {
+    if (!e || e->notify_w < 0) return;
+    (void)write(e->notify_w, "u", 1);
+}
+
+static CmdEntry *cmd_engine_find(CmdEngine *e, const char *page, size_t item_index) {
+    if (!e || !page || !page[0]) return NULL;
+    CmdEntry *found = NULL;
+    pthread_mutex_lock(&e->mu);
+    for (size_t i = 0; i < e->len; i++) {
+        CmdEntry *ce = e->items ? e->items[i] : NULL;
+        if (!ce) continue;
+        if (ce->item_index == item_index && strcmp(ce->page, page) == 0) {
+            found = ce;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&e->mu);
+    return found;
+}
+
+static CmdEntry *cmd_engine_get_or_add(CmdEngine *e, const char *page, size_t item_index) {
+    if (!e || !page || !page[0]) return NULL;
+    pthread_mutex_lock(&e->mu);
+    for (size_t i = 0; i < e->len; i++) {
+        CmdEntry *ce = e->items ? e->items[i] : NULL;
+        if (!ce) continue;
+        if (ce->item_index == item_index && strcmp(ce->page, page) == 0) {
+            pthread_mutex_unlock(&e->mu);
+            return ce;
+        }
+    }
+    if (e->len >= e->cap) {
+        e->cap = e->cap ? e->cap * 2 : 64;
+        e->items = xrealloc(e->items, e->cap * sizeof(CmdEntry *));
+    }
+    CmdEntry *ce = calloc(1, sizeof(*ce));
+    if (!ce) die_errno("calloc");
+    snprintf(ce->page, sizeof(ce->page), "%s", page);
+    ce->item_index = item_index;
+    ce->poll_opts = cmd_text_opts_defaults();
+    ce->cfg_poll_opts = cmd_text_opts_defaults();
+    ce->poll_gen = 1;
+    ce->state_gen = 1;
+    (void)pthread_mutex_init(&ce->mu, NULL);
+    e->items[e->len++] = ce;
+    pthread_mutex_unlock(&e->mu);
+    return ce;
+}
+
+typedef struct {
+    CmdEngine *engine;
+    CmdEntry *entry;
+    bool is_poll;
+    bool is_state;
+    char *cmd;
+    CmdTextOpts opts;
+    uint32_t gen;
+} CmdRunArgs;
+
+static void *cmd_run_thread(void *arg) {
+    CmdRunArgs *a = (CmdRunArgs *)arg;
+    if (!a || !a->engine || !a->entry || !a->cmd) {
+        free(a ? a->cmd : NULL);
+        free(a);
+        return NULL;
+    }
+
+    char out[256] = {0};
+    int rc = run_shell_capture_text(a->cmd, a->engine->timeout_ms, out, sizeof(out), &a->opts, a->is_state);
+    // rc==0 => ok; rc==-2 => timeout; rc>0 => command exit status; rc<0 => internal/other failure.
+
+    pthread_mutex_lock(&a->entry->mu);
+    if (a->is_state) {
+        bool accept = (a->gen == a->entry->state_gen) && (a->entry->state_every_ms > 0);
+        if (accept) {
+            snprintf(a->entry->last_state, sizeof(a->entry->last_state), "%s", out);
+        }
+        a->entry->state_running = false;
+        pthread_mutex_unlock(&a->entry->mu);
+        if (g_cmd_logs && accept) {
+            bool is_err = (strncmp(out, "ERR", 3) == 0) || (strncmp(out, "err", 3) == 0);
+            if (is_err) {
+                if (g_cmd_logs_verbose) {
+                    if (rc == -2) cmd_log("state err page=%s btn=%zu rc=timeout", a->entry->page, a->entry->item_index + 1);
+                    else cmd_log("state err page=%s btn=%zu rc=%d", a->entry->page, a->entry->item_index + 1, rc);
+                } else {
+                    cmd_log("state err page=%s btn=%zu", a->entry->page, a->entry->item_index + 1);
+                }
+            } else if (g_cmd_logs_verbose) {
+                cmd_log("state ok page=%s btn=%zu state='%s'", a->entry->page, a->entry->item_index + 1, out);
+            }
+        }
+        if (accept) cmd_engine_notify(a->engine);
+        free(a->cmd);
+        free(a);
+        return NULL;
+    }
+    bool accept = (a->gen == a->entry->poll_gen) && (a->entry->poll_every_ms > 0);
+    if (accept) {
+        snprintf(a->entry->last_text, sizeof(a->entry->last_text), "%s", out);
+    }
+    a->entry->poll_running = false;
+    pthread_mutex_unlock(&a->entry->mu);
+
+    if (g_cmd_logs && accept) {
+        bool is_err = (strncmp(out, "ERR", 3) == 0) || (strncmp(out, "err", 3) == 0);
+        if (is_err) {
+            if (g_cmd_logs_verbose) {
+                if (rc == -2) cmd_log("poll err page=%s btn=%zu rc=timeout", a->entry->page, a->entry->item_index + 1);
+                else cmd_log("poll err page=%s btn=%zu rc=%d", a->entry->page, a->entry->item_index + 1, rc);
+            } else {
+                cmd_log("poll err page=%s btn=%zu", a->entry->page, a->entry->item_index + 1);
+            }
+        } else if (g_cmd_logs_verbose) {
+            cmd_log("poll ok page=%s btn=%zu text='%s'", a->entry->page, a->entry->item_index + 1, out);
+        }
+    }
+    if (accept) cmd_engine_notify(a->engine);
+    free(a->cmd);
+    free(a);
+    return NULL;
+}
+
+typedef struct {
+    CmdEngine *engine;
+    CmdEntry *entry;
+    char *cmd;
+    CmdTextOpts opts;
+} CmdOneshotTextArgs;
+
+static void *cmd_oneshot_text_thread(void *arg) {
+    CmdOneshotTextArgs *a = (CmdOneshotTextArgs *)arg;
+    if (!a || !a->engine || !a->entry || !a->cmd) {
+        free(a ? a->cmd : NULL);
+        free(a);
+        return NULL;
+    }
+    char out[256] = {0};
+    int rc = run_shell_capture_text(a->cmd, a->engine->timeout_ms, out, sizeof(out), &a->opts, false);
+    pthread_mutex_lock(&a->entry->mu);
+    snprintf(a->entry->last_text, sizeof(a->entry->last_text), "%s", out);
+    pthread_mutex_unlock(&a->entry->mu);
+    if (g_cmd_logs) {
+        bool is_err = (strncmp(out, "ERR", 3) == 0) || (strncmp(out, "err", 3) == 0);
+        if (is_err) {
+            if (g_cmd_logs_verbose) {
+                if (rc == -2) cmd_log("exec_text err page=%s btn=%zu rc=timeout", a->entry->page, a->entry->item_index + 1);
+                else cmd_log("exec_text err page=%s btn=%zu rc=%d", a->entry->page, a->entry->item_index + 1, rc);
+            } else {
+                cmd_log("exec_text err page=%s btn=%zu", a->entry->page, a->entry->item_index + 1);
+            }
+        } else if (g_cmd_logs_verbose) {
+            cmd_log("exec_text ok page=%s btn=%zu text='%s'", a->entry->page, a->entry->item_index + 1, out);
+        } else {
+            cmd_log("exec_text ok page=%s btn=%zu", a->entry->page, a->entry->item_index + 1);
+        }
+    }
+    cmd_engine_notify(a->engine);
+    free(a->cmd);
+    free(a);
+    return NULL;
+}
+
+typedef struct {
+    CmdEngine *engine;
+    char *cmd;
+} CmdOneshotExecArgs;
+
+static void *cmd_oneshot_exec_thread(void *arg) {
+    CmdOneshotExecArgs *a = (CmdOneshotExecArgs *)arg;
+    if (!a || !a->engine || !a->cmd) {
+        free(a ? a->cmd : NULL);
+        free(a);
+        return NULL;
+    }
+    int rc = run_shell_nocapture(a->cmd, a->engine->timeout_ms);
+    if (g_cmd_logs && rc != 0) {
+        cmd_log("exec err rc=%d", rc);
+    }
+    free(a->cmd);
+    free(a);
+    return NULL;
+}
+
+static void *cmd_engine_thread(void *arg) {
+    CmdEngine *e = (CmdEngine *)arg;
+    if (!e) return NULL;
+
+    CmdEntry **snap = NULL;
+    size_t snap_cap = 0;
+
+    while (!e->stop) {
+        int64_t now = now_ns_monotonic();
+        int64_t next_wake_ns = now + 200 * 1000000LL; // 200ms default
+
+        pthread_mutex_lock(&e->mu);
+        size_t n = e->len;
+        if (n > snap_cap) {
+            snap_cap = n;
+            snap = xrealloc(snap, snap_cap * sizeof(*snap));
+        }
+        if (n > 0 && e->items) memcpy(snap, e->items, n * sizeof(*snap));
+        pthread_mutex_unlock(&e->mu);
+
+        for (size_t i = 0; i < n; i++) {
+            CmdEntry *ce = snap[i];
+            if (!ce) continue;
+
+            // Poll (text or exec) - currently only exec_text supported for rendering.
+            if (ce->poll_every_ms > 0 && ce->poll_cmd && ce->poll_cmd[0]) {
+                pthread_mutex_lock(&ce->mu);
+                if (ce->next_poll_ns == 0) ce->next_poll_ns = now; // run quickly after start
+                int64_t due = ce->next_poll_ns;
+                bool can_run = (!ce->poll_running && now >= due);
+                uint32_t gen = ce->poll_gen;
+                if (can_run) {
+                    ce->poll_running = true;
+                    ce->next_poll_ns = now + (int64_t)ce->poll_every_ms * 1000000LL;
+                }
+                if (ce->next_poll_ns > 0 && ce->next_poll_ns < next_wake_ns) next_wake_ns = ce->next_poll_ns;
+                pthread_mutex_unlock(&ce->mu);
+
+                if (can_run) {
+                    if (!ce->poll_is_text) {
+                        // No feedback; fire and forget with timeout.
+                        (void)run_shell_nocapture(ce->poll_cmd, e->timeout_ms);
+                        pthread_mutex_lock(&ce->mu);
+                        ce->poll_running = false;
+                        pthread_mutex_unlock(&ce->mu);
+                    } else {
+                        CmdRunArgs *a = calloc(1, sizeof(*a));
+                        if (!a) die_errno("calloc");
+                        a->engine = e;
+                        a->entry = ce;
+                        a->is_poll = true;
+                        a->is_state = false;
+                        a->cmd = xstrdup(ce->poll_cmd);
+                        a->opts = ce->poll_opts;
+                        a->gen = gen;
+                        pthread_t th;
+                        if (pthread_create(&th, NULL, cmd_run_thread, a) == 0) {
+                            pthread_detach(th);
+                        } else {
+                            pthread_mutex_lock(&ce->mu);
+                            ce->poll_running = false;
+                            pthread_mutex_unlock(&ce->mu);
+                            free(a->cmd);
+                            free(a);
+                        }
+                    }
+                }
+            }
+
+            // State polling
+            if (ce->state_every_ms > 0 && ce->state_cmd && ce->state_cmd[0]) {
+                pthread_mutex_lock(&ce->mu);
+                if (ce->next_state_ns == 0) ce->next_state_ns = now;
+                int64_t due = ce->next_state_ns;
+                bool can_run = (!ce->state_running && now >= due);
+                uint32_t gen = ce->state_gen;
+                if (can_run) {
+                    ce->state_running = true;
+                    ce->next_state_ns = now + (int64_t)ce->state_every_ms * 1000000LL;
+                }
+                if (ce->next_state_ns > 0 && ce->next_state_ns < next_wake_ns) next_wake_ns = ce->next_state_ns;
+                pthread_mutex_unlock(&ce->mu);
+
+                if (can_run) {
+                    CmdRunArgs *a = calloc(1, sizeof(*a));
+                    if (!a) die_errno("calloc");
+                    a->engine = e;
+                    a->entry = ce;
+                    a->is_poll = false;
+                    a->is_state = true;
+                    a->cmd = xstrdup(ce->state_cmd);
+                    a->opts = cmd_text_opts_defaults();
+                    a->opts.trim = true;
+                    a->opts.max_len = 32;
+                    a->gen = gen;
+                    pthread_t th;
+                    if (pthread_create(&th, NULL, cmd_run_thread, a) == 0) {
+                        pthread_detach(th);
+                    } else {
+                        pthread_mutex_lock(&ce->mu);
+                        ce->state_running = false;
+                        pthread_mutex_unlock(&ce->mu);
+                        free(a->cmd);
+                        free(a);
+                    }
+                }
+            }
+        }
+
+        now = now_ns_monotonic();
+        int64_t sleep_ns = next_wake_ns - now;
+        if (sleep_ns < 5 * 1000000LL) sleep_ns = 5 * 1000000LL;
+        if (sleep_ns > 500 * 1000000LL) sleep_ns = 500 * 1000000LL;
+        struct timespec ts;
+        ts.tv_sec = (time_t)(sleep_ns / 1000000000LL);
+        ts.tv_nsec = (long)(sleep_ns % 1000000000LL);
+        nanosleep(&ts, NULL);
+    }
+    free(snap);
+    return NULL;
+}
+
+static void cmd_engine_free(CmdEngine *e) {
+    if (!e) return;
+    e->stop = true;
+    if (e->th_started) (void)pthread_join(e->th, NULL);
+    if (e->notify_r >= 0) close(e->notify_r);
+    if (e->notify_w >= 0) close(e->notify_w);
+    for (size_t i = 0; i < e->len; i++) {
+        CmdEntry *ce = e->items[i];
+        if (!ce) continue;
+        (void)pthread_mutex_destroy(&ce->mu);
+        free(ce);
+    }
+    free(e->items);
+    (void)pthread_mutex_destroy(&e->mu);
+    memset(e, 0, sizeof(*e));
+}
+
+static int cmd_engine_init(CmdEngine *e, const Config *cfg) {
+    if (!e || !cfg) return -1;
+    memset(e, 0, sizeof(*e));
+    e->timeout_ms = cfg->cmd_timeout_ms > 0 ? cfg->cmd_timeout_ms : 3000;
+    e->notify_r = -1;
+    e->notify_w = -1;
+    e->th_started = false;
+    (void)pthread_mutex_init(&e->mu, NULL);
+    int p[2];
+    if (pipe(p) != 0) return -1;
+    e->notify_r = p[0];
+    e->notify_w = p[1];
+    int flags = fcntl(e->notify_r, F_GETFL, 0);
+    if (flags >= 0) (void)fcntl(e->notify_r, F_SETFL, flags | O_NONBLOCK);
+    flags = fcntl(e->notify_w, F_GETFL, 0);
+    if (flags >= 0) (void)fcntl(e->notify_w, F_SETFL, flags | O_NONBLOCK);
+    return 0;
+}
+
+static int cmd_engine_start(CmdEngine *e) {
+    if (!e) return -1;
+    if (e->th_started) return 0;
+    if (pthread_create(&e->th, NULL, cmd_engine_thread, e) != 0) return -1;
+    e->th_started = true;
+    return 0;
+}
+
+static int try_open_debug_log(void) {
+    if (!g_paging_persist_debug_log) return -1;
+    if (g_paging_debug_fd >= 0) return g_paging_debug_fd;
+
+    // Prefer /tmp so we can always write even if /dev/shm is restricted.
+    const char *paths[] = {
+        "/tmp/goofydeck_paging_debug.log",
+        "/dev/shm/goofydeck/paging/debug.log",
+        "/dev/shm/goofydeck_paging_debug.log",
+    };
+    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+        const char *p = paths[i];
+        // best-effort create parents for /dev/shm/goofydeck/paging
+        if (strncmp(p, "/dev/shm/goofydeck/paging/", 22) == 0) {
+            mkdir("/dev/shm/goofydeck", 0777);
+            mkdir("/dev/shm/goofydeck/paging", 0777);
+        }
+        int fd = open(p, O_CREAT | O_WRONLY | O_APPEND, 0644);
+        if (fd >= 0) {
+            g_paging_debug_fd = fd;
+            return fd;
+        }
+    }
+    return -1;
+}
+
+static void crash_handler(int sig) {
+    const char *hdr = "\n[pg] FATAL: paging_daemon crashed\n";
+    (void)write(STDERR_FILENO, hdr, strlen(hdr));
+
+    void *bt[64];
+    int n = backtrace(bt, (int)(sizeof(bt) / sizeof(bt[0])));
+    backtrace_symbols_fd(bt, n, STDERR_FILENO);
+
+    // Best-effort dump into a persistent place for later inspection.
+    const char *paths[] = {
+        "/tmp/goofydeck_paging_crash.log",
+        "/dev/shm/goofydeck/paging/crash.log",
+        "/dev/shm/goofydeck_paging_crash.log",
+    };
+    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+        const char *p = paths[i];
+        if (strncmp(p, "/dev/shm/goofydeck/paging/", 22) == 0) {
+            mkdir("/dev/shm/goofydeck", 0777);
+            mkdir("/dev/shm/goofydeck/paging", 0777);
+        }
+        int fd = open(p, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        if (fd >= 0) {
+            dprintf(fd, "signal=%d\n", sig);
+            backtrace_symbols_fd(bt, n, fd);
+            close(fd);
+            break;
+        }
+    }
+    _exit(128 + sig);
+}
+
+static void cmd_engine_build_from_config(CmdEngine *e, const Config *cfg) {
+    if (!e || !cfg) return;
+    for (size_t pi = 0; pi < cfg->page_count; pi++) {
+        const Page *p = &cfg->pages[pi];
+        if (!p->name) continue;
+        for (size_t ii = 0; ii < p->count; ii++) {
+            const Item *it = &p->items[ii];
+            if (!it) continue;
+
+            bool need = false;
+            if (it->poll_every_ms > 0 && it->poll_action && it->poll_action[0] && it->poll_cmd && it->poll_cmd[0]) need = true;
+            if (it->state_every_ms > 0 && it->state_cmd && it->state_cmd[0]) need = true;
+            // also create entries for one-shot exec_text actions so we can store results
+            if (it->tap_action && strcmp(it->tap_action, "$cmd.exec_text") == 0) need = true;
+            if (it->hold_action && strcmp(it->hold_action, "$cmd.exec_text") == 0) need = true;
+            if (it->longhold_action && strcmp(it->longhold_action, "$cmd.exec_text") == 0) need = true;
+            if (it->released_action && strcmp(it->released_action, "$cmd.exec_text") == 0) need = true;
+            // and for poll control actions (so runtime doesn't need to allocate entries)
+            if (it->tap_action && strncmp(it->tap_action, "$cmd.", 5) == 0) need = true;
+            if (it->hold_action && strncmp(it->hold_action, "$cmd.", 5) == 0) need = true;
+            if (it->longhold_action && strncmp(it->longhold_action, "$cmd.", 5) == 0) need = true;
+            if (it->released_action && strncmp(it->released_action, "$cmd.", 5) == 0) need = true;
+            if (!need) continue;
+
+            CmdEntry *ce = cmd_engine_get_or_add(e, p->name, ii);
+            if (!ce) continue;
+
+            if (it->poll_every_ms > 0 && it->poll_cmd && it->poll_cmd[0] && it->poll_action && it->poll_action[0]) {
+                ce->cfg_poll_every_ms = it->poll_every_ms;
+                ce->cfg_poll_cmd = it->poll_cmd;
+                ce->cfg_poll_is_text = (strcmp(it->poll_action, "$cmd.exec_text") == 0);
+                ce->cfg_poll_opts = it->poll_cmd_text;
+            }
+            if (it->state_every_ms > 0 && it->state_cmd && it->state_cmd[0]) {
+                ce->cfg_state_every_ms = it->state_every_ms;
+                ce->cfg_state_cmd = it->state_cmd;
+            }
+
+            // Never auto-start polls at daemon boot. They must be started via $cmd.poll_start.
+            ce->poll_every_ms = 0;
+            ce->poll_cmd = NULL;
+            ce->poll_is_text = false;
+            ce->poll_opts = cmd_text_opts_defaults();
+            ce->state_every_ms = 0;
+            ce->state_cmd = NULL;
+        }
+    }
 }
 
 static int json_tok_eq(const char *json, const jsmntok_t *t, const char *s) {
@@ -2087,6 +3196,8 @@ static uint32_t item_file_hash(const char *page, size_t item_index, const Item *
     return fnv1a32(key, strlen(key));
 }
 
+static bool item_has_cmd_features(const Item *it);
+
 static bool cached_or_generated_into_state(const Options *opt, const Config *cfg, const char *page, size_t item_index, const Item *it,
                                            const char *icon_override, const char *text_override, const char *preset_override,
                                            const char *variant, char *out_path, size_t out_cap) {
@@ -2099,12 +3210,15 @@ static bool cached_or_generated_into_state(const Options *opt, const Config *cfg
                      (it->icon && it->icon[0]) ? it->icon :
                      (preset && preset->icon) ? preset->icon : "";
 	const char *tx = (text_override != NULL) ? text_override :
-	                     (it->text && it->text[0]) ? it->text :
-	                     (preset && preset->text) ? preset->text : "";
+		                     (it->text && it->text[0]) ? it->text :
+		                     (preset && preset->text) ? preset->text : "";
+
+    // For $cmd buttons, icon text is dynamic: do not bake it into cached icons.
+    if (text_override == NULL && item_has_cmd_features(it)) tx = "";
 
 	bool is_defined = (it->icon && it->icon[0]) || (it->text && it->text[0]) || (it->preset && it->preset[0]) ||
-	                      (it->entity_id && it->entity_id[0]) || (it->tap_action && it->tap_action[0]) || (it->state_count > 0);
-	if (!is_defined) return false; // empty/unconfigured => no cache
+		                      (it->entity_id && it->entity_id[0]) || (it->tap_action && it->tap_action[0]) || (it->state_count > 0);
+		if (!is_defined) return false; // empty/unconfigured => no cache
     if (ic[0] == 0 && tx[0] == 0 && it->state_count == 0 && !(it->entity_id && it->entity_id[0])) {
         // return false; // plain empty
         // Allow "base-only" icons (background/border) when preset styling is visible.
@@ -2135,9 +3249,21 @@ static bool cached_or_generated_into_state(const Options *opt, const Config *cfg
     return true;
 }
 
+static bool item_has_cmd_features(const Item *it) {
+    if (!it) return false;
+    const char *as[] = { it->tap_action, it->hold_action, it->longhold_action, it->released_action };
+    for (size_t i = 0; i < sizeof(as) / sizeof(as[0]); i++) {
+        if (as[i] && strncmp(as[i], "$cmd.", 5) == 0) return true;
+    }
+    if (it->poll_every_ms > 0 && it->poll_action && strncmp(it->poll_action, "$cmd.", 5) == 0) return true;
+    if (it->state_every_ms > 0 && it->state_cmd && it->state_cmd[0]) return true;
+    return false;
+}
+
 static bool item_has_static_text_variant(const Item *it, const Preset *preset, const char **out_eff_text) {
     if (out_eff_text) *out_eff_text = NULL;
     if (!it) return false;
+    if (item_has_cmd_features(it)) return false;
     // If bound to a Home Assistant entity without explicit states, text is typically dynamic (sensor value).
     // Keep these as runtime overlays (/dev/shm), not cached variants.
     if (it->entity_id && it->entity_id[0] && it->state_count == 0) return false;
@@ -2148,6 +3274,8 @@ static bool item_has_static_text_variant(const Item *it, const Preset *preset, c
     if (out_eff_text) *out_eff_text = tx;
     return true;
 }
+
+
 
 static bool cached_or_generated_static_text_into(const Options *opt, const Config *cfg, const char *page, size_t item_index, const Item *it,
                                                  char *out_path, size_t out_cap) {
@@ -2433,18 +3561,25 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
 
     log_render("render page='%s' offset=%zu slots=%zu items=%zu", page_name, offset, item_slots, p->count);
 
-	char btn_path[14][PATH_MAX];
-	bool btn_set[14] = {0};
-	char btn_label[14][64];
-	bool label_set[14] = {0};
-	bool cleanup_tmp[14] = {0};
-    bool wp_already_composed[14] = {0};
-	for (int i = 1; i <= 13; i++) {
-	    snprintf(btn_path[i], sizeof(btn_path[i]), "%s", blank_png);
-	    btn_set[i] = true;
-	    btn_label[i][0] = 0;
-	    label_set[i] = false;
-	}
+		char btn_path[14][PATH_MAX];
+		bool btn_set[14] = {0};
+		char btn_label[14][64];
+		bool label_set[14] = {0};
+		bool cleanup_tmp[14] = {0};
+	    bool wp_already_composed[14] = {0};
+        CmdEntry *cmd_entry_for_pos[14] = {0};
+        bool cmd_text_set[14] = {0};
+        char cmd_text_for_pos[14][256];
+        bool cmd_state_set[14] = {0};
+        char cmd_state_for_pos[14][64];
+		for (int i = 1; i <= 13; i++) {
+		    snprintf(btn_path[i], sizeof(btn_path[i]), "%s", blank_png);
+		    btn_set[i] = true;
+		    btn_label[i][0] = 0;
+		    label_set[i] = false;
+            cmd_text_for_pos[i][0] = 0;
+            cmd_state_for_pos[i][0] = 0;
+		}
 
     // Reserve back/prev/next
     bool reserved[14] = {0};
@@ -2470,17 +3605,36 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
         }
     }
 
-    // Fill items
-    size_t item_i = offset;
-	for (int pos = 1; pos <= 13 && item_i < p->count; pos++) {
-	    if (reserved[pos]) continue;
-	    const Item *it = page_item_at(p, item_i);
-	    const char *label_src = (it && it->name && it->name[0]) ? it->name : NULL;
-	    char tmp[PATH_MAX];
-	    bool have_icon = false;
+	    // Fill items
+	    size_t item_i = offset;
+		for (int pos = 1; pos <= 13 && item_i < p->count; pos++) {
+		    if (reserved[pos]) continue;
+		    const Item *it = page_item_at(p, item_i);
+		    const char *label_src = (it && it->name && it->name[0]) ? it->name : NULL;
+            CmdEntry *cmd_ce = NULL;
+            char cmd_text[256] = {0};
+            char cmd_state[64] = {0};
+            if (g_cmd_engine && it) {
+                cmd_ce = cmd_engine_find(g_cmd_engine, page_name, item_i);
+                if (cmd_ce) {
+                    pthread_mutex_lock(&cmd_ce->mu);
+                    snprintf(cmd_text, sizeof(cmd_text), "%s", cmd_ce->last_text);
+                    snprintf(cmd_state, sizeof(cmd_state), "%s", cmd_ce->last_state);
+                    pthread_mutex_unlock(&cmd_ce->mu);
+                }
+            }
+            if (cmd_ce) {
+                cmd_entry_for_pos[pos] = cmd_ce;
+                if (it && it->state_count > 0) {
+                    cmd_state_set[pos] = true;
+                    snprintf(cmd_state_for_pos[pos], sizeof(cmd_state_for_pos[pos]), "%s", cmd_state);
+                }
+            }
+		    char tmp[PATH_MAX];
+		    bool have_icon = false;
 
-	    // HA-driven states: pick state variant if known.
-	    if (it && it->entity_id && it->entity_id[0] && it->state_count > 0 && ha_map) {
+		    // HA-driven states: pick state variant if known.
+		    if (it && it->entity_id && it->entity_id[0] && it->state_count > 0 && ha_map) {
             const char *cur_state = NULL;
             for (size_t si = 0; si < ha_map->len; si++) {
                 if (ha_map->items[si].entity_id && strcmp(ha_map->items[si].entity_id, it->entity_id) == 0) {
@@ -2517,12 +3671,39 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
                     have_icon = true;
                 }
             }
-        }
+	        }
 
-        // HA entity value display (sensor, etc): if no states are defined, show HA state as text (unless config already sets text).
-        if (!have_icon && it && it->entity_id && it->entity_id[0] && it->state_count == 0 && ha_map) {
-            char value_text[128] = {0};
-            ha_format_value_text(ha_map, it->entity_id, value_text, sizeof(value_text));
+            // Command-driven states (stdout is the state key): pick state variant if known.
+            if (!have_icon && it && (!it->entity_id || !it->entity_id[0]) && it->state_count > 0 && cmd_ce) {
+                const char *cur_state = (cmd_state[0]) ? cmd_state : NULL;
+                if (cur_state && cur_state[0]) {
+                    const StateOverride *ov = item_find_state_override(it, cur_state);
+                    if (ov) {
+                        const char *preset_ov = (ov->preset && ov->preset[0]) ? ov->preset : NULL;
+                        const char *icon_ov = (ov->icon && ov->icon[0]) ? ov->icon : NULL;
+                        const char *text_ov = (ov->text && ov->text[0]) ? ov->text : NULL;
+                        if (cached_or_generated_into_state(opt, cfg, page_name, item_i, it, icon_ov, text_ov, preset_ov, cur_state, tmp,
+                                                           sizeof(tmp))) {
+                            snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp);
+                            btn_set[pos] = true;
+                            have_icon = true;
+                        }
+                        if (ov->name && ov->name[0]) label_src = ov->name;
+                    }
+                }
+                if (!have_icon) {
+                    if (cached_or_generated_into_state(opt, cfg, page_name, item_i, it, NULL, NULL, NULL, "base", tmp, sizeof(tmp))) {
+                        snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp);
+                        btn_set[pos] = true;
+                        have_icon = true;
+                    }
+                }
+            }
+
+	        // HA entity value display (sensor, etc): if no states are defined, show HA state as text (unless config already sets text).
+	        if (!have_icon && it && it->entity_id && it->entity_id[0] && it->state_count == 0 && ha_map) {
+	            char value_text[128] = {0};
+	            ha_format_value_text(ha_map, it->entity_id, value_text, sizeof(value_text));
             const char *pr_name = (it->preset && it->preset[0]) ? it->preset : "default";
             const Preset *pr = config_get_preset(cfg, pr_name);
             if (!pr) pr = config_get_preset(cfg, "default");
@@ -2569,27 +3750,65 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
             }
         }
 
-        if (!have_icon) {
-            if (cached_or_generated_static_text_into(opt, cfg, page_name, item_i, it, tmp, sizeof(tmp))) {
-                snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp);
-                btn_set[pos] = true;
-            } else if (cached_or_generated_into(opt, cfg, page_name, item_i, it, tmp, sizeof(tmp))) {
-                snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp);
-                btn_set[pos] = true;
-            } else {
-                // empty => keep blank, no cache
-                snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", blank_png);
-                btn_set[pos] = true;
-            }
-        }
+	        if (!have_icon) {
+	            if (cached_or_generated_static_text_into(opt, cfg, page_name, item_i, it, tmp, sizeof(tmp))) {
+	                snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp);
+	                btn_set[pos] = true;
+	            } else if (cached_or_generated_into(opt, cfg, page_name, item_i, it, tmp, sizeof(tmp))) {
+	                snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp);
+	                btn_set[pos] = true;
+	            } else {
+	                // empty => keep blank, no cache
+	                snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", blank_png);
+	                btn_set[pos] = true;
+	            }
+	        }
 
-        // name is the device label (no spaces supported by daemon's argv parser)
-        if (label_src && label_src[0]) {
-            make_device_label(label_src, btn_label[pos], sizeof(btn_label[pos]));
-            if (btn_label[pos][0]) label_set[pos] = true;
-        }
-        item_i++;
-    }
+            // Command-driven text overlay: draw stdout on top of the current base icon (and wallpaper tile if enabled).
+            if (cmd_ce && cmd_text[0]) {
+                const Preset *pr = NULL;
+                const char *pr_name = (it && it->preset && it->preset[0]) ? it->preset : "default";
+                pr = config_get_preset(cfg, pr_name);
+                if (!pr) pr = config_get_preset(cfg, "default");
+                if (pr) {
+                    const char *text_base = btn_path[pos];
+                    char composed_base[PATH_MAX] = {0};
+                    bool composed_is_tmp = false;
+                    bool cleanup_text_base = false;
+                    if (wp_active && have_draw_over) {
+                        if (wp_compose_cached(opt, wp_sig, wp_render_dir, wp_prefix, &wp, pos, text_base,
+                                              composed_base, sizeof(composed_base), &composed_is_tmp) == 0 &&
+                            composed_base[0]) {
+                            text_base = composed_base;
+                            cleanup_text_base = composed_is_tmp;
+                        }
+                    }
+                    char tmp_out[PATH_MAX];
+                    if (render_value_text_on_base_tmp(opt, pr, page_name, pos, text_base, cmd_text, tmp_out, sizeof(tmp_out)) == 0) {
+                        if (cleanup_tmp[pos]) unlink(btn_path[pos]);
+                        snprintf(btn_path[pos], sizeof(btn_path[pos]), "%s", tmp_out);
+                        cleanup_tmp[pos] = true;
+                        btn_set[pos] = true;
+                        have_icon = true;
+                        cmd_text_set[pos] = true;
+                        snprintf(cmd_text_for_pos[pos], sizeof(cmd_text_for_pos[pos]), "%s", cmd_text);
+                        if (composed_base[0]) wp_already_composed[pos] = true;
+                    }
+                    if (cleanup_text_base) unlink(text_base);
+                }
+            } else if (cmd_ce && cmd_entry_for_pos[pos]) {
+                // If we have a cmd entry but no current text, ensure we clear any previous sent text state after a full render.
+                cmd_text_set[pos] = true;
+                cmd_text_for_pos[pos][0] = 0;
+            }
+
+	        // name is the device label (no spaces supported by daemon's argv parser)
+	        if (label_src && label_src[0]) {
+	            make_device_label(label_src, btn_label[pos], sizeof(btn_label[pos]));
+	            if (btn_label[pos][0]) label_set[pos] = true;
+	        }
+	        item_i++;
+	    }
 
     // System icons (only if visible)
     if (show_back && back_pos >= 1 && back_pos <= 13) {
@@ -2697,6 +3916,22 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
     snprintf(last_sig, last_sig_cap, "%s", sig);
     log_render("send resp='%s'", reply[0] ? reply : "<empty>");
 
+    // Mark cmd-driven values as pushed (so we don't spam partial updates right after a full render).
+    if (g_cmd_engine) {
+        for (int pos = 1; pos <= 13; pos++) {
+            CmdEntry *ce = cmd_entry_for_pos[pos];
+            if (!ce) continue;
+            pthread_mutex_lock(&ce->mu);
+            if (cmd_text_set[pos]) {
+                snprintf(ce->last_sent_text, sizeof(ce->last_sent_text), "%s", cmd_text_for_pos[pos]);
+            }
+            if (cmd_state_set[pos]) {
+                snprintf(ce->last_sent_state, sizeof(ce->last_sent_state), "%s", cmd_state_for_pos[pos]);
+            }
+            pthread_mutex_unlock(&ce->mu);
+        }
+    }
+
     // Cleanup any temporary per-render images created in /dev/shm.
     for (int pos = 1; pos <= 13; pos++) {
         if (cleanup_tmp[pos]) {
@@ -2706,13 +3941,20 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
 }
 
 static void state_dir(const Options *opt, char *out, size_t cap) {
-    // Prefer RAM-backed /dev/shm, fallback to cache_root if not available.
+    // Prefer RAM-backed /dev/shm, but avoid sharing directories across users (sudo can leave root-owned dirs).
     if (!out || cap == 0) return;
-    const char *primary = "/dev/shm/goofydeck/paging";
-    if (try_ensure_dir_parent(primary) == 0 && try_ensure_dir(primary) == 0) {
+    char primary[PATH_MAX];
+    snprintf(primary, sizeof(primary), "/dev/shm/goofydeck_%u/paging", (unsigned)getuid());
+    if (try_ensure_dir_parent(primary) == 0 && try_ensure_dir(primary) == 0 && access(primary, W_OK | X_OK) == 0) {
         snprintf(out, cap, "%s", primary);
         return;
     }
+
+    // Fallback: /tmp is also typically tmpfs and avoids repo permission issues.
+    snprintf(out, cap, "/tmp/goofydeck_paging_%u", (unsigned)getuid());
+    if (try_ensure_dir(out) == 0 && access(out, W_OK | X_OK) == 0) return;
+
+    // Last resort: inside repo cache
     snprintf(out, cap, "%s/paging", (opt && opt->cache_root) ? opt->cache_root : ".cache");
     ensure_dir(out);
 }
@@ -2755,9 +3997,8 @@ static void wipe_paging_state_dir_at_startup(const Options *opt) {
     char dir[PATH_MAX];
     state_dir(opt, dir, sizeof(dir));
 
-    // Safety: only wipe the RAM-backed state dir.
-    const char *primary = "/dev/shm/goofydeck/paging";
-    if (strcmp(dir, primary) != 0) return;
+    // Safety: only wipe RAM-backed state dirs.
+    if (strncmp(dir, "/dev/shm/", 9) != 0) return;
 
     (void)rm_tree_contents(dir);
 }
@@ -3244,6 +4485,318 @@ static void ha_partial_update_visible(const Options *opt, const Config *cfg, con
     }
 }
 
+static void cmd_apply_updates_current_page(const Options *opt, const Config *cfg, const char *page_name, size_t offset,
+                                          const char *blank_png) {
+    if (!opt || !cfg || !page_name || !page_name[0] || !blank_png) return;
+    if (!g_cmd_engine) return;
+    if (!g_ulanzi_device_ready) return;
+
+    const Page *p = config_get_page((Config *)cfg, page_name);
+    if (!p) return;
+    bool show_back = strcmp(page_name, "$root") != 0;
+    SheetLayout sheet = compute_sheet_layout(p->count, show_back, offset);
+    offset = sheet.start;
+
+    // Wallpaper context (optional)
+    WallpaperEff wp = effective_wallpaper(cfg, p);
+    bool wp_active = false;
+    char wp_render_dir[PATH_MAX] = {0};
+    char wp_prefix[PATH_MAX] = {0};
+    bool have_draw_over = false;
+    uint32_t wp_sig = 0;
+    if (wp.enabled && wp.path && wp.path[0]) {
+        if (ensure_wallpaper_rendered(opt, &wp, wp_render_dir, sizeof(wp_render_dir), wp_prefix, sizeof(wp_prefix)) == 0) {
+            wp_active = true;
+            char wkey[1024];
+            snprintf(wkey, sizeof(wkey), "path:%s\nq:%d\nm:%d\nd:%d\n", wp.path, wp.quality, wp.magnify, wp.dithering ? 1 : 0);
+            wp_sig = fnv1a32(wkey, strlen(wkey));
+            char draw_over_bin[PATH_MAX];
+            snprintf(draw_over_bin, sizeof(draw_over_bin), "%s/icons/draw_over", opt->root_dir);
+            have_draw_over = (access(draw_over_bin, X_OK) == 0);
+        }
+    }
+
+    // Walk currently visible items and push partial updates if their cmd-driven state/text changed.
+    size_t item_i = offset;
+    for (int pos = 1; pos <= 13 && item_i < p->count; pos++) {
+        bool reserved = false;
+        if (show_back && pos == cfg->pos_back) reserved = true;
+        if (sheet.show_prev && pos == cfg->pos_prev) reserved = true;
+        if (sheet.show_next && pos == cfg->pos_next) reserved = true;
+        if (reserved) continue;
+
+        const Item *it = page_item_at(p, item_i);
+        if (!it) { item_i++; continue; }
+
+        CmdEntry *ce = cmd_engine_find(g_cmd_engine, page_name, item_i);
+        if (!ce) { item_i++; continue; }
+
+        char cur_text[256] = {0};
+        char cur_state[64] = {0};
+        char sent_text[256] = {0};
+        char sent_state[64] = {0};
+        pthread_mutex_lock(&ce->mu);
+        snprintf(cur_text, sizeof(cur_text), "%s", ce->last_text);
+        snprintf(cur_state, sizeof(cur_state), "%s", ce->last_state);
+        snprintf(sent_text, sizeof(sent_text), "%s", ce->last_sent_text);
+        snprintf(sent_state, sizeof(sent_state), "%s", ce->last_sent_state);
+        pthread_mutex_unlock(&ce->mu);
+
+        // Determine label (state override may change it).
+        const char *label_src = (it->name && it->name[0]) ? it->name : NULL;
+        const StateOverride *state_ov = NULL;
+        if (it->state_count > 0 && cur_state[0]) {
+            state_ov = item_find_state_override(it, cur_state);
+            if (state_ov && state_ov->name && state_ov->name[0]) label_src = state_ov->name;
+        }
+
+        // 1) State-driven icon update
+        bool state_changed = false;
+        if (it->state_count > 0) {
+            if (strcmp(cur_state, sent_state) != 0) state_changed = true;
+        }
+        if (state_changed) {
+            char icon_path[PATH_MAX] = {0};
+            bool have_icon = false;
+            if (cur_state[0] && state_ov) {
+                if (cached_or_generated_into_state(opt, cfg, page_name, item_i, it,
+                                                   (state_ov->icon && state_ov->icon[0]) ? state_ov->icon : NULL,
+                                                   (state_ov->text && state_ov->text[0]) ? state_ov->text : NULL,
+                                                   (state_ov->preset && state_ov->preset[0]) ? state_ov->preset : NULL,
+                                                   cur_state, icon_path, sizeof(icon_path))) {
+                    have_icon = true;
+                }
+            }
+            if (!have_icon) {
+                if (cached_or_generated_into_state(opt, cfg, page_name, item_i, it, NULL, NULL, NULL, "base", icon_path,
+                                                   sizeof(icon_path))) {
+                    have_icon = true;
+                }
+            }
+            if (!have_icon) snprintf(icon_path, sizeof(icon_path), "%s", blank_png);
+
+            ulanzi_send_partial_wallpaper(opt, cfg, page_name, pos, icon_path, label_src, blank_png);
+            pthread_mutex_lock(&ce->mu);
+            snprintf(ce->last_sent_state, sizeof(ce->last_sent_state), "%s", cur_state);
+            pthread_mutex_unlock(&ce->mu);
+        }
+
+        // 2) Text update (exec_text / poll text)
+        if (strcmp(cur_text, sent_text) != 0) {
+            const Preset *pr = NULL;
+            const char *pr_name = (it->preset && it->preset[0]) ? it->preset : "default";
+            pr = config_get_preset(cfg, pr_name);
+            if (!pr) pr = config_get_preset(cfg, "default");
+
+            // Determine base icon for this slot (respect current state if any).
+            char base_png[PATH_MAX] = {0};
+            bool have_base = false;
+            if (it->state_count > 0 && cur_state[0]) {
+                const StateOverride *ov = state_ov;
+                if (ov) {
+                    have_base = cached_or_generated_into_state(opt, cfg, page_name, item_i, it,
+                                                               (ov->icon && ov->icon[0]) ? ov->icon : NULL,
+                                                               (ov->text && ov->text[0]) ? ov->text : NULL,
+                                                               (ov->preset && ov->preset[0]) ? ov->preset : NULL,
+                                                               cur_state, base_png, sizeof(base_png));
+                }
+                if (!have_base) {
+                    have_base = cached_or_generated_into_state(opt, cfg, page_name, item_i, it, NULL, NULL, NULL, "base", base_png,
+                                                               sizeof(base_png));
+                }
+            } else {
+                have_base = cached_or_generated_into(opt, cfg, page_name, item_i, it, base_png, sizeof(base_png));
+                if (!have_base) {
+                    // allow text-only on an empty base
+                    snprintf(base_png, sizeof(base_png), "%s", blank_png);
+                    have_base = true;
+                }
+            }
+
+            if (have_base && pr) {
+                // Empty output means "clear the overlay": just send the base icon again.
+                if (!cur_text[0]) {
+                    ulanzi_send_partial_wallpaper(opt, cfg, page_name, pos, base_png, label_src, blank_png);
+                    pthread_mutex_lock(&ce->mu);
+                    ce->last_sent_text[0] = 0;
+                    pthread_mutex_unlock(&ce->mu);
+                    item_i++;
+                    continue;
+                }
+
+                const char *eff_text = cur_text;
+
+                if (wp_active && have_draw_over) {
+                    char composed_base[PATH_MAX] = {0};
+                    bool composed_tmp = false;
+                    if (wp_compose_cached(opt, wp_sig, wp_render_dir, wp_prefix, &wp, pos, base_png,
+                                          composed_base, sizeof(composed_base), &composed_tmp) == 0 &&
+                        composed_base[0]) {
+                        char tmp_out[PATH_MAX];
+                        if (render_value_text_on_base_tmp(opt, pr, page_name, pos, composed_base, eff_text, tmp_out,
+                                                          sizeof(tmp_out)) == 0) {
+                            ulanzi_send_partial(opt, pos, tmp_out, label_src);
+                            unlink(tmp_out);
+                            pthread_mutex_lock(&ce->mu);
+                            snprintf(ce->last_sent_text, sizeof(ce->last_sent_text), "%s", cur_text);
+                            pthread_mutex_unlock(&ce->mu);
+                        }
+                        if (composed_tmp) unlink(composed_base);
+                    }
+                } else {
+                    char tmp_out[PATH_MAX];
+                    if (render_value_text_on_base_tmp(opt, pr, page_name, pos, base_png, eff_text, tmp_out, sizeof(tmp_out)) == 0) {
+                        ulanzi_send_partial_wallpaper(opt, cfg, page_name, pos, tmp_out, label_src, blank_png);
+                        unlink(tmp_out);
+                        pthread_mutex_lock(&ce->mu);
+                        snprintf(ce->last_sent_text, sizeof(ce->last_sent_text), "%s", cur_text);
+                        pthread_mutex_unlock(&ce->mu);
+                    }
+                }
+            }
+        }
+
+        item_i++;
+    }
+}
+
+static bool handle_cmd_action(const Options *opt, Config *cfg, const char *cur_page, size_t offset, size_t pressed_item,
+                              int btn, ButtonEvent evt, const Item *it, const char *action, const char *data,
+                              const char *blank_png) {
+    if (!opt || !cfg || !cur_page || !it || !action || !blank_png) return false;
+    if (strncmp(action, "$cmd.", 5) != 0) return false;
+    if (!g_cmd_engine) return true;
+
+    const bool is_tap = (evt == BTN_EVT_TAP);
+    const bool is_hold = (evt == BTN_EVT_HOLD);
+    const bool is_longhold = (evt == BTN_EVT_LONGHOLD);
+    const bool is_release = (evt == BTN_EVT_RELEASED);
+
+    const char *cmd = (data && data[0]) ? data : NULL;
+
+    if (strcmp(action, "$cmd.exec") == 0 || strcmp(action, "$cmd.execute") == 0) {
+        if (!cmd) return true;
+        if (g_cmd_logs) cmd_log("exec btn=%d", btn);
+        CmdOneshotExecArgs *a = calloc(1, sizeof(*a));
+        if (!a) die_errno("calloc");
+        a->engine = g_cmd_engine;
+        a->cmd = xstrdup(cmd);
+        pthread_t th;
+        if (pthread_create(&th, NULL, cmd_oneshot_exec_thread, a) == 0) {
+            pthread_detach(th);
+        } else {
+            free(a->cmd);
+            free(a);
+        }
+        return true;
+    }
+
+    if (strcmp(action, "$cmd.exec_text") == 0) {
+        if (!cmd) return true;
+        CmdEntry *ce = cmd_engine_get_or_add(g_cmd_engine, cur_page, pressed_item);
+        if (!ce) return true;
+        if (g_cmd_logs) cmd_log("exec_text btn=%d", btn);
+        CmdTextOpts o = cmd_text_opts_defaults();
+        if (is_tap) o = it->tap_cmd_text;
+        else if (is_hold) o = it->hold_cmd_text;
+        else if (is_longhold) o = it->longhold_cmd_text;
+        else if (is_release) o = it->released_cmd_text;
+
+        CmdOneshotTextArgs *a = calloc(1, sizeof(*a));
+        if (!a) die_errno("calloc");
+        a->engine = g_cmd_engine;
+        a->entry = ce;
+        a->cmd = xstrdup(cmd);
+        a->opts = o;
+        pthread_t th;
+        if (pthread_create(&th, NULL, cmd_oneshot_text_thread, a) == 0) {
+            pthread_detach(th);
+        } else {
+            free(a->cmd);
+            free(a);
+        }
+        return true;
+    }
+
+    if (strcmp(action, "$cmd.poll_start") == 0) {
+        CmdEntry *ce = cmd_engine_get_or_add(g_cmd_engine, cur_page, pressed_item);
+        if (!ce) return true;
+        pthread_mutex_lock(&ce->mu);
+        ce->poll_gen++;
+        ce->state_gen++;
+        if (ce->cfg_poll_every_ms > 0 && ce->cfg_poll_cmd && ce->cfg_poll_cmd[0]) {
+            ce->poll_every_ms = ce->cfg_poll_every_ms;
+            ce->poll_cmd = ce->cfg_poll_cmd;
+            ce->poll_is_text = ce->cfg_poll_is_text;
+            ce->poll_opts = ce->cfg_poll_opts;
+            ce->next_poll_ns = 0;
+        }
+        if (ce->cfg_state_every_ms > 0 && ce->cfg_state_cmd && ce->cfg_state_cmd[0]) {
+            ce->state_every_ms = ce->cfg_state_every_ms;
+            ce->state_cmd = ce->cfg_state_cmd;
+            ce->next_state_ns = 0;
+        }
+        pthread_mutex_unlock(&ce->mu);
+        if (g_cmd_logs) cmd_log("poll_start btn=%d", btn);
+        return true;
+    }
+
+    if (strcmp(action, "$cmd.poll_stop") == 0) {
+        CmdEntry *ce = cmd_engine_find(g_cmd_engine, cur_page, pressed_item);
+        if (!ce) return true;
+        pthread_mutex_lock(&ce->mu);
+        ce->poll_gen++;
+        ce->state_gen++;
+        ce->poll_every_ms = 0;
+        ce->state_every_ms = 0;
+        ce->next_poll_ns = 0;
+        ce->next_state_ns = 0;
+        // Also clear the displayed text so the base icon is resent (like $cmd.text_clear).
+        // Keep last_sent_text intact so cmd_apply_updates_current_page() detects a change.
+        ce->last_text[0] = 0;
+        pthread_mutex_unlock(&ce->mu);
+        if (g_cmd_logs) cmd_log("poll_stop btn=%d", btn);
+        cmd_engine_notify(g_cmd_engine);
+        cmd_apply_updates_current_page(opt, cfg, cur_page, offset, blank_png);
+        return true;
+    }
+
+    if (strcmp(action, "$cmd.text_clear") == 0) {
+        CmdEntry *ce = cmd_engine_find(g_cmd_engine, cur_page, pressed_item);
+        if (!ce) return true;
+        pthread_mutex_lock(&ce->mu);
+        ce->last_text[0] = 0;
+        pthread_mutex_unlock(&ce->mu);
+        if (g_cmd_logs) cmd_log("text_clear btn=%d", btn);
+        cmd_engine_notify(g_cmd_engine);
+        cmd_apply_updates_current_page(opt, cfg, cur_page, offset, blank_png);
+        return true;
+    }
+
+    if (strcmp(action, "$cmd.exec_stop") == 0) {
+        CmdEntry *ce = cmd_engine_find(g_cmd_engine, cur_page, pressed_item);
+        if (!ce) return true;
+        pthread_mutex_lock(&ce->mu);
+        ce->poll_gen++;
+        ce->state_gen++;
+        ce->poll_every_ms = 0;
+        ce->state_every_ms = 0;
+        ce->poll_running = false;
+        ce->state_running = false;
+        ce->next_poll_ns = 0;
+        ce->next_state_ns = 0;
+        ce->last_text[0] = 0;
+        ce->last_state[0] = 0;
+        pthread_mutex_unlock(&ce->mu);
+        if (g_cmd_logs) cmd_log("exec_stop btn=%d", btn);
+        cmd_engine_notify(g_cmd_engine);
+        cmd_apply_updates_current_page(opt, cfg, cur_page, offset, blank_png);
+        return true;
+    }
+
+    return true;
+}
+
 static int ha_call_from_item(const Options *opt, int ha_fd, const Item *it) {
     if (!opt || !it || !it->tap_action || !it->tap_action[0]) return -1;
     if (it->tap_action[0] == '$') return -1; // paging/internal
@@ -3510,6 +5063,8 @@ static void handle_button_event(const Options *opt,
         goto content_buttons;
     }
     if (reserved_back && btn == back_pos) {
+        char old_page[256];
+        snprintf(old_page, sizeof(old_page), "%s", cur_page);
         bool changed = false;
         if (*page_stack_len > 0) {
             (*page_stack_len)--;
@@ -3524,7 +5079,9 @@ static void handle_button_event(const Options *opt,
         }
         if (changed) {
             *offset = 0;
+            if (g_cmd_engine) cmd_state_on_leave_page(g_cmd_engine, old_page);
             ha_enter_page(opt, cfg, cur_page, ha_fd, ha_buf, ha_len, ha_map, ha_subs);
+            if (g_cmd_engine) cmd_state_on_enter_page(g_cmd_engine, cur_page);
             render_and_send(opt, cfg, cur_page, *offset, ha_map, blank_png, last_sig, last_sig_cap);
             persist_last_page(opt, cur_page, *offset);
             flush_pending_button_events(rb_fd, inlen, NULL);
@@ -3583,33 +5140,68 @@ content_buttons:
     }
     if (!action || !action[0]) return;
 
-    if (is_action_goto(action) && data && data[0]) {
-        if (*page_stack_len < page_stack_cap) {
-            snprintf(page_stack[*page_stack_len], sizeof(page_stack[*page_stack_len]), "%s", cur_page);
-            (*page_stack_len)++;
-        }
-        snprintf(cur_page, cur_page_cap, "%s", data);
-        *offset = 0;
-        ha_enter_page(opt, cfg, cur_page, ha_fd, ha_buf, ha_len, ha_map, ha_subs);
-        render_and_send(opt, cfg, cur_page, *offset, ha_map, blank_png, last_sig, last_sig_cap);
-        persist_last_page(opt, cur_page, *offset);
-        flush_pending_button_events(rb_fd, inlen, NULL);
-        return;
-    }
+		    if (is_action_goto(action) && data && data[0]) {
+		        if (g_cmd_engine) cmd_state_on_leave_page(g_cmd_engine, cur_page);
+		        if (*page_stack_len < page_stack_cap) {
+		            snprintf(page_stack[*page_stack_len], sizeof(page_stack[*page_stack_len]), "%s", cur_page);
+		            (*page_stack_len)++;
+		        }
+		        snprintf(cur_page, cur_page_cap, "%s", data);
+		        *offset = 0;
+		        ha_enter_page(opt, cfg, cur_page, ha_fd, ha_buf, ha_len, ha_map, ha_subs);
+		        if (g_cmd_engine) cmd_state_on_enter_page(g_cmd_engine, cur_page);
+		        render_and_send(opt, cfg, cur_page, *offset, ha_map, blank_png, last_sig, last_sig_cap);
+		        persist_last_page(opt, cur_page, *offset);
+		        flush_pending_button_events(rb_fd, inlen, NULL);
+		        return;
+		    }
 
-    if (action[0] != '$') {
-        Item tmp = *it;
-        tmp.tap_action = (char *)action;
-        tmp.tap_data = (char *)(data ? data : "");
-        if (ha_call_from_item(opt, *ha_fd, &tmp) != 0) {
-            log_msg("ha call failed (action='%s')", action ? action : "");
-        }
-    }
-}
+	        // Local command actions (shell on host).
+	        if (strncmp(action, "$cmd.", 5) == 0) {
+	            (void)handle_cmd_action(opt, cfg, cur_page, *offset, pressed_item, btn, evt, it, action, data, blank_png);
+	            return;
+	        }
+
+	    if (action[0] != '$') {
+	        Item tmp = *it;
+	        tmp.tap_action = (char *)action;
+	        tmp.tap_data = (char *)(data ? data : "");
+	        if (ha_call_from_item(opt, *ha_fd, &tmp) != 0) {
+	            log_msg("ha call failed (action='%s')", action ? action : "");
+	        }
+	    }
+	}
 
 int main(int argc, char **argv) {
     Options opt;
     memset(&opt, 0, sizeof(opt));
+
+    // Ensure we don't lose logs if the process crashes quickly.
+    setvbuf(stderr, NULL, _IONBF, 0);
+
+    // Broken pipe on socket write must not kill the daemon (device disconnects are expected).
+    signal(SIGPIPE, SIG_IGN);
+
+    // Persistent debug log (useful when the daemon crashes too fast to read the pane).
+    if (g_paging_persist_debug_log) {
+        (void)try_open_debug_log();
+        if (g_paging_debug_fd >= 0) {
+            dprintf(g_paging_debug_fd, "\n[pg] start pid=%d\n", (int)getpid());
+            fsync(g_paging_debug_fd);
+        }
+    }
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = crash_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESETHAND;
+    (void)sigaction(SIGSEGV, &sa, NULL);
+    (void)sigaction(SIGABRT, &sa, NULL);
+    (void)sigaction(SIGBUS, &sa, NULL);
+    (void)sigaction(SIGILL, &sa, NULL);
+    (void)sigaction(SIGFPE, &sa, NULL);
+    
     opt.config_path = xstrdup("config/configuration.yml");
     opt.ulanzi_sock = xstrdup("/tmp/ulanzi_device.sock");
     opt.control_sock = xstrdup("/tmp/goofydeck_paging_control.sock");
@@ -3617,9 +5209,9 @@ int main(int argc, char **argv) {
     opt.cache_root = xstrdup(".cache");
     opt.error_icon = xstrdup("assets/pregen/error.png");
     opt.sys_pregen_dir = xstrdup("assets/pregen");
+    
     bool dump_config = false;
 
-    // root_dir: cwd at startup
     char cwd[PATH_MAX];
     if (!getcwd(cwd, sizeof(cwd))) die_errno("getcwd");
     opt.root_dir = xstrdup(cwd);
@@ -3628,42 +5220,51 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
             free(opt.config_path);
             opt.config_path = xstrdup(argv[++i]);
-        } else if (strcmp(argv[i], "--ulanzi-sock") == 0 && i + 1 < argc) {
+        } 
+        else if (strcmp(argv[i], "--ulanzi-sock") == 0 && i + 1 < argc) {
             free(opt.ulanzi_sock);
             opt.ulanzi_sock = xstrdup(argv[++i]);
-        } else if (strcmp(argv[i], "--control-sock") == 0 && i + 1 < argc) {
+        } 
+        else if (strcmp(argv[i], "--control-sock") == 0 && i + 1 < argc) {
             free(opt.control_sock);
             opt.control_sock = xstrdup(argv[++i]);
-        } else if (strcmp(argv[i], "--ha-sock") == 0 && i + 1 < argc) {
+        } 
+        else if (strcmp(argv[i], "--ha-sock") == 0 && i + 1 < argc) {
             free(opt.ha_sock);
             opt.ha_sock = xstrdup(argv[++i]);
-        } else if (strcmp(argv[i], "--cache") == 0 && i + 1 < argc) {
+        } 
+        else if (strcmp(argv[i], "--cache") == 0 && i + 1 < argc) {
             free(opt.cache_root);
             opt.cache_root = xstrdup(argv[++i]);
-        } else if (strcmp(argv[i], "--error-icon") == 0 && i + 1 < argc) {
+        } 
+        else if (strcmp(argv[i], "--error-icon") == 0 && i + 1 < argc) {
             free(opt.error_icon);
             opt.error_icon = xstrdup(argv[++i]);
-        } else if (strcmp(argv[i], "--sys-pregen-dir") == 0 && i + 1 < argc) {
+        } 
+        else if (strcmp(argv[i], "--sys-pregen-dir") == 0 && i + 1 < argc) {
             free(opt.sys_pregen_dir);
             opt.sys_pregen_dir = xstrdup(argv[++i]);
-        } else if (strcmp(argv[i], "--dump-config") == 0) {
+        } 
+        else if (strcmp(argv[i], "--dump-config") == 0) {
             dump_config = true;
-        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+        } 
+        else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printf("Usage: %s [--config path] [--ulanzi-sock path] [--control-sock path] [--ha-sock path] [--cache dir]\n", argv[0]);
             return 0;
-        } else {
+        } 
+        else {
             fprintf(stderr, "Unknown arg: %s\n", argv[i]);
             return 2;
         }
     }
 
-    // Resolve relative paths against root_dir (cwd at start). Keep absolute paths as-is.
     char *cfg_abs = resolve_path(opt.root_dir, opt.config_path);
     char *cache_abs = resolve_path(opt.root_dir, opt.cache_root);
     char *err_abs = resolve_path(opt.root_dir, opt.error_icon);
     char *sys_abs = resolve_path(opt.root_dir, opt.sys_pregen_dir);
     char *ctl_abs = resolve_path(opt.root_dir, opt.control_sock);
     char *ha_abs = resolve_path(opt.root_dir, opt.ha_sock);
+    
     free(opt.config_path); opt.config_path = cfg_abs;
     free(opt.cache_root); opt.cache_root = cache_abs;
     free(opt.error_icon); opt.error_icon = err_abs;
@@ -3677,29 +5278,31 @@ int main(int argc, char **argv) {
 
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
-    // Avoid crashing if a client disconnects while we write to a socket (e.g. control socket piped via socat).
     signal(SIGPIPE, SIG_IGN);
 
     g_log_is_tty = isatty(STDERR_FILENO) ? 1 : 0;
 
-    // Start with a clean RAM-backed state (tmp files, wallpaper session copies, etc).
     wipe_paging_state_dir_at_startup(&opt);
 
     Config cfg;
     config_init_defaults(&cfg);
+    
     if (load_config(opt.config_path, &cfg) != 0) die_errno("load_config");
+    
     if (!config_get_page(&cfg, "$root")) {
         log_msg("config missing $root page");
         return 1;
     }
 
-    // Initialize label style once at startup (best-effort).
     (void)ulanzi_apply_default_label_style(&opt);
+    
     if (dump_config) {
         fprintf(stderr, "[paging] dump-config: pages=%zu presets=%zu\n", cfg.page_count, cfg.preset_count);
+        
         for (size_t i = 0; i < cfg.page_count; i++) {
             const Page *p = &cfg.pages[i];
             fprintf(stderr, "[paging] page '%s' items=%zu\n", p->name ? p->name : "<null>", p->count);
+            
             for (size_t j = 0; j < p->count && j < 20; j++) {
                 const Item *it = &p->items[j];
                 fprintf(stderr, "  - name='%s' preset='%s' icon='%s' text='%s' action='%s' data='%s'\n",
@@ -3711,6 +5314,7 @@ int main(int argc, char **argv) {
                         it->tap_data ? it->tap_data : "");
             }
         }
+        
         config_free(&cfg);
         free(opt.config_path);
         free(opt.ulanzi_sock);
@@ -3746,6 +5350,19 @@ int main(int argc, char **argv) {
 
     // Best-effort pre-generation of all declared state icons at daemon start.
     precache_state_icons(&opt, &cfg);
+
+    // Background command engine (polling + exec_text). Commands run even when their page isn't visible,
+    // but we only render/send updates for the current page.
+    CmdEngine cmd_engine;
+    memset(&cmd_engine, 0, sizeof(cmd_engine));
+    if (cmd_engine_init(&cmd_engine, &cfg) == 0) {
+        cmd_engine_build_from_config(&cmd_engine, &cfg);
+        if (cmd_engine_start(&cmd_engine) == 0) {
+            g_cmd_engine = &cmd_engine;
+        } else {
+            cmd_engine_free(&cmd_engine);
+        }
+    }
 
     // Subscribe to button events.
     int rb_fd = unix_connect(opt.ulanzi_sock);
@@ -3796,6 +5413,7 @@ int main(int argc, char **argv) {
 
     // Initial HA subscriptions for $root (usually none).
     ha_enter_page(&opt, &cfg, cur_page, &ha_fd, ha_buf, &ha_len, &ha_map, &ha_subs);
+    if (g_cmd_engine) cmd_state_on_enter_page(g_cmd_engine, cur_page);
 
     // Initial render once.
     render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
@@ -3808,21 +5426,23 @@ int main(int argc, char **argv) {
     bool need_resync_on_reconnect = !g_ulanzi_device_ready;
     double next_device_probe = 0.0;
 
-    while (g_running) {
-        struct pollfd fds[3];
-        memset(fds, 0, sizeof(fds));
-        fds[0].fd = rb_fd;
-        fds[0].events = POLLIN;
-        fds[1].fd = ctl_fd;
-        fds[1].events = POLLIN;
-        fds[2].fd = ha_fd;
-        fds[2].events = (ha_fd >= 0) ? POLLIN : 0;
+	    while (g_running) {
+	        struct pollfd fds[4];
+	        memset(fds, 0, sizeof(fds));
+	        fds[0].fd = rb_fd;
+	        fds[0].events = POLLIN;
+	        fds[1].fd = ctl_fd;
+	        fds[1].events = POLLIN;
+	        fds[2].fd = ha_fd;
+	        fds[2].events = (ha_fd >= 0) ? POLLIN : 0;
+	        fds[3].fd = (g_cmd_engine && g_cmd_engine->notify_r >= 0) ? g_cmd_engine->notify_r : -1;
+	        fds[3].events = (fds[3].fd >= 0) ? POLLIN : 0;
 
-        int pr = poll(fds, (ha_fd >= 0) ? 3 : 2, 100);
-        if (pr < 0) {
-            if (errno == EINTR) continue;
-            die_errno("poll");
-        }
+	        int pr = poll(fds, 4, 100);
+	        if (pr < 0) {
+	            if (errno == EINTR) continue;
+	            die_errno("poll");
+	        }
 
         // If the USB device disappears and comes back (USB reset), re-apply label style + current page.
         {
@@ -3933,10 +5553,14 @@ int main(int argc, char **argv) {
                     size_t lo = 0;
                     if (load_last_page(&opt, lp, sizeof(lp), &lo) == 0) {
                         if (config_get_page(&cfg, lp)) {
+                            char old_page[256];
+                            snprintf(old_page, sizeof(old_page), "%s", cur_page);
                             snprintf(cur_page, sizeof(cur_page), "%s", lp);
                             offset = lo;
                             last_sig[0] = 0; // force render
+                            if (g_cmd_engine) cmd_state_on_leave_page(g_cmd_engine, old_page);
                             ha_enter_page(&opt, &cfg, cur_page, &ha_fd, ha_buf, &ha_len, &ha_map, &ha_subs);
+                            if (g_cmd_engine) cmd_state_on_enter_page(g_cmd_engine, cur_page);
                             render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
                             persist_last_page(&opt, cur_page, offset);
                         } else {
@@ -3985,6 +5609,18 @@ int main(int argc, char **argv) {
                 ha_subs_clear_no_unsub(&ha_subs);
                 break;
             }
+        }
+
+        // Command updates (poll/exec_text): render/send only for current page.
+        if (fds[3].revents & POLLIN) {
+            char buf[256];
+            for (;;) {
+                ssize_t n = read(fds[3].fd, buf, sizeof(buf));
+                if (n > 0) continue;
+                if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+                break;
+            }
+            cmd_apply_updates_current_page(&opt, &cfg, cur_page, offset, blank_png);
         }
 
         // Ulanzi events
@@ -4149,6 +5785,8 @@ int main(int argc, char **argv) {
                 // System button presses (TAP only)
                 if (!is_tap) goto content_buttons;
                 if (reserved_back && btn == back_pos) {
+                    char old_page[256];
+                    snprintf(old_page, sizeof(old_page), "%s", cur_page);
                     bool changed = false;
                     if (page_stack_len > 0) {
                         page_stack_len--;
@@ -4164,7 +5802,9 @@ int main(int argc, char **argv) {
                     }
                     if (changed) {
                         offset = 0;
+                        if (g_cmd_engine) cmd_state_on_leave_page(g_cmd_engine, old_page);
                         ha_enter_page(&opt, &cfg, cur_page, &ha_fd, ha_buf, &ha_len, &ha_map, &ha_subs);
+                        if (g_cmd_engine) cmd_state_on_enter_page(g_cmd_engine, cur_page);
                         render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
                         persist_last_page(&opt, cur_page, offset);
                         flush_pending_button_events(rb_fd, &inlen, &start);
@@ -4226,12 +5866,19 @@ content_buttons:
                             snprintf(page_stack[page_stack_len], sizeof(page_stack[page_stack_len]), "%s", cur_page);
                             page_stack_len++;
                         }
+                        char old_page[256];
+                        snprintf(old_page, sizeof(old_page), "%s", cur_page);
                         snprintf(cur_page, sizeof(cur_page), "%s", data);
                         offset = 0;
+                        if (g_cmd_engine) cmd_state_on_leave_page(g_cmd_engine, old_page);
                         ha_enter_page(&opt, &cfg, cur_page, &ha_fd, ha_buf, &ha_len, &ha_map, &ha_subs);
+                        if (g_cmd_engine) cmd_state_on_enter_page(g_cmd_engine, cur_page);
                         render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
                         persist_last_page(&opt, cur_page, offset);
                         flush_pending_button_events(rb_fd, &inlen, &start);
+                        goto parse_done;
+                    } else if (strncmp(action, "$cmd.", 5) == 0) {
+                        (void)handle_cmd_action(&opt, &cfg, cur_page, offset, pressed_item, btn, evt, it, action, data, blank_png);
                         goto parse_done;
                     } else if (action[0] != '$') {
                         // Home Assistant call (domain.service or script.<entity> shortcut).
@@ -4264,6 +5911,10 @@ parse_done:
     if (ha_fd >= 0) close(ha_fd);
     ha_state_map_free(&ha_map);
     ha_subs_free(&ha_subs);
+    if (g_cmd_engine) {
+        cmd_engine_free(g_cmd_engine);
+        g_cmd_engine = NULL;
+    }
     config_free(&cfg);
     free(opt.config_path);
     free(opt.ulanzi_sock);

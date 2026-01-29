@@ -111,7 +111,7 @@ install_deps_debian() {
     build-essential pkg-config git ca-certificates
     libhidapi-dev libusb-1.0-0-dev zlib1g-dev libpng-dev libyaml-dev libssl-dev
     ffmpeg libavformat-dev libavcodec-dev libavutil-dev libswscale-dev
-    imagemagick librsvg2-bin librsvg2-dev libcairo2-dev
+    imagemagick librsvg2-bin librsvg2-dev libcairo2-dev libusb-dev
     jq bc
     netcat-openbsd socat
     fonts-noto-core fonts-noto-color-emoji

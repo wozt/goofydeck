@@ -55,6 +55,12 @@ presets:
     icon_size: 128
     icon_border_radius: 12
     icon_color: "FFFFFF"
+  cmd_button:
+    icon_background_color: "transparent"
+    icon_size: 128
+    icon_border_radius: 12
+    icon_color: "FFFFFF"
+    text_color: "00FF00"
   light_off:
     icon: mdi:lightbulb-outline
     icon_background_color: "333333"
@@ -778,19 +784,130 @@ pages:
 
   settings:
     buttons:
-      - name: "Home"
-        presets: [p13]
-        icon: mdi:home-outline
-        text: "HOME"
-      - name: "Cloud"
-        presets: [p20]
-        icon: mdi:cloud-outline
-        text: "CLD"
-      - name: "Map"
-        presets: [p28]
-        icon: mdi:map-outline
-        text: "MAP"
-      - name: "Map"
-        presets: [p28]
-        icon: mdi:map-outline
-        text: "MAP"
+      - name: "Exec"
+        presets: [cmd_button]
+        icon: mdi:play
+        tap_action:
+          action: $cmd.exec
+          data:
+            cmd: "echo exec_ok > /dev/shm/goofydeck/cmd_exec_last"
+
+      - name: "Now"
+        presets: [cmd_button]
+        icon: mdi:clock-outline
+        tap_action:
+          action: $cmd.exec_text
+          data:
+            cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_demo_date.sh'"
+            trim: yes
+            max_len: 32
+        hold_action:
+          action: $cmd.text_clear
+
+      - name: "Stderr"
+        presets: [cmd_button]
+        icon: mdi:message-alert-outline
+        tap_action:
+          action: $cmd.exec_text
+          data:
+            cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_demo_stderr_only.sh'"
+            trim: yes
+            max_len: 32
+        hold_action:
+          action: $cmd.text_clear
+
+      - name: "Fail"
+        presets: [cmd_button]
+        icon: mdi:alert-circle-outline
+        tap_action:
+          action: $cmd.exec_text
+          data:
+            cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_demo_fail.sh'"
+            trim: yes
+            max_len: 32
+        hold_action:
+          action: $cmd.text_clear
+
+      - name: "Slow"
+        presets: [cmd_button]
+        icon: mdi:timer-sand
+        tap_action:
+          action: $cmd.exec_text
+          data:
+            cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_demo_slow.sh'"
+            trim: yes
+            max_len: 32
+        hold_action:
+          action: $cmd.text_clear
+
+      - name: "PollTime"
+        presets: [cmd_button]
+        icon: mdi:update
+        tap_action:
+          action: $cmd.poll_start
+        hold_action:
+          action: $cmd.poll_stop
+        longhold_action:
+          action: $cmd.exec_stop
+        poll:
+          every_ms: 2000
+          action:
+            action: $cmd.exec_text
+            data:
+              cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_demo_date.sh'"
+              trim: yes
+              max_len: 32
+
+      - name: "Counter"
+        presets: [cmd_button]
+        icon: mdi:numeric
+        tap_action:
+          action: $cmd.poll_start
+        hold_action:
+          action: $cmd.poll_stop
+        longhold_action:
+          action: $cmd.exec_stop
+        poll:
+          every_ms: 1000
+          action:
+            action: $cmd.exec_text
+            data:
+              cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_demo_counter.sh'"
+              trim: yes
+              max_len: 32
+
+      - name: "Temp"
+        presets: [cmd_button]
+        icon: ""
+        tap_action:
+          action: $cmd.poll_start
+        hold_action:
+          action: $cmd.poll_stop
+        longhold_action:
+          action: $cmd.exec_stop
+        poll:
+          every_ms: 3000
+          action:
+            action: $cmd.exec_text
+            data:
+              cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_demo_temp.sh'"
+              trim: yes
+              max_len: 32
+
+      - name: "State"
+        presets: [cmd_button]
+        icon: mdi:toggle-switch
+        tap_action:
+          action: $cmd.exec
+          data:
+            cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_state_toggle.sh'"
+        state_cmd:
+          cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_state_get.sh'"
+          every_ms: 1500
+        states:
+          "on":
+            name: "ON"
+            presets: [light_on]
+          "off":
+            name: "OFF"
+            presets: [light_off]

@@ -46,6 +46,7 @@ Main config: `config/configuration.yml` (parsed with `libyaml`, no Python).
   - `dim_brightness`: brightness when dimmed (0–100)
   - `dim_timeout`: seconds of inactivity before dimming
   - `sleep_timeout`: seconds of inactivity before turning backlight off (brightness 0)
+- `cmd_timeout_ms`: default timeout for `$cmd.*` executions (default `3000`)
 - `wallpaper:` (optional): global wallpaper applied to pages (unless overridden per page).
   - `path`: path to the wallpaper image
   - `quality`: default `30`
@@ -147,6 +148,90 @@ Button fields:
     - for `$page.go_to`: target page name (string)
     - for HA services: JSON string/obj/array forwarded as HA `service_data` (and `entity_id` is injected when possible)
 - `states:`: map of HA state string → overrides (`name`, `presets`, and optionally `icon`/`text`).
+
+## Host command buttons (`$cmd.*`)
+
+`paging_daemon` can execute host commands (bash/scripts) and optionally render their output as dynamic text on the button.
+
+Notes:
+- Commands are executed through `/bin/sh -lc "<cmd>"` so you can use shell syntax (pipes, redirects, env vars, etc).
+- For text output, stdout is used; if stdout is empty, stderr is used.
+- On failure/timeout, the rendered text becomes `ERR`.
+- All temporary files are created under `/dev/shm/goofydeck_<uid>/paging/` (or fallback to `/tmp/`).
+
+### `$cmd.exec` (no text, fire-and-forget)
+
+```yml
+tap_action:
+  action: $cmd.exec
+  data:
+    cmd: "notify-send 'hello'"
+```
+
+### `$cmd.exec_text` + `$cmd.text_clear` (render text once)
+
+```yml
+tap_action:
+  action: $cmd.exec_text
+  data:
+    cmd: "date '+%H:%M:%S'"
+    trim: yes
+    max_len: 32
+hold_action:
+  action: $cmd.text_clear   # clears the text and re-sends the base icon
+```
+
+Text defaults (when missing in presets):
+- `text_color: FFFFFF`
+- `text_align: center`
+- `text_font: Roboto`
+- `text_size: 40`
+
+### `$cmd.poll_*` (manual start/stop)
+
+Define what the poll does in `poll:`, and bind start/stop to actions:
+
+```yml
+tap_action:   { action: $cmd.poll_start }
+hold_action:  { action: $cmd.poll_stop }   # also clears text + re-sends base icon
+longhold_action: { action: $cmd.exec_stop } # stop everything for this button (poll + state), clear text/state
+
+poll:
+  every_ms: 1000
+  action:
+    action: $cmd.exec_text
+    data:
+      cmd: "/home/wozt/GoofyDeck/mymedia/scripts/cmd_demo_counter.sh"
+      trim: yes
+      max_len: 32
+```
+
+### `state_cmd` + `states:` (auto polling per page)
+
+If a button defines `state_cmd`, `paging_daemon`:
+- starts state polling automatically when you enter the page
+- stops it automatically when you leave the page
+
+You can use a separate tap action to toggle a state (optional):
+
+```yml
+tap_action:
+  action: $cmd.exec
+  data:
+    cmd: "/home/wozt/GoofyDeck/mymedia/scripts/cmd_state_toggle.sh"
+
+state_cmd:
+  cmd: "/home/wozt/GoofyDeck/mymedia/scripts/cmd_state_get.sh"
+  every_ms: 1500
+
+states:
+  "on":
+    name: "ON"
+    presets: [light_on]
+  "off":
+    name: "OFF"
+    presets: [light_off]
+```
 
 ## Paging control commands
 
