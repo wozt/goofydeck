@@ -58,6 +58,18 @@ typedef struct {
 } CmdTextOpts;
 
 typedef struct {
+    char *action;
+    char *data;
+    CmdTextOpts cmd_text;
+} ActionStep;
+
+typedef struct {
+    ActionStep *steps;
+    size_t len;
+    size_t cap;
+} ActionSeq;
+
+typedef struct {
     char *name;
     char *icon;
     char *preset;
@@ -66,18 +78,22 @@ typedef struct {
     char *tap_action;
     char *tap_data;
     CmdTextOpts tap_cmd_text;
+    ActionSeq tap_seq;
     
     char *hold_action;
     char *hold_data;
     CmdTextOpts hold_cmd_text;
+    ActionSeq hold_seq;
     
     char *longhold_action;
     char *longhold_data;
     CmdTextOpts longhold_cmd_text;
+    ActionSeq longhold_seq;
     
     char *released_action;
     char *released_data;
     CmdTextOpts released_cmd_text;
+    ActionSeq released_seq;
     
     char *entity_id;
     
@@ -1108,6 +1124,53 @@ static const char *yaml_scalar_cstr(yaml_node_t *n) {
     return (const char *)n->data.scalar.value;
 }
 
+// Forward declarations for action parsing helpers (defined later).
+static CmdTextOpts cmd_text_opts_defaults(void);
+static void parse_cmd_text_data_node(yaml_document_t *doc, yaml_node_t *node, char **out_cmd, CmdTextOpts *opts);
+static void action_seq_push(ActionSeq *s, ActionStep st);
+
+static void parse_action_mapping_node(yaml_document_t *doc, yaml_node_t *map, ActionSeq *out) {
+    if (!doc || !map || map->type != YAML_MAPPING_NODE || !out) return;
+    yaml_node_t *a = yaml_mapping_get(doc, map, "action");
+    yaml_node_t *d = yaml_mapping_get(doc, map, "data");
+    const char *as = yaml_scalar_cstr(a);
+    if (!as || !as[0]) return;
+
+    ActionStep st;
+    memset(&st, 0, sizeof(st));
+    st.cmd_text = cmd_text_opts_defaults();
+    st.action = xstrdup(as);
+
+    if (strncmp(as, "$cmd.", 5) == 0) {
+        char *cmd = NULL;
+        CmdTextOpts o;
+        parse_cmd_text_data_node(doc, d, &cmd, &o);
+        if (cmd) st.data = cmd;
+        st.cmd_text = o;
+    } else {
+        if (yaml_scalar_cstr(d)) st.data = xstrdup(yaml_scalar_cstr(d));
+    }
+
+    action_seq_push(out, st);
+}
+
+static void parse_action_node(yaml_document_t *doc, yaml_node_t *node, ActionSeq *out) {
+    if (!doc || !node || !out) return;
+    if (node->type != YAML_MAPPING_NODE) return;
+
+    yaml_node_t *actions = yaml_mapping_get(doc, node, "actions");
+    if (actions && actions->type == YAML_SEQUENCE_NODE) {
+        for (yaml_node_item_t *it = actions->data.sequence.items.start; it < actions->data.sequence.items.top; it++) {
+            yaml_node_t *step = yaml_document_get_node(doc, *it);
+            if (!step || step->type != YAML_MAPPING_NODE) continue;
+            parse_action_mapping_node(doc, step, out);
+        }
+        return;
+    }
+
+    parse_action_mapping_node(doc, node, out);
+}
+
 static int clamp_int(int v, int lo, int hi);
 
 static int parse_int_scalar(const char *s, int *out) {
@@ -1159,6 +1222,28 @@ static CmdTextOpts cmd_text_opts_defaults(void) {
     o.trim = true;
     o.max_len = 32;
     return o;
+}
+
+static void action_seq_free(ActionSeq *s) {
+    if (!s) return;
+    for (size_t i = 0; i < s->len; i++) {
+        free(s->steps[i].action);
+        free(s->steps[i].data);
+    }
+    free(s->steps);
+    s->steps = NULL;
+    s->len = 0;
+    s->cap = 0;
+}
+
+static void action_seq_push(ActionSeq *s, ActionStep st) {
+    if (!s) return;
+    if (s->len + 1 > s->cap) {
+        size_t nc = s->cap ? (s->cap * 2) : 4;
+        s->steps = xrealloc(s->steps, nc * sizeof(s->steps[0]));
+        s->cap = nc;
+    }
+    s->steps[s->len++] = st;
 }
 
 static void parse_cmd_text_data_node(yaml_document_t *doc, yaml_node_t *node, char **out_cmd, CmdTextOpts *opts) {
@@ -1400,6 +1485,10 @@ static void config_free(Config *cfg) {
             free(p->items[j].longhold_data);
             free(p->items[j].released_action);
             free(p->items[j].released_data);
+            action_seq_free(&p->items[j].tap_seq);
+            action_seq_free(&p->items[j].hold_seq);
+            action_seq_free(&p->items[j].longhold_seq);
+            action_seq_free(&p->items[j].released_seq);
             free(p->items[j].entity_id);
             free(p->items[j].poll_action);
             free(p->items[j].poll_cmd);
@@ -1629,72 +1718,44 @@ static int load_config(const char *path, Config *out) {
                 // tap_action: { action: "$page.go_to", data: "scripts" }
                 n = yaml_mapping_get(&doc, item, "tap_action");
                 if (n && n->type == YAML_MAPPING_NODE) {
-                    yaml_node_t *a = yaml_mapping_get(&doc, n, "action");
-                    yaml_node_t *d = yaml_mapping_get(&doc, n, "data");
-                    const char *as = yaml_scalar_cstr(a);
-                    if (as && as[0]) out_item.tap_action = xstrdup(as);
-                    if (as && strncmp(as, "$cmd.", 5) == 0) {
-                        char *cmd = NULL;
-                        CmdTextOpts o;
-                        parse_cmd_text_data_node(&doc, d, &cmd, &o);
-                        if (cmd) out_item.tap_data = cmd;
-                        out_item.tap_cmd_text = o;
-                    } else {
-                        if (yaml_scalar_cstr(d)) out_item.tap_data = xstrdup(yaml_scalar_cstr(d));
+                    parse_action_node(&doc, n, &out_item.tap_seq);
+                    if (out_item.tap_seq.len > 0) {
+                        out_item.tap_action = xstrdup(out_item.tap_seq.steps[0].action ? out_item.tap_seq.steps[0].action : "");
+                        if (out_item.tap_seq.steps[0].data) out_item.tap_data = xstrdup(out_item.tap_seq.steps[0].data);
+                        out_item.tap_cmd_text = out_item.tap_seq.steps[0].cmd_text;
                     }
                 }
 
                 // hold_action: { action: "...", data: "..." }
                 n = yaml_mapping_get(&doc, item, "hold_action");
                 if (n && n->type == YAML_MAPPING_NODE) {
-                    yaml_node_t *a = yaml_mapping_get(&doc, n, "action");
-                    yaml_node_t *d = yaml_mapping_get(&doc, n, "data");
-                    const char *as = yaml_scalar_cstr(a);
-                    if (as && as[0]) out_item.hold_action = xstrdup(as);
-                    if (as && strncmp(as, "$cmd.", 5) == 0) {
-                        char *cmd = NULL;
-                        CmdTextOpts o;
-                        parse_cmd_text_data_node(&doc, d, &cmd, &o);
-                        if (cmd) out_item.hold_data = cmd;
-                        out_item.hold_cmd_text = o;
-                    } else {
-                        if (yaml_scalar_cstr(d)) out_item.hold_data = xstrdup(yaml_scalar_cstr(d));
+                    parse_action_node(&doc, n, &out_item.hold_seq);
+                    if (out_item.hold_seq.len > 0) {
+                        out_item.hold_action = xstrdup(out_item.hold_seq.steps[0].action ? out_item.hold_seq.steps[0].action : "");
+                        if (out_item.hold_seq.steps[0].data) out_item.hold_data = xstrdup(out_item.hold_seq.steps[0].data);
+                        out_item.hold_cmd_text = out_item.hold_seq.steps[0].cmd_text;
                     }
                 }
 
                 // longhold_action: { action: "...", data: "..." }
                 n = yaml_mapping_get(&doc, item, "longhold_action");
                 if (n && n->type == YAML_MAPPING_NODE) {
-                    yaml_node_t *a = yaml_mapping_get(&doc, n, "action");
-                    yaml_node_t *d = yaml_mapping_get(&doc, n, "data");
-                    const char *as = yaml_scalar_cstr(a);
-                    if (as && as[0]) out_item.longhold_action = xstrdup(as);
-                    if (as && strncmp(as, "$cmd.", 5) == 0) {
-                        char *cmd = NULL;
-                        CmdTextOpts o;
-                        parse_cmd_text_data_node(&doc, d, &cmd, &o);
-                        if (cmd) out_item.longhold_data = cmd;
-                        out_item.longhold_cmd_text = o;
-                    } else {
-                        if (yaml_scalar_cstr(d)) out_item.longhold_data = xstrdup(yaml_scalar_cstr(d));
+                    parse_action_node(&doc, n, &out_item.longhold_seq);
+                    if (out_item.longhold_seq.len > 0) {
+                        out_item.longhold_action = xstrdup(out_item.longhold_seq.steps[0].action ? out_item.longhold_seq.steps[0].action : "");
+                        if (out_item.longhold_seq.steps[0].data) out_item.longhold_data = xstrdup(out_item.longhold_seq.steps[0].data);
+                        out_item.longhold_cmd_text = out_item.longhold_seq.steps[0].cmd_text;
                     }
                 }
 
                 // released_action: { action: "...", data: "..." } (triggered on Ulanzi RELEASED)
                 n = yaml_mapping_get(&doc, item, "released_action");
                 if (n && n->type == YAML_MAPPING_NODE) {
-                    yaml_node_t *a = yaml_mapping_get(&doc, n, "action");
-                    yaml_node_t *d = yaml_mapping_get(&doc, n, "data");
-                    const char *as = yaml_scalar_cstr(a);
-                    if (as && as[0]) out_item.released_action = xstrdup(as);
-                    if (as && strncmp(as, "$cmd.", 5) == 0) {
-                        char *cmd = NULL;
-                        CmdTextOpts o;
-                        parse_cmd_text_data_node(&doc, d, &cmd, &o);
-                        if (cmd) out_item.released_data = cmd;
-                        out_item.released_cmd_text = o;
-                    } else {
-                        if (yaml_scalar_cstr(d)) out_item.released_data = xstrdup(yaml_scalar_cstr(d));
+                    parse_action_node(&doc, n, &out_item.released_seq);
+                    if (out_item.released_seq.len > 0) {
+                        out_item.released_action = xstrdup(out_item.released_seq.steps[0].action ? out_item.released_seq.steps[0].action : "");
+                        if (out_item.released_seq.steps[0].data) out_item.released_data = xstrdup(out_item.released_seq.steps[0].data);
+                        out_item.released_cmd_text = out_item.released_seq.steps[0].cmd_text;
                     }
                 }
 
@@ -2656,16 +2717,27 @@ static void cmd_engine_build_from_config(CmdEngine *e, const Config *cfg) {
             bool need = false;
             if (it->poll_every_ms > 0 && it->poll_action && it->poll_action[0] && it->poll_cmd && it->poll_cmd[0]) need = true;
             if (it->state_every_ms > 0 && it->state_cmd && it->state_cmd[0]) need = true;
-            // also create entries for one-shot exec_text actions so we can store results
-            if (it->tap_action && strcmp(it->tap_action, "$cmd.exec_text") == 0) need = true;
-            if (it->hold_action && strcmp(it->hold_action, "$cmd.exec_text") == 0) need = true;
-            if (it->longhold_action && strcmp(it->longhold_action, "$cmd.exec_text") == 0) need = true;
-            if (it->released_action && strcmp(it->released_action, "$cmd.exec_text") == 0) need = true;
-            // and for poll control actions (so runtime doesn't need to allocate entries)
-            if (it->tap_action && strncmp(it->tap_action, "$cmd.", 5) == 0) need = true;
-            if (it->hold_action && strncmp(it->hold_action, "$cmd.", 5) == 0) need = true;
-            if (it->longhold_action && strncmp(it->longhold_action, "$cmd.", 5) == 0) need = true;
-            if (it->released_action && strncmp(it->released_action, "$cmd.", 5) == 0) need = true;
+            // also create entries for one-shot exec_text actions so we can store results,
+            // and for poll control actions (so runtime doesn't need to allocate entries).
+            const ActionSeq *seqs[] = { &it->tap_seq, &it->hold_seq, &it->longhold_seq, &it->released_seq };
+            for (size_t si = 0; si < sizeof(seqs) / sizeof(seqs[0]); si++) {
+                const ActionSeq *s = seqs[si];
+                if (!s || s->len == 0) continue;
+                for (size_t ai = 0; ai < s->len; ai++) {
+                    const char *a = s->steps[ai].action;
+                    if (!a || !a[0]) continue;
+                    if (strncmp(a, "$cmd.", 5) == 0) need = true;
+                    if (strcmp(a, "$cmd.exec_text") == 0) need = true;
+                }
+            }
+            // Backward compatibility: if a config didn't provide action sequences (old configs), fall back
+            // to the legacy single action fields.
+            if (!need) {
+                if (it->tap_action && strncmp(it->tap_action, "$cmd.", 5) == 0) need = true;
+                if (it->hold_action && strncmp(it->hold_action, "$cmd.", 5) == 0) need = true;
+                if (it->longhold_action && strncmp(it->longhold_action, "$cmd.", 5) == 0) need = true;
+                if (it->released_action && strncmp(it->released_action, "$cmd.", 5) == 0) need = true;
+            }
             if (!need) continue;
 
             CmdEntry *ce = cmd_engine_get_or_add(e, p->name, ii);
@@ -3770,6 +3842,38 @@ static bool is_action_goto(const char *a) {
     return strcmp(a, "$page.go_to") == 0;
 }
 
+static const ActionSeq *item_action_seq_for_event(const Item *it, ButtonEvent evt) {
+    if (!it) return NULL;
+    switch (evt) {
+        case BTN_EVT_TAP: return &it->tap_seq;
+        case BTN_EVT_HOLD: return &it->hold_seq;
+        case BTN_EVT_LONGHOLD: return &it->longhold_seq;
+        case BTN_EVT_RELEASED: return &it->released_seq;
+        default: return NULL;
+    }
+}
+
+static void item_action_seq_ensure_legacy_single(const Item *it, ButtonEvent evt, ActionSeq *tmp) {
+    if (!it || !tmp) return;
+    memset(tmp, 0, sizeof(*tmp));
+
+    const char *a = NULL;
+    const char *d = NULL;
+    CmdTextOpts o = cmd_text_opts_defaults();
+    if (evt == BTN_EVT_TAP) { a = it->tap_action; d = it->tap_data; o = it->tap_cmd_text; }
+    else if (evt == BTN_EVT_HOLD) { a = it->hold_action; d = it->hold_data; o = it->hold_cmd_text; }
+    else if (evt == BTN_EVT_LONGHOLD) { a = it->longhold_action; d = it->longhold_data; o = it->longhold_cmd_text; }
+    else if (evt == BTN_EVT_RELEASED) { a = it->released_action; d = it->released_data; o = it->released_cmd_text; }
+    if (!a || !a[0]) return;
+
+    ActionStep st;
+    memset(&st, 0, sizeof(st));
+    st.action = xstrdup(a);
+    if (d && d[0]) st.data = xstrdup(d);
+    st.cmd_text = o;
+    action_seq_push(tmp, st);
+}
+
 static int ensure_sys_icon(const Options *opt, const Config *cfg, const char *name, const char *mdi_icon, char *out, size_t cap) {
     if (!opt || !cfg || !name || !mdi_icon || !out || cap == 0) return -1;
     snprintf(out, cap, "%s/%s.png", opt->sys_pregen_dir, name);
@@ -4415,12 +4519,28 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
 }
 
 static void state_dir(const Options *opt, char *out, size_t cap) {
-    // Prefer RAM-backed /dev/shm, but avoid sharing directories across users (sudo can leave root-owned dirs).
+    // Prefer RAM-backed /dev/shm for ALL runtime state (tmp overlays, wallpaper session tiles,
+    // composed caches, etc). This directory is wiped at paging_daemon startup.
+    //
+    // We prefer a single shared folder (`/dev/shm/goofydeck/paging`) to make cleanup simple and
+    // avoid "root-only" per-user dirs created by past sudo runs. If it's not writable (e.g. root-owned),
+    // fall back to a per-uid folder under /dev/shm.
     if (!out || cap == 0) return;
-    char primary[PATH_MAX];
-    snprintf(primary, sizeof(primary), "/dev/shm/goofydeck_%u/paging", (unsigned)getuid());
-    if (try_ensure_dir_parent(primary) == 0 && try_ensure_dir(primary) == 0 && access(primary, W_OK | X_OK) == 0) {
-        snprintf(out, cap, "%s", primary);
+    const char *shared = "/dev/shm/goofydeck/paging";
+    if (try_ensure_dir_parent(shared) == 0) {
+        // Create best-effort with permissive mode (umask may still reduce it).
+        (void)mkdir("/dev/shm/goofydeck", 0777);
+        (void)mkdir(shared, 0777);
+        if (access(shared, W_OK | X_OK) == 0) {
+            snprintf(out, cap, "%s", shared);
+            return;
+        }
+    }
+
+    char per_uid[PATH_MAX];
+    snprintf(per_uid, sizeof(per_uid), "/dev/shm/goofydeck_%u/paging", (unsigned)getuid());
+    if (try_ensure_dir_parent(per_uid) == 0 && try_ensure_dir(per_uid) == 0 && access(per_uid, W_OK | X_OK) == 0) {
+        snprintf(out, cap, "%s", per_uid);
         return;
     }
 
@@ -5597,53 +5717,58 @@ content_buttons:
     const Item *it = page_item_at(p, pressed_item);
     if (!it) return;
 
-    const char *action = NULL;
-    const char *data = NULL;
-    if (is_tap) {
-        action = it->tap_action;
-        data = it->tap_data;
-    } else if (is_hold) {
-        action = it->hold_action;
-        data = it->hold_data;
-    } else if (is_longhold) {
-        action = it->longhold_action;
-        data = it->longhold_data;
-    } else if (is_release) {
-        action = it->released_action;
-        data = it->released_data;
+    ActionSeq tmp_seq;
+    const ActionSeq *seq = item_action_seq_for_event(it, evt);
+    if (!seq || seq->len == 0) {
+        item_action_seq_ensure_legacy_single(it, evt, &tmp_seq);
+        seq = &tmp_seq;
+    } else {
+        memset(&tmp_seq, 0, sizeof(tmp_seq));
     }
-    if (!action || !action[0]) return;
 
-		    if (is_action_goto(action) && data && data[0]) {
-		        if (g_cmd_engine) cmd_state_on_leave_page(g_cmd_engine, cur_page);
-		        if (*page_stack_len < page_stack_cap) {
-		            snprintf(page_stack[*page_stack_len], sizeof(page_stack[*page_stack_len]), "%s", cur_page);
-		            (*page_stack_len)++;
-		        }
-		        snprintf(cur_page, cur_page_cap, "%s", data);
-		        *offset = 0;
-		        ha_enter_page(opt, cfg, cur_page, ha_fd, ha_buf, ha_len, ha_map, ha_subs);
-		        if (g_cmd_engine) cmd_state_on_enter_page(g_cmd_engine, cur_page);
-		        render_and_send(opt, cfg, cur_page, *offset, ha_map, blank_png, last_sig, last_sig_cap);
-		        persist_last_page(opt, cur_page, *offset);
-		        flush_pending_button_events(rb_fd, inlen, NULL);
-		        return;
-		    }
+    for (size_t si = 0; seq && si < seq->len; si++) {
+        const char *action = seq->steps[si].action;
+        const char *data = seq->steps[si].data;
+        if (!action || !action[0]) continue;
 
-	        // Local command actions (shell on host).
-	        if (strncmp(action, "$cmd.", 5) == 0) {
-	            (void)handle_cmd_action(opt, cfg, cur_page, *offset, pressed_item, btn, evt, it, action, data, blank_png);
-	            return;
-	        }
+        if (is_action_goto(action) && data && data[0]) {
+            if (g_cmd_engine) cmd_state_on_leave_page(g_cmd_engine, cur_page);
+            if (*page_stack_len < page_stack_cap) {
+                snprintf(page_stack[*page_stack_len], sizeof(page_stack[*page_stack_len]), "%s", cur_page);
+                (*page_stack_len)++;
+            }
+            snprintf(cur_page, cur_page_cap, "%s", data);
+            *offset = 0;
+            ha_enter_page(opt, cfg, cur_page, ha_fd, ha_buf, ha_len, ha_map, ha_subs);
+            if (g_cmd_engine) cmd_state_on_enter_page(g_cmd_engine, cur_page);
+            render_and_send(opt, cfg, cur_page, *offset, ha_map, blank_png, last_sig, last_sig_cap);
+            persist_last_page(opt, cur_page, *offset);
+            flush_pending_button_events(rb_fd, inlen, NULL);
+            action_seq_free(&tmp_seq);
+            return;
+        }
 
-	    if (action[0] != '$') {
-	        Item tmp = *it;
-	        tmp.tap_action = (char *)action;
-	        tmp.tap_data = (char *)(data ? data : "");
-	        if (ha_call_from_item(opt, *ha_fd, &tmp) != 0) {
-	            log_msg("ha call failed (action='%s')", action ? action : "");
-	        }
-	    }
+        if (strncmp(action, "$cmd.", 5) == 0) {
+            Item tmp = *it;
+            if (evt == BTN_EVT_TAP) tmp.tap_cmd_text = seq->steps[si].cmd_text;
+            else if (evt == BTN_EVT_HOLD) tmp.hold_cmd_text = seq->steps[si].cmd_text;
+            else if (evt == BTN_EVT_LONGHOLD) tmp.longhold_cmd_text = seq->steps[si].cmd_text;
+            else if (evt == BTN_EVT_RELEASED) tmp.released_cmd_text = seq->steps[si].cmd_text;
+            (void)handle_cmd_action(opt, cfg, cur_page, *offset, pressed_item, btn, evt, &tmp, action, data, blank_png);
+            continue;
+        }
+
+        if (action[0] != '$') {
+            Item tmp = *it;
+            tmp.tap_action = (char *)action;
+            tmp.tap_data = (char *)(data ? data : "");
+            if (ha_call_from_item(opt, *ha_fd, &tmp) != 0) {
+                log_msg("ha call failed (action='%s')", action ? action : "");
+            }
+            continue;
+        }
+    }
+    action_seq_free(&tmp_seq);
 	}
 
 int main(int argc, char **argv) {
@@ -6310,51 +6435,61 @@ content_buttons:
                     const Item *it = page_item_at(p, pressed_item);
                     if (!it) continue;
 
-                    const char *action = NULL;
-                    const char *data = NULL;
-                    if (is_tap) {
-                        action = it->tap_action;
-                        data = it->tap_data;
-                    } else if (is_hold) {
-                        action = it->hold_action;
-                        data = it->hold_data;
-                    } else if (is_longhold) {
-                        action = it->longhold_action;
-                        data = it->longhold_data;
-                    } else if (is_release) {
-                        action = it->released_action;
-                        data = it->released_data;
+                    ActionSeq tmp_seq;
+                    const ActionSeq *seq = item_action_seq_for_event(it, evt);
+                    if (!seq || seq->len == 0) {
+                        item_action_seq_ensure_legacy_single(it, evt, &tmp_seq);
+                        seq = &tmp_seq;
+                    } else {
+                        memset(&tmp_seq, 0, sizeof(tmp_seq));
                     }
-                    if (!action || !action[0]) continue;
 
-                    if (is_action_goto(action) && data && data[0]) {
-                        if (page_stack_len < (int)(sizeof(page_stack) / sizeof(page_stack[0]))) {
-                            snprintf(page_stack[page_stack_len], sizeof(page_stack[page_stack_len]), "%s", cur_page);
-                            page_stack_len++;
+                    for (size_t si = 0; seq && si < seq->len; si++) {
+                        const char *action = seq->steps[si].action;
+                        const char *data = seq->steps[si].data;
+                        if (!action || !action[0]) continue;
+
+                        if (is_action_goto(action) && data && data[0]) {
+                            if (page_stack_len < (int)(sizeof(page_stack) / sizeof(page_stack[0]))) {
+                                snprintf(page_stack[page_stack_len], sizeof(page_stack[page_stack_len]), "%s", cur_page);
+                                page_stack_len++;
+                            }
+                            char old_page[256];
+                            snprintf(old_page, sizeof(old_page), "%s", cur_page);
+                            snprintf(cur_page, sizeof(cur_page), "%s", data);
+                            offset = 0;
+                            if (g_cmd_engine) cmd_state_on_leave_page(g_cmd_engine, old_page);
+                            ha_enter_page(&opt, &cfg, cur_page, &ha_fd, ha_buf, &ha_len, &ha_map, &ha_subs);
+                            if (g_cmd_engine) cmd_state_on_enter_page(g_cmd_engine, cur_page);
+                            render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
+                            persist_last_page(&opt, cur_page, offset);
+                            flush_pending_button_events(rb_fd, &inlen, &start);
+                            action_seq_free(&tmp_seq);
+                            goto parse_done;
                         }
-                        char old_page[256];
-                        snprintf(old_page, sizeof(old_page), "%s", cur_page);
-                        snprintf(cur_page, sizeof(cur_page), "%s", data);
-                        offset = 0;
-                        if (g_cmd_engine) cmd_state_on_leave_page(g_cmd_engine, old_page);
-                        ha_enter_page(&opt, &cfg, cur_page, &ha_fd, ha_buf, &ha_len, &ha_map, &ha_subs);
-                        if (g_cmd_engine) cmd_state_on_enter_page(g_cmd_engine, cur_page);
-                        render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
-                        persist_last_page(&opt, cur_page, offset);
-                        flush_pending_button_events(rb_fd, &inlen, &start);
-                        goto parse_done;
-                    } else if (strncmp(action, "$cmd.", 5) == 0) {
-                        (void)handle_cmd_action(&opt, &cfg, cur_page, offset, pressed_item, btn, evt, it, action, data, blank_png);
-                        goto parse_done;
-                    } else if (action[0] != '$') {
-                        // Home Assistant call (domain.service or script.<entity> shortcut).
-                        Item tmp = *it;
-                        tmp.tap_action = (char *)action;
-                        tmp.tap_data = (char *)(data ? data : "");
-                        if (ha_call_from_item(&opt, ha_fd, &tmp) != 0) {
-                            log_msg("ha call failed (action='%s')", action ? action : "");
+
+                        if (strncmp(action, "$cmd.", 5) == 0) {
+                            Item tmp = *it;
+                            if (evt == BTN_EVT_TAP) tmp.tap_cmd_text = seq->steps[si].cmd_text;
+                            else if (evt == BTN_EVT_HOLD) tmp.hold_cmd_text = seq->steps[si].cmd_text;
+                            else if (evt == BTN_EVT_LONGHOLD) tmp.longhold_cmd_text = seq->steps[si].cmd_text;
+                            else if (evt == BTN_EVT_RELEASED) tmp.released_cmd_text = seq->steps[si].cmd_text;
+                            (void)handle_cmd_action(&opt, &cfg, cur_page, offset, pressed_item, btn, evt, &tmp, action, data, blank_png);
+                            continue;
+                        }
+
+                        if (action[0] != '$') {
+                            // Home Assistant call (domain.service or script.<entity> shortcut).
+                            Item tmp = *it;
+                            tmp.tap_action = (char *)action;
+                            tmp.tap_data = (char *)(data ? data : "");
+                            if (ha_call_from_item(&opt, ha_fd, &tmp) != 0) {
+                                log_msg("ha call failed (action='%s')", action ? action : "");
+                            }
+                            continue;
                         }
                     }
+                    action_seq_free(&tmp_seq);
                 }
             }
 

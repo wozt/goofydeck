@@ -1,0 +1,1026 @@
+brightness: 100
+
+sleep:
+  dim_brightness: 10
+  dim_timeout: 10
+  sleep_timeout: 86400
+
+wallpaper:
+  path: "mymedia/wallpapers/valley.png"
+  quality: 30
+  magnify: 100
+  dithering: yes
+
+system_buttons:
+  $page.back:
+    position: 11
+  $page.previous:
+    position: 12
+  $page.next:
+    position: 13
+
+presets:
+  default:
+    icon_background_color: "241f31"
+    icon_border_radius: 12
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_size: 128
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 100
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+  $nav:
+    icon_background_color: "1a5fb4"
+    icon_border_radius: 50
+    icon_border_width: 10
+    icon_border_color: "FFFFFF"
+    icon_size: 128
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 100
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "center"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+  base_button:
+    icon_background_color: "transparent"
+    icon_size: 128
+    icon_border_radius: 12
+    icon_color: "FFFFFF"
+  cmd_button:
+    icon_background_color: "transparent"
+    icon_size: 128
+    icon_border_radius: 12
+    icon_color: "FFFFFF"
+    text_color: "00FF00"
+    text_align: "center"
+    text_font: "dustismo_bold.ttf"
+    text_size: 50
+    text_offset: 0,0
+  light_off:
+    icon: mdi:lightbulb-outline
+    icon_background_color: "333333"
+  light_on:
+    icon: mdi:lightbulb
+    icon_background_color: "FFD700"
+  screen_off:
+    icon: mdi:monitor-off
+    icon_background_color: "8b0000"
+  screen_on:
+    icon: mdi:monitor
+    icon_background_color: "1e90ff"
+  room_folder:
+    icon_border_width: 4
+    icon_border_color: "FFFFFF"
+    icon_background_color: "b9003e"
+    icon_size: 128
+    icon_border_radius: 12
+    icon_border_size: 128
+  p01:
+    icon_background_color: "241f31"
+    icon_border_radius: 12
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: "DejaVuSansMono.ttf"
+    text_size: 18
+    text_offset: 0,-6
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p02:
+    icon_background_color: "1c71d8"
+    icon_border_radius: 12
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 8
+    icon_border_color: "FFFFFF"
+    icon_padding: 60
+    icon_offset: 0,0
+    icon_brightness: 99
+  p03:
+    icon_background_color: "813d9c"
+    icon_border_radius: 12
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "center"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 8
+    icon_border_color: "000000"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p04:
+    icon_background_color: "c01c28"
+    icon_border_radius: 12
+    icon_size: 128
+    icon_color: "440055"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,-4
+    icon_border_width: 12
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p05:
+    icon_background_color: "e66100"
+    icon_border_radius: 20
+    icon_size: 160
+    icon_color: transparent
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 8
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p06:
+    icon_background_color: "f6d32d"
+    icon_border_radius: 12
+    icon_size: 0
+    icon_color: "000000"
+    text_color: "transparent"
+    text_align: "center"
+    text_font: "DejaVuSans.ttf"
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 10
+    icon_border_color: "000000"
+    icon_padding: 24
+    icon_offset: 0,0
+    icon_brightness: 99
+  p07:
+    icon_background_color: "transparent"
+    icon_border_radius: 12
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p08:
+    icon_background_color: "transparent"
+    icon_border_radius: 18
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "top"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,12
+    icon_border_width: 8
+    icon_border_color: "transparent"
+    icon_padding: 0
+    icon_offset: 0,-8
+    icon_brightness: 99
+  p09:
+    icon_background_color: "5e5c64"
+    icon_border_radius: 18
+    icon_size: 128
+    icon_color: transparent
+    text_color: "FFFFFF"
+    text_align: "center"
+    text_font: "DejaVuSans.ttf"
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p10:
+    icon_background_color: "000000"
+    icon_border_radius: 18
+    icon_size: 128
+    icon_color: transparent
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 10
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p11:
+    icon_background_color: "2ec27e"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p12:
+    icon_background_color: "e01b24"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p13:
+    icon_background_color: "1a5fb4"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p14:
+    icon_background_color: "613583"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 8
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p15:
+    icon_background_color: "c64600"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 8
+    icon_border_color: "000000"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p16:
+    icon_background_color: "1f9e7a"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p17:
+    icon_background_color: "2b6ea3"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p18:
+    icon_background_color: "9141ac"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p19:
+    icon_background_color: "a51d2d"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p20:
+    icon_background_color: "c64600"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p21:
+    icon_background_color: "e5a50a"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "000000"
+    text_color: "000000"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p22:
+    icon_background_color: "26a269"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p23:
+    icon_background_color: "3584e4"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p24:
+    icon_background_color: "5e5c64"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p25:
+    icon_background_color: "241f31"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p26:
+    icon_background_color: "1c71d8"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p27:
+    icon_background_color: "813d9c"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p28:
+    icon_background_color: "c01c28"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p29:
+    icon_background_color: "e66100"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+  p30:
+    icon_background_color: "26a269"
+    icon_border_radius: 22
+    icon_size: 128
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+    icon_border_width: 1
+    icon_border_color: "FFFFFF"
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+
+  dir1:
+    icon_background_color: transparent
+    icon_border_radius: 20
+    icon_border_width: 8
+    icon_border_color: "FFFFFF"
+    icon_size: 128
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+  dir2:
+    icon_background_color: "813d9c"
+    icon_border_radius: 20
+    icon_border_width: 8
+    icon_border_color: "FFFFFF"
+    icon_size: 128
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+    icon_color: "FFFFFF"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+  dir3:
+    icon_background_color: "c01c28"
+    icon_border_radius: 20
+    icon_border_width: 8
+    icon_border_color: "FFFFFF"
+    icon_size: 128
+    icon_padding: 0
+    icon_offset: 0,0
+    icon_brightness: 99
+    icon_color: "transparent"
+    text_color: "FFFFFF"
+    text_align: "bottom"
+    text_font: ""
+    text_size: 48
+    text_offset: 0,0
+
+pages:
+  $root:
+    wallpaper:
+      path: "mymedia/wallpapers/neige.png"
+      quality: 60
+      magnify: 100
+      dithering: yes
+    buttons:
+      - name: "Salon"
+        presets: [room_folder]
+        icon: mdi:sofa
+        text: "SALON"
+        tap_action:
+          action: $page.go_to
+          data: "salon"
+      - name: "Scripts"
+        presets: [dir1]
+        icon: mdi:folder-outline
+        text: "SCRIPTS"
+        tap_action:
+          action: $page.go_to
+          data: "scripts"
+      - name: "Settings"
+        presets: [dir3]
+        icon: mdi:folder-multiple-outline
+        text: "SETTINGS"
+        tap_action:
+          action: $page.go_to
+          data: "settings"
+      - name: "Item 04"
+        presets: [p04]
+        icon: mdi:numeric-4-circle
+        text: "CUTOUT"
+      - name: "Item 05"
+        presets: [p05]
+        icon: mdi:numeric-5-circle
+      - name: "Item 06"
+        presets: [p06]
+        text: "TEXT_ONLY"
+      - name: "Item 07"
+      - name: "Item 08"
+        presets: [p08]
+        icon: mdi:numeric-8-circle
+        text: "TOP"
+      - name: "Item 09"
+        presets: [p09]
+        text: "pls work"
+        icon: mdi:numeric-9-circle
+      - name: "Item 10"
+        presets: [p10]
+        icon: mdi:numeric-0-circle
+      - name: "Item 11"
+        presets: [p11]
+        icon: mdi:star
+      - name: "Test Full Icon Page"
+        presets: [dir2]
+        icon: mdi:firefox
+        text: "FULL"
+        tap_action:
+          action: $page.go_to
+          data: "testfulliconpage"
+      - name: "Item 13"
+        presets: [p13]
+        icon: mdi:home-outline
+      - name: "Item 14"
+        presets: [p14]
+        icon: mdi:cog-outline
+      - name: "Item 15"
+        presets: [p15]
+        icon: mdi:account-outline
+      - name: "Item 16"
+        presets: [p16]
+        icon: mdi:bell-outline
+      - name: "Item 17"
+        presets: [p17]
+        icon: mdi:calendar-outline
+      - name: "Item 18"
+        presets: [p18]
+        icon: mdi:camera-outline
+      - name: "Item 19"
+        presets: [p19]
+        icon: mdi:chart-line
+      - name: "Item 20"
+        presets: [p20]
+        icon: mdi:cloud-outline
+      - name: "Item 21"
+        presets: [p21]
+        icon: mdi:dev-to
+      - name: "Item 22"
+        presets: [p22]
+        icon: mdi:database-outline
+      - name: "Item 23"
+        presets: [p23]
+        icon: mdi:download-outline
+      - name: "Item 24"
+        presets: [p24]
+        icon: mdi:email-outline
+      - name: "Item 25"
+        presets: [p25]
+        icon: mdi:file-document-outline
+      - name: "Item 26"
+        presets: [p26]
+        icon: mdi:folder-outline
+      - name: "Item 27"
+        presets: [p27]
+        icon: mdi:format-list-bulleted
+      - name: "Item 28"
+        presets: [p28]
+        icon: mdi:map-outline
+      - name: "Item 29"
+        presets: [p29]
+        icon: mdi:music-note-outline
+      - name: "Item 30"
+        presets: [p30]
+        icon: mdi:power
+
+  scripts:
+    buttons:
+      - name: "Firefox"
+        presets: [p12]
+        icon: mdi:firefox
+        tap_action:
+          action: $cmd.exec
+          data:
+            cmd: "./mymedia/scripts/launch_firefox_display0.sh"
+      - name: "Local PNG"
+        presets: [p12]
+        icon: "local:assets/pregen/page_next.png"
+      - name: "URL PNG"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
+      - name: "Local SVG"
+        presets: [p12]
+        icon: "local:assets/mdi/launch.svg"
+      - name: "URL SVG"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "Tool 2"
+        presets: [p12]
+        icon: mdi:dev-to
+        text: "HA"
+      - name: "Deep"
+        presets: [p30]
+        icon: mdi:dev-to
+        text: "DEEP"
+        tap_action:
+          action: $page.go_to
+          data: "scripts_deep"
+
+  scripts_deep:
+    buttons:
+      - name: "Leaf"
+        presets: [dir1]
+        icon: mdi:leaf
+        text: "LEAF"
+      - name: "Up"
+        presets: [dir1]
+        icon: mdi:arrow-up-bold
+        text: "UP"
+
+  testfulliconpage:
+    buttons:
+      - name: "FF 01"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
+      - name: "FF 02"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 03"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 04"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
+      - name: "FF 05"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 06"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 07"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 08"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
+      - name: "FF 09"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 10"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 11"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 12"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
+      - name: "FF 13"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 14"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 15"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 16"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
+      - name: "FF 17"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 18"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 19"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 20"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
+      - name: "FF 21"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 22"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 23"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 24"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
+      - name: "FF 25"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 26"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 27"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 28"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/8/84/Mozilla_Firefox_3.5_logo.png"
+      - name: "FF 29"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+      - name: "FF 30"
+        presets: [p12]
+        icon: "url:https://upload.wikimedia.org/wikipedia/commons/a/a0/Firefox_logo%2C_2019.svg"
+
+  salon:
+    buttons:
+      - name: ""
+      - name: ""
+      - name: ""
+      - name: ""
+      - name: "Temperature"
+        entity_id: sensor.tz3000_utwgoauk_snzb_02_temperature
+        presets: [cmd_button]
+      - name: "Lampe droite"
+        entity_id: light.lampe_droite
+        presets: [base_button]
+        tap_action:
+          action: light.toggle
+        hold_action:
+          action: light.toggle
+        longhold_action:
+          action: light.toggle
+        released_action:
+          action: light.toggle
+        states:
+          "on":
+            name: "LD ON"
+            presets: [light_on]
+          "off":
+            name: "LD OFF"
+            presets: [light_off]
+      - name: "Lampe gauche"
+        entity_id: light.lampe_gauche
+        presets: [base_button]
+        tap_action:
+          action: light.toggle
+        states:
+          "on":
+            name: "LG ON"
+            presets: [light_on]
+          "off":
+            name: "LG OFF"
+            presets: [light_off]
+      - name: "Lampe escalier"
+        entity_id: light.lampe_escalier
+        presets: [base_button]
+        tap_action:
+          action: light.toggle
+        states:
+          "on":
+            name: "LE ON"
+            presets: [light_on]
+          "off":
+            name: "LE OFF"
+            presets: [light_off]
+      - name: "Écrans Salon"
+        entity_id: script.eteint_les_ecrans_du_salon
+        presets: [base_button]
+        tap_action:
+          action: script.eteint_les_ecrans_du_salon
+        states:
+          "on":
+            name: "Écrans éteints"
+            presets: [screen_on]
+          "off":
+            name: "Écrans allumés"
+            presets: [screen_off]
+
+
+
+  settings:
+    buttons:
+      - name: "Exec"
+        presets: [cmd_button]
+        icon: mdi:play
+        tap_action:
+          action: $cmd.exec
+          data:
+            cmd: "echo exec_ok > /dev/shm/goofydeck/cmd_exec_last"
+
+      - name: "Now"
+        presets: [cmd_button]
+        icon: mdi:clock-outline
+        tap_action:
+          action: $cmd.exec_text
+          data:
+            cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_demo_date.sh'"
+            trim: yes
+            max_len: 32
+        hold_action:
+          action: $cmd.text_clear
+
+      - name: "Stderr"
+        presets: [cmd_button]
+        icon: mdi:message-alert-outline
+        tap_action:
+          action: $cmd.exec_text
+          data:
+            cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_demo_stderr_only.sh'"
+            trim: yes
+            max_len: 32
+        hold_action:
+          action: $cmd.text_clear
+
+      - name: "Fail"
+        presets: [cmd_button]
+        icon: mdi:alert-circle-outline
+        tap_action:
+          action: $cmd.exec_text
+          data:
+            cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_demo_fail.sh'"
+            trim: yes
+            max_len: 32
+        hold_action:
+          action: $cmd.text_clear
+
+      - name: "Slow"
+        presets: [cmd_button]
+        icon: mdi:timer-sand
+        tap_action:
+          action: $cmd.exec_text
+          data:
+            cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_demo_slow.sh'"
+            trim: yes
+            max_len: 32
+        hold_action:
+          action: $cmd.text_clear
+
+      - name: "PollTime"
+        presets: [cmd_button]
+        icon: mdi:update
+        tap_action:
+          action: $cmd.poll_start
+        hold_action:
+          action: $cmd.poll_stop
+        longhold_action:
+          action: $cmd.exec_stop
+        poll:
+          every_ms: 2000
+          action:
+            action: $cmd.exec_text
+            data:
+              cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_demo_date.sh'"
+              trim: yes
+              max_len: 32
+
+      - name: "Counter"
+        presets: [cmd_button]
+        icon: mdi:numeric
+        tap_action:
+          action: $cmd.poll_start
+        hold_action:
+          action: $cmd.poll_stop
+        longhold_action:
+          action: $cmd.exec_stop
+        poll:
+          every_ms: 1000
+          action:
+            action: $cmd.exec_text
+            data:
+              cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_demo_counter.sh'"
+              trim: yes
+              max_len: 32
+
+      - name: "Temp"
+        presets: [cmd_button]
+        icon: ""
+        tap_action:
+          action: $cmd.poll_start
+        hold_action:
+          action: $cmd.poll_stop
+        longhold_action:
+          action: $cmd.exec_stop
+        poll:
+          every_ms: 5000
+          action:
+            action: $cmd.exec_text
+            data:
+              cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_demo_temp.sh'"
+              trim: yes
+              max_len: 32
+
+      - name: "State"
+        presets: [cmd_button]
+        icon: mdi:toggle-switch
+        tap_action:
+          action: $cmd.exec
+          data:
+            cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_state_toggle.sh'"
+        state_cmd:
+          cmd: "sh -lc '/home/wozt/GoofyDeck/mymedia/scripts/cmd_state_get.sh'"
+          every_ms: 1500
+        states:
+          "on":
+            name: "ON"
+            presets: [light_on]
+          "off":
+            name: "OFF"
+            presets: [light_off]

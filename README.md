@@ -76,7 +76,7 @@ Performance warning:
 
 Storage warning:
 - Wallpaper tiling creates small render files **next to your wallpaper image** (a folder named `<wallpaper filename without .png>/` containing `<name>-1.png` ... `<name>-14.png`).
-- During runtime, additional session caches and temporary files are stored under `/dev/shm/goofydeck_<uid>/paging/` and are cleared on daemon start.
+- During runtime, additional session caches and temporary files are stored under `/dev/shm/goofydeck/paging/` (fallback: `/dev/shm/goofydeck_<uid>/paging/`) and are cleared on daemon start.
 
 ### External icons (`local:` / `url:`)
 
@@ -85,7 +85,7 @@ Buttons can use custom icons:
 - `icon: url:<url>` for remote PNG/SVG
 
 The daemon normalizes them (crop to square, resize if needed, dither + palette reduction) so they fit the device constraints.
-Normalized results are cached on disk under `.cache/external_icons/` and also copied to `/dev/shm/goofydeck_<uid>/paging/external_icons_session/` for the current session.
+Normalized results are cached on disk under `.cache/external_icons/` and also copied to `/dev/shm/goofydeck/paging/external_icons_session/` for the current session.
 
 Notes:
 - If the icon is still too large after normalization, the daemon falls back to `assets/pregen/filetobig.png`.
@@ -177,7 +177,7 @@ Notes:
 - For text output, stdout is used; if stdout is empty, stderr is used.
 - On failure/timeout, the rendered text becomes `ERR`.
 - If a button has no `icon:` (or an empty icon) and wallpaper is disabled, the daemon renders text on a generated 196×196 base (using the preset background/border) instead of `assets/pregen/empty.png` (which is intentionally 1×1 to keep ZIPs small).
-- All temporary files are created under `/dev/shm/goofydeck_<uid>/paging/` (or fallback to `/tmp/`).
+- All temporary files are created under `/dev/shm/goofydeck/paging/` (fallback: `/dev/shm/goofydeck_<uid>/paging/`, then `/tmp/`).
 
 ### `$cmd.exec` (no text, fire-and-forget)
 
