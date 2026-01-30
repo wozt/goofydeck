@@ -3,7 +3,7 @@ brightness: 100
 sleep:
   dim_brightness: 10
   dim_timeout: 10
-  sleep_timeout: 3600
+  sleep_timeout: 86400
 
 wallpaper:
   path: "mymedia/wallpapers/valley.png"
@@ -61,6 +61,10 @@ presets:
     icon_border_radius: 12
     icon_color: "FFFFFF"
     text_color: "00FF00"
+    text_align: "center"
+    text_font: "dustismo_bold.ttf"
+    text_size: 50
+    text_offset: 0,0
   light_off:
     icon: mdi:lightbulb-outline
     icon_background_color: "333333"
@@ -833,7 +837,7 @@ pages:
       - name: ""
       - name: "Temperature"
         entity_id: sensor.tz3000_utwgoauk_snzb_02_temperature
-        presets: [base_button]
+        presets: [cmd_button]
       - name: "Lampe droite"
         entity_id: light.lampe_droite
         presets: [base_button]
@@ -995,7 +999,7 @@ pages:
         longhold_action:
           action: $cmd.exec_stop
         poll:
-          every_ms: 3000
+          every_ms: 5000
           action:
             action: $cmd.exec_text
             data:

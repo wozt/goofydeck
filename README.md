@@ -207,6 +207,9 @@ Text defaults (when missing in presets):
 - `text_font: Roboto`
 - `text_size: 40`
 
+Font note:
+- Bold fonts tend to look much better on the D200 (thin fonts can become hard to read after palette reduction / dithering).
+
 ### `$cmd.poll_*` (manual start/stop)
 
 Define what the poll does in `poll:`, and bind start/stop to actions:
