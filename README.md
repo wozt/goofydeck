@@ -176,6 +176,7 @@ Notes:
 - Commands are executed through `/bin/sh -lc "<cmd>"` so you can use shell syntax (pipes, redirects, env vars, etc).
 - For text output, stdout is used; if stdout is empty, stderr is used.
 - On failure/timeout, the rendered text becomes `ERR`.
+- If a button has no `icon:` (or an empty icon) and wallpaper is disabled, the daemon renders text on a generated 196×196 base (using the preset background/border) instead of `assets/pregen/empty.png` (which is intentionally 1×1 to keep ZIPs small).
 - All temporary files are created under `/dev/shm/goofydeck_<uid>/paging/` (or fallback to `/tmp/`).
 
 ### `$cmd.exec` (no text, fire-and-forget)
