@@ -2887,6 +2887,15 @@ static void ha_format_value_text(const HaStateMap *m, const char *entity_id, cha
     }
 }
 
+static bool ha_entity_is_value_display(const char *entity_id) {
+    if (!entity_id || !entity_id[0]) return false;
+    // Only show raw HA state as text for value-like domains (sensor readings, numbers, etc).
+    // For toggle-like domains (script/light/switch/...), users should define `states:` overrides.
+    return (strncmp(entity_id, "sensor.", 7) == 0) ||
+           (strncmp(entity_id, "number.", 7) == 0) ||
+           (strncmp(entity_id, "input_number.", 13) == 0);
+}
+
 typedef struct {
     char *entity_id;
     int sub_id;
@@ -4249,8 +4258,10 @@ static void render_and_send(const Options *opt, const Config *cfg, const char *p
                 }
             }
 
-	        // HA entity value display (sensor, etc): if no states are defined, show HA state as text (unless config already sets text).
-	        if (!have_icon && it && it->entity_id && it->entity_id[0] && it->state_count == 0 && ha_map) {
+	        // HA entity value display (sensor, etc): if no states are defined, show HA state as text
+            // only for value-like domains (otherwise we'd show raw "off" for scripts, etc).
+	        if (!have_icon && it && it->entity_id && it->entity_id[0] && it->state_count == 0 && ha_map &&
+                ha_entity_is_value_display(it->entity_id)) {
 	            char value_text[128] = {0};
 	            ha_format_value_text(ha_map, it->entity_id, value_text, sizeof(value_text));
             const char *pr_name = (it->preset && it->preset[0]) ? it->preset : "default";
@@ -4999,8 +5010,8 @@ static void ha_partial_update_visible(const Options *opt, const Config *cfg, con
                 }
             }
 
-            // Value display.
-            if (!have_icon && it->state_count == 0) {
+            // Value display (only for value-like domains; otherwise we'd show raw "off" for scripts, etc).
+            if (!have_icon && it->state_count == 0 && ha_entity_is_value_display(it->entity_id)) {
                 char value_text[128] = {0};
                 ha_format_value_text(ha_map, it->entity_id, value_text, sizeof(value_text));
                 const char *pr_name = (it->preset && it->preset[0]) ? it->preset : "default";
