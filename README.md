@@ -65,6 +65,12 @@ When `wallpaper` is enabled, `paging_daemon` renders the wallpaper into **14 til
 
 Navigation buttons (`$page.previous/$page.next/$page.back`) are also composed against the current page wallpaper and cached per page.
 
+How it works:
+- You can enable a **global** `wallpaper:` and optionally override it per page (`pages.<name>.wallpaper:`).
+- On first use, the wallpaper image is rendered into a folder next to the image: `<wallpaper filename without .png>/` containing `<name>-1.png` ... `<name>-14.png`.
+- At runtime, the daemon copies the needed tiles into `/dev/shm/goofydeck/paging/` (session cache).
+- For buttons 1–13, the daemon composes `tile + icon` using `draw_over` and sends a 14-button page update.
+
 Recommendations (tune based on your SBC and the image content):
 - Prefer **~360p wallpapers** for responsiveness.
 - All image sizes are supported, but you typically need to lower `quality` as the resolution goes up.
@@ -73,6 +79,7 @@ Recommendations (tune based on your SBC and the image content):
 
 Performance warning:
 - Wallpaper composition adds CPU work and extra file I/O. It is **not recommended** on very small SBCs (e.g. Raspberry Pi Zero / Banana Pi) if you want fast navigation.
+- Wallpaper also increases the amount of data that changes per page render (14 tiles + per-button compositions), which can make page transitions slower on weak hosts.
 
 Storage warning:
 - Wallpaper tiling creates small render files **next to your wallpaper image** (a folder named `<wallpaper filename without .png>/` containing `<name>-1.png` ... `<name>-14.png`).
@@ -343,6 +350,104 @@ Optional:
 
 Home Assistant UI note:
 - If a button has `entity_id` but no `states:` mapping, the daemon does **not** display raw on/off states for toggle-like entities (e.g. `script.*`). For value-like entities (`sensor.*`, `number.*`, `input_number.*`), the raw value is rendered as text by default.
+
+### Home Assistant config examples
+
+#### 1) Room navigation (`$page.go_to`)
+
+```yml
+pages:
+  $root:
+    buttons:
+      - name: "Salon"
+        presets: [room_folder]
+        icon: mdi:sofa
+        tap_action:
+          action: $page.go_to
+          data: salon
+
+  salon:
+    buttons: []
+```
+
+#### 2) Light toggle with UI states (`states:`)
+
+```yml
+presets:
+  base_button:
+    icon_background_color: "transparent"
+    icon_border_radius: 12
+
+  light_off:
+    icon: mdi:lightbulb-outline
+    icon_background_color: "transparent"
+    icon_color: "333333"
+
+  light_on:
+    icon: mdi:lightbulb
+    icon_background_color: "transparent"
+    icon_color: "FFD700"
+
+pages:
+  salon:
+    buttons:
+      - name: "Lampe droite"
+        entity_id: light.lampe_droite
+        presets: [base_button]
+        tap_action:
+          action: light.toggle
+        states:
+          "on":  { name: "ON",  presets: [light_on] }
+          "off": { name: "OFF", presets: [light_off] }
+```
+
+#### 3) Script “fire and forget” (no state text)
+
+If you just want to trigger a Home Assistant script and you **don’t** want a state-driven UI, omit `entity_id`.
+
+```yml
+pages:
+  debian_pc:
+    buttons:
+      - name: "Reboot"
+        presets: [base_button]
+        icon: mdi:restart
+        tap_action:
+          action: script.reboot_debian_pc
+```
+
+#### 4) Sensor value as dynamic text (no `states:`)
+
+```yml
+pages:
+  salon:
+    buttons:
+      - name: "Temperature"
+        entity_id: sensor.tz3000_utwgoauk_snzb_02_temperature
+        presets: [cmd_button, base_button]  # text_* comes from cmd_button
+```
+
+#### 5) Service data (`data:`) forwarded as `service_data`
+
+`data:` can be a JSON object/array string. If the button has an `entity_id`, it is injected automatically when possible.
+
+```yml
+pages:
+  salon:
+    buttons:
+      - name: "Light 50%"
+        entity_id: light.lampe_droite
+        presets: [base_button]
+        tap_action:
+          action: light.turn_on
+          data: '{"brightness_pct":50}'
+```
+
+### Subscriptions / updates behavior
+
+- When you enter a page, `paging_daemon` subscribes to the `entity_id` present on that page (via `ha_daemon`).
+- When you leave a page, it unsubscribes entities from the old page.
+- On state changes, it uses partial updates (only the affected button is refreshed).
 
 ## Ulanzi device daemon commands
 
