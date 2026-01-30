@@ -229,6 +229,17 @@ poll:
       max_len: 32
 ```
 
+### Polling/loops warning (device limitation)
+
+The D200 can become slow or unstable if you refresh icons too frequently for a long time while staying on the same page (for example when using `$cmd.poll_*` or `state_cmd` for “live” widgets).
+
+This appears to be a **device-side caching/RAM limitation**: it accumulates data internally and we do not have a reliable software way to purge it from the host (ADB is not available).
+
+Recommendations:
+- Prefer **manual refresh** when possible (one-shot update on tap), like the `RAM cache` example in `settings`.
+- If you use polling for “visual” widgets, keep the interval reasonable and **stop it when you don’t need it** (otherwise it will eventually lag).
+- If the device is heavily lagging after long runs, a full USB power cycle (unplug/replug the 5V power) clears the device-side state.
+
 ### `state_cmd` + `states:` (auto polling per page)
 
 If a button defines `state_cmd`, `paging_daemon`:
