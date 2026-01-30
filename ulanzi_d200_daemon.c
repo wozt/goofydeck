@@ -893,87 +893,11 @@ int main(void) {
                     write(cfd, "err no_device\n", 14);
                     goto cmd_done;
                 }
-                
-                // Special case for set-buttons-explicit-14-data: binary data follows
-                int is_binary_command = 0;
-                if (strncmp(line,"set-buttons-explicit-14-data",28)==0) {
-                    is_binary_command = 1;
-                }
-                
-                if (is_binary_command) {
-                    // Format: set-buttons-explicit-14-data\n
-                    // Then 14 PNG data blocks: size (4 bytes) + PNG data
-                    // Optimized approach: tiles are already converted to PNG by client
-                    
-                    IconItem items[14]; 
-                    memset(items,0,sizeof(items));
-                    for (int i=0;i<14;i++) { 
-                        items[i].btn_index=i; 
-                        items[i].label=strdup(""); 
-                    }
-                    
-                    int ok=1;
-                    
-                    for (int i=0;i<14 && ok;i++) {
-                        // Read size (4 bytes)
-                        uint8_t lenbuf[4];
-                        ssize_t bytes_read = read(cfd, lenbuf, 4);
-                        
-                        if (bytes_read != 4) { 
-                            ok=0; break; 
-                        }
-                        uint32_t blen = (lenbuf[0]<<24)|(lenbuf[1]<<16)|(lenbuf[2]<<8)|lenbuf[3];
-                        
-                        // Allocate and read PNG data (already converted by client)
-                        items[i].data = malloc(blen);
-                        if (!items[i].data) { ok=0; break; }
-                        items[i].data_len = blen;
-                        
-                        size_t off=0;
-                        while (off<blen) {
-                            ssize_t nr = read(cfd, items[i].data+off, blen-off);
-                            if (nr<=0) { 
-                                ok=0; break; 
-                            }
-                            off += (size_t)nr;
-                        }
-                        if (!ok) break;
-                        
-                        // PNG filename
-                        char nm[32]; 
-                        snprintf(nm,sizeof(nm), i==13 ? "b14.png" : "b%d.png", i+1);
-                        items[i].name = strdup(nm);
-                    }
-                    
-                    // Create ZIP with already converted PNG files
-                    if (ok) {
-                        uint8_t *zipbuf=NULL; size_t ziplen=0; int pad_used=0; size_t patched=0;
-                        if (build_zip_from_icons(items,14,&zipbuf,&ziplen,&pad_used,&patched)==0 && zipbuf) {
-                            int res=send_zip_buffer_cmd(dev,zipbuf,ziplen,0x0001,pad_used,patched);
-                            free(zipbuf);
-                            if (res==0) {
-                                write(cfd,"ok\n",3); 
-                            } else {
-                                write(cfd,"err\n",4);
-                            }
-                        } else {
-                            write(cfd,"err\n",4);
-                        }
-                    } else {
-                        write(cfd,"err\n",4);
-                    }
-                    
-                    // Clean up resources
-                    for (int i=0;i<14;i++) { 
-                        free(items[i].data); 
-                        free(items[i].name); 
-                        free(items[i].label); 
-                    }
-                } else if (strncmp(line, "set-brightness ", 15) == 0) {
-                    int v = atoi(line + 15);
-                    if (v < 0) v = 0;
-                    if (v > 100) v = 100;
-                    char payload[16]; snprintf(payload, sizeof(payload), "%d", v);
+	                if (strncmp(line, "set-brightness ", 15) == 0) {
+	                    int v = atoi(line + 15);
+	                    if (v < 0) v = 0;
+	                    if (v > 100) v = 100;
+	                    char payload[16]; snprintf(payload, sizeof(payload), "%d", v);
                     if (send_command(dev, 0x000a, (uint8_t *)payload, strlen(payload)) >= 0)
                         write(cfd, "ok\n", 3);
                     else write(cfd, "err\n", 4);

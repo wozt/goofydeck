@@ -26,33 +26,6 @@
 #define FD_UNUSED
 #endif
 
-// Structure for parallel PNG conversion tasks
-typedef struct {
-    const uint8_t *rgba_data;
-    int w, h;
-    uint8_t *png_data;
-    size_t png_len;
-    int tile_id;
-    int status; // 0 = pending, 1 = completed, -1 = error
-    pthread_mutex_t mutex;
-    pthread_cond_t cond;
-} tile_task_t;
-
-// Structure for thread pool
-typedef struct {
-    tile_task_t *tasks;
-    int task_count;
-    int next_task;
-    int completed_tasks;
-    int total_tasks;
-    pthread_t *threads;
-    int thread_count;
-    pthread_mutex_t work_mutex;
-    pthread_cond_t work_cond;
-    pthread_cond_t done_cond;
-    int shutdown;
-} thread_pool_t;
-
 // --- PNG helpers ---
 static int read_png_rgba(const char *path, uint8_t **out, int *w, int *h) {
     FILE *fp = fopen(path, "rb");
@@ -305,7 +278,6 @@ typedef struct {
     int compress;         // Enable PNG compression
     int colors;           // Number of colors for quantization (8 or 16)
     int tile_optimize;    // Tile optimization (default: true)
-    int buffer_mode;      // Send data directly to daemon (no files)
     int no_send;          // Do not send to daemon (render only)
     int icon_size;        // Reference icon size (calculated dynamically)
     int quality_percent;   // Quality percentage (100=original size, 50=half, default: 100)
@@ -319,7 +291,6 @@ static void quantize_to_256_colors(uint8_t *img, int w, int h);
 static void optimize_input_image(uint8_t *img, int w, int h);
 static void apply_dithering(uint8_t *img, int w, int h);
 static int write_png_8bit(const char *path, const uint8_t *data, int w, int h);
-static int send_rgba_data_direct(const uint8_t *tiles[14], const int tile_w[14], const int tile_h[14]);
 
 // Function to copy generated icons to a folder
 static void copy_icons_to_folder(const uint8_t *tiles[14], const int tile_w[14], const int tile_h[14], const char *folder, const char *filename_prefix) {
@@ -505,188 +476,6 @@ static FD_UNUSED int write_png_8bit(const char *path, const uint8_t *data, int w
     return 0;
 }
 
-// Structure pour gérer l'écriture PNG en mémoire (thread-safe)
-typedef struct {
-    uint8_t *data;
-    size_t length;
-    size_t capacity;
-} png_memory_buffer;
-
-// Fonctions callback pour l'écriture en mémoire
-static void png_write_data_to_memory(png_structp png_ptr, png_bytep data, png_size_t length) {
-    png_memory_buffer *buffer = (png_memory_buffer*)png_get_io_ptr(png_ptr);
-    if (buffer->length + length > buffer->capacity) {
-        buffer->capacity = buffer->length + length + 4096;  // +4KB de marge
-        buffer->data = realloc(buffer->data, buffer->capacity);
-    }
-    if (buffer->data) {
-        memcpy(buffer->data + buffer->length, data, length);
-        buffer->length += length;
-    }
-}
-
-static void png_flush_data_to_memory(png_structp png_ptr) {
-    (void)png_ptr;
-    // Rien à faire pour l'écriture en mémoire
-}
-
-// Conversion RGBA en PNG en mémoire optimisée pour les threads
-static int rgba_to_png_memory_thread(const uint8_t *rgba, int w, int h, uint8_t **png_data, size_t *png_len) {
-    png_memory_buffer buffer = {0};
-    
-    png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-    if (!png) return -1;
-    
-    png_infop info = png_create_info_struct(png);
-    if (!info) { png_destroy_write_struct(&png, NULL); return -1; }
-    
-    if (setjmp(png_jmpbuf(png))) { 
-        png_destroy_write_struct(&png, &info); 
-        if (buffer.data) free(buffer.data);
-        return -1; 
-    }
-    
-    png_set_write_fn(png, &buffer, png_write_data_to_memory, png_flush_data_to_memory);
-    
-    png_set_IHDR(png, info, w, h, 8, PNG_COLOR_TYPE_RGBA, PNG_INTERLACE_NONE, 
-                PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
-    png_set_compression_level(png, Z_BEST_SPEED);  // Rapide mais compressé
-    png_set_filter(png, 0, PNG_FILTER_NONE);  // Pas de filtres coûteux
-    
-    png_bytep *rows = malloc(sizeof(png_bytep) * h);
-    if (!rows) { 
-        png_destroy_write_struct(&png, &info); 
-        if (buffer.data) free(buffer.data);
-        return -1; 
-    }
-    
-    for (int y = 0; y < h; y++) {
-        rows[y] = (png_bytep)(rgba + y * w * 4);
-    }
-    
-    png_set_rows(png, info, rows);
-    png_write_png(png, info, PNG_TRANSFORM_IDENTITY, NULL);
-    
-    free(rows);
-    png_destroy_write_struct(&png, &info);
-    
-    *png_data = buffer.data;
-    *png_len = buffer.length;
-    
-    return 0;
-}
-
-// Fonction worker pour les threads
-static void* worker_thread(void *arg) {
-    thread_pool_t *pool = (thread_pool_t*)arg;
-    
-    while (!pool->shutdown) {
-        pthread_mutex_lock(&pool->work_mutex);
-        
-        // Attendre une tâche
-        while (pool->next_task >= pool->total_tasks && !pool->shutdown) {
-            pthread_cond_wait(&pool->work_cond, &pool->work_mutex);
-        }
-        
-        if (pool->shutdown) {
-            pthread_mutex_unlock(&pool->work_mutex);
-            break;
-        }
-        
-        // Prendre une tâche
-        int task_id = pool->next_task++;
-        pthread_mutex_unlock(&pool->work_mutex);
-        
-        // Exécuter la conversion PNG
-        tile_task_t *task = &pool->tasks[task_id];
-        task->status = rgba_to_png_memory_thread(task->rgba_data, task->w, task->h, 
-                                                &task->png_data, &task->png_len);
-        
-        // Signaler la completion
-        pthread_mutex_lock(&pool->work_mutex);
-        pool->completed_tasks++;
-        if (pool->completed_tasks == pool->total_tasks) {
-            pthread_cond_signal(&pool->done_cond);
-        }
-        pthread_mutex_unlock(&pool->work_mutex);
-    }
-    
-    return NULL;
-}
-
-// Initialiser le thread pool
-static int thread_pool_init(thread_pool_t *pool, int thread_count) {
-    pool->tasks = NULL;
-    pool->task_count = 0;
-    pool->next_task = 0;
-    pool->completed_tasks = 0;
-    pool->total_tasks = 0;
-    pool->thread_count = thread_count;
-    pool->shutdown = 0;
-    
-    pool->threads = malloc(sizeof(pthread_t) * thread_count);
-    if (!pool->threads) return -1;
-    
-    if (pthread_mutex_init(&pool->work_mutex, NULL) != 0) {
-        free(pool->threads);
-        return -1;
-    }
-    
-    if (pthread_cond_init(&pool->work_cond, NULL) != 0) {
-        pthread_mutex_destroy(&pool->work_mutex);
-        free(pool->threads);
-        return -1;
-    }
-    
-    if (pthread_cond_init(&pool->done_cond, NULL) != 0) {
-        pthread_cond_destroy(&pool->work_cond);
-        pthread_mutex_destroy(&pool->work_mutex);
-        free(pool->threads);
-        return -1;
-    }
-    
-    // Créer les threads
-    for (int i = 0; i < thread_count; i++) {
-        if (pthread_create(&pool->threads[i], NULL, worker_thread, pool) != 0) {
-            pool->shutdown = 1;
-            pthread_cond_broadcast(&pool->work_cond);
-            for (int j = 0; j < i; j++) {
-                pthread_join(pool->threads[j], NULL);
-            }
-            pthread_cond_destroy(&pool->done_cond);
-            pthread_cond_destroy(&pool->work_cond);
-            pthread_mutex_destroy(&pool->work_mutex);
-            free(pool->threads);
-            return -1;
-        }
-    }
-    
-    return 0;
-}
-
-// Exécuter les tâches en parallèle
-static int thread_pool_execute(thread_pool_t *pool, tile_task_t *tasks, int task_count) {
-    pool->tasks = tasks;
-    pool->task_count = task_count;
-    pool->next_task = 0;
-    pool->completed_tasks = 0;
-    pool->total_tasks = task_count;
-    
-    // Réveiller les threads
-    pthread_mutex_lock(&pool->work_mutex);
-    pthread_cond_broadcast(&pool->work_cond);
-    pthread_mutex_unlock(&pool->work_mutex);
-    
-    // Attendre la completion
-    pthread_mutex_lock(&pool->work_mutex);
-    while (pool->completed_tasks < task_count) {
-        pthread_cond_wait(&pool->done_cond, &pool->work_mutex);
-    }
-    pthread_mutex_unlock(&pool->work_mutex);
-    
-    return 0;
-}
-
 // Fonction worker pour l'écriture PNG
 static void* png_write_worker_thread(void *arg) {
     png_write_pool_t *pool = (png_write_pool_t*)arg;
@@ -810,138 +599,6 @@ static void png_write_pool_destroy(png_write_pool_t *pool) {
     pthread_cond_destroy(&pool->work_cond);
     pthread_mutex_destroy(&pool->work_mutex);
     free(pool->threads);
-}
-
-// Détruire le thread pool (conversion mémoire)
-static void thread_pool_destroy(thread_pool_t *pool) {
-    pool->shutdown = 1;
-    pthread_cond_broadcast(&pool->work_cond);
-    
-    for (int i = 0; i < pool->thread_count; i++) {
-        pthread_join(pool->threads[i], NULL);
-    }
-    
-    pthread_cond_destroy(&pool->done_cond);
-    pthread_cond_destroy(&pool->work_cond);
-    pthread_mutex_destroy(&pool->work_mutex);
-    free(pool->threads);
-}
-
-// Envoyer les données RGBA directement au démon via socket (optimisé avec threads)
-static int send_rgba_data_direct(const uint8_t *tiles[14], const int tile_w[14], const int tile_h[14]) {
-    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sock < 0) {
-        perror("socket");
-        return -1;
-    }
-    
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strcpy(addr.sun_path, SOCK_PATH);
-    
-    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        perror("connect");
-        close(sock);
-        return -1;
-    }
-    
-    // Envoyer la commande
-    const char *cmd = "set-buttons-explicit-14-data\n";
-    if (write(sock, cmd, strlen(cmd)) < 0) {
-        perror("write cmd");
-        close(sock);
-        return -1;
-    }
-    
-    // Flush pour s'assurer que la commande est envoyée avant les données
-    fsync(sock);
-    sleep(1); // 1 seconde pour laisser le démon traiter la commande
-    
-    // Initialiser le thread pool (utiliser 4 threads = nombre de coeurs CPU typique)
-    thread_pool_t pool;
-    if (thread_pool_init(&pool, 4) != 0) {
-        close(sock);
-        return -1;
-    }
-    
-    // Préparer les tâches de conversion PNG
-    tile_task_t tasks[14];
-    for (int i = 0; i < 14; i++) {
-        tasks[i].rgba_data = tiles[i];
-        tasks[i].w = tile_w[i];
-        tasks[i].h = tile_h[i];
-        tasks[i].png_data = NULL;
-        tasks[i].png_len = 0;
-        tasks[i].tile_id = i;
-        tasks[i].status = 0;
-    }
-    
-    // Exécuter les conversions en parallèle
-    // printf("Conversion PNG en parallèle avec %d threads...\n", pool.thread_count);
-    if (thread_pool_execute(&pool, tasks, 14) != 0) {
-        thread_pool_destroy(&pool);
-        close(sock);
-        return -1;
-    }
-    
-    // Envoyer chaque tuile PNG avec sa taille
-    for (int i = 0; i < 14; i++) {
-        if (tasks[i].status != 0) {
-            fprintf(stderr, "Erreur conversion tuile %d\n", i);
-            continue;
-        }
-        
-        uint32_t png_size = tasks[i].png_len;
-        
-        // Envoyer la taille (4 bytes, big-endian)
-        uint8_t size_buf[4];
-        size_buf[0] = (png_size >> 24) & 0xff;
-        size_buf[1] = (png_size >> 16) & 0xff;
-        size_buf[2] = (png_size >> 8) & 0xff;
-        size_buf[3] = png_size & 0xff;
-        
-        if (write(sock, size_buf, 4) < 0) {
-            perror("write size");
-            close(sock);
-            thread_pool_destroy(&pool);
-            return -1;
-        }
-        
-        // Envoyer les données PNG
-        size_t sent = 0;
-        while (sent < png_size) {
-            ssize_t n = write(sock, tasks[i].png_data + sent, png_size - sent);
-            if (n <= 0) {
-                perror("write data");
-                close(sock);
-                thread_pool_destroy(&pool);
-                return -1;
-            }
-            sent += n;
-        }
-    }
-    
-    // Nettoyer les ressources
-    for (int i = 0; i < 14; i++) {
-        if (tasks[i].png_data) {
-            free(tasks[i].png_data);
-        }
-    }
-    thread_pool_destroy(&pool);
-    
-    // Lire la réponse
-    char response[8];
-    ssize_t resp_len = read(sock, response, sizeof(response) - 1);
-    if (resp_len > 0) {
-        response[resp_len] = '\0';
-        printf("Réponse du démon: %s\n", response);
-    } else {
-        perror("read response");
-    }
-    
-    close(sock);
-    return 0;
 }
 
 // Fonction de dithering Floyd-Steinberg pour réduire les bandes de couleurs
@@ -1168,7 +825,6 @@ static void show_help(const char *prog_name) {
     printf("  -m, --magnify=PCT   Magnification des icônes en pourcentage (50-300, défaut: 100)\n");
     printf("  -k, --keep-icons=F[=P]   Copier les icônes générées dans le dossier F [avec préfixe P]\n");
     printf("  --no-tile-optimize    Désactiver optimisation des tuiles\n");
-    printf("  -b, --buffer            Envoie les données directement au démon (plus rapide)\n");
     printf("  --no-send              Ne pas envoyer au démon (render uniquement)\n");
     printf("  -h, --help            Afficher cette aide\n");
     printf("\nExemples:\n");
@@ -1212,18 +868,17 @@ static void copy_icons_from_files(const png_write_task_t *write_tasks, int count
 
 int main(int argc, char **argv) {
     // Initialiser les options par défaut
-    process_options_t opts = {
-        .optimize_input = 0,
-        .dither = 0,
-        .compress = 0,
-        .colors = 8,  // Défaut: 8 couleurs
-        .tile_optimize = 1,  // Défaut: optimisation tuiles activée
-        .buffer_mode = 0,  // Défaut: mode fichiers
-        .no_send = 0,
-        .icon_size = 0,  // Calculé dynamiquement
-        .quality_percent = 100,  // Défaut: pas de redimensionnement
-        .magnify_percent = 100,  // Défaut: pas de magnification
-        .keep_folder = NULL,   // Défaut: pas de copie des icônes
+	process_options_t opts = {
+		.optimize_input = 0,
+		.dither = 0,
+		.compress = 0,
+		.colors = 8,  // Défaut: 8 couleurs
+		.tile_optimize = 1,  // Défaut: optimisation tuiles activée
+		.no_send = 0,
+		.icon_size = 0,  // Calculé dynamiquement
+		.quality_percent = 100,  // Défaut: pas de redimensionnement
+		.magnify_percent = 100,  // Défaut: pas de magnification
+		.keep_folder = NULL,   // Défaut: pas de copie des icônes
         .filename_prefix = NULL  // Défaut: préfixe "icon"
     };
     
@@ -1254,14 +909,12 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Erreur: nombre de couleurs doit être 8, 16, 32 ou 64\n");
                 return 1;
             }
-        } else if (strcmp(argv[i], "--no-tile-optimize") == 0) {
-            opts.tile_optimize = 0;
-        } else if (strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--buffer") == 0) {
-            opts.buffer_mode = 1;
-        } else if (strncmp(argv[i], "-q=", 3) == 0) {
-            opts.quality_percent = atoi(argv[i] + 3);
-            if (opts.quality_percent < 10 || opts.quality_percent > 100) {
-                fprintf(stderr, "Erreur: pourcentage de qualité doit être entre 10 et 100\n");
+		} else if (strcmp(argv[i], "--no-tile-optimize") == 0) {
+			opts.tile_optimize = 0;
+		} else if (strncmp(argv[i], "-q=", 3) == 0) {
+			opts.quality_percent = atoi(argv[i] + 3);
+			if (opts.quality_percent < 10 || opts.quality_percent > 100) {
+				fprintf(stderr, "Erreur: pourcentage de qualité doit être entre 10 et 100\n");
                 return 1;
             }
         } else if (strncmp(argv[i], "--quality=", 10) == 0) {
@@ -1334,8 +987,8 @@ int main(int argc, char **argv) {
     // Ne pas supprimer les frame_*.png car ils peuvent être utilisés par send_video_page_wrapper
     
     // printf("Traitement de: %s\n", img_path);
-    // printf("Options: optimisation_input=%d, dither=%d, compress=%d, couleurs=%d, tile_optimize=%d, buffer_mode=%d, quality_percent=%d, magnify_percent=%d, keep_folder=%s\n",
-    //     opts.optimize_input, opts.dither, opts.compress, opts.colors, opts.tile_optimize, opts.buffer_mode, opts.quality_percent, opts.magnify_percent, opts.keep_folder ? opts.keep_folder : "NULL");
+    // printf("Options: optimisation_input=%d, dither=%d, compress=%d, couleurs=%d, tile_optimize=%d, quality_percent=%d, magnify_percent=%d, keep_folder=%s\n",
+    //     opts.optimize_input, opts.dither, opts.compress, opts.colors, opts.tile_optimize, opts.quality_percent, opts.magnify_percent, opts.keep_folder ? opts.keep_folder : "NULL");
     
     // Lire l'image source
     uint8_t *src = NULL;
@@ -1423,88 +1076,9 @@ int main(int argc, char **argv) {
     for (int c = 0; c < 5; c++) x[c] = margin_x + c * (btn + gap);
     int y[3]; 
     for (int r = 0; r < 3; r++) y[r] = margin_y + r * (btn + gap);
-    
-    if (opts.buffer_mode) {
-        // Mode buffer: créer les tuiles en mémoire et envoyer directement
-        // printf("Mode buffer: création des tuiles en mémoire...\n");
-        
-        const uint8_t *tiles[14];
-        int tile_w[14], tile_h[14];
-        
-        // Traiter les 13 premiers boutons (grille 5x3)
-        for (int i = 0; i < 13; i++) {
-            int r2 = (i < 10) ? i / 5 : 2;
-            int c = (i < 10) ? i % 5 : (i - 10);
-            
-            // Extraire la tuile avec la taille de base
-            uint8_t *tile = crop_rgba(processed_src, sw, sh, x[c], y[r2], btn, btn);
-            
-            // Optimiser la tuile si demandé
-            if (opts.tile_optimize) {
-                // printf("Optimisation tuile %d...\n", i + 1);
-                quantize_colors(tile, btn, btn, opts.colors);
-            }
-            
-            // Redimensionner avec qualité si nécessaire
-            if (opts.quality_percent < 100) {
-                uint8_t *resized = resize_icon(tile, btn, btn, final_btn, final_btn);
-                free(tile);
-                tile = resized;
-                tile_w[i] = final_btn;
-                tile_h[i] = final_btn;
-            } else {
-                tile_w[i] = btn;
-                tile_h[i] = btn;
-            }
-            
-            tiles[i] = tile;
-        }
-        
-        // Traiter le 14ème bouton (bouton large en bas)
-        int b14w = btn + gap + btn;  // Largeur: btn + gap + btn
-        uint8_t *tile14 = crop_rgba(processed_src, sw, sh, x[3], y[2], b14w, btn);
-        
-        if (opts.tile_optimize) {
-            // printf("Optimisation tuile 14...\n");
-            quantize_colors(tile14, b14w, btn, opts.colors);
-        }
-        
-        // Redimensionner avec qualité si nécessaire
-        if (opts.quality_percent < 100) {
-            int new_b14w = final_btn + gap + final_btn; // (final_btn + gap + final_btn)
-            uint8_t *resized = resize_icon(tile14, b14w, btn, new_b14w, final_btn);
-            free(tile14);
-            tile14 = resized;
-            tiles[13] = tile14;
-            tile_w[13] = new_b14w;
-            tile_h[13] = final_btn;
-        } else {
-            tiles[13] = tile14;
-            tile_w[13] = b14w;
-            tile_h[13] = btn;
-        }
-        
-        // Copier les icônes dans le dossier spécifié si demandé
-        copy_icons_to_folder(tiles, tile_w, tile_h, opts.keep_folder, opts.filename_prefix);
-        
-        if (!opts.no_send) {
-            // Envoyer directement au démon
-            // printf("Envoi direct des données au démon...\n");
-            if (send_rgba_data_direct(tiles, tile_w, tile_h) != 0) {
-                fprintf(stderr, "Erreur: échec de l'envoi direct\n");
-            } else {
-                // printf("Données envoyées avec succès!\n");
-            }
-        }
-        
-        // Nettoyer les tuiles
-        for (int i = 0; i < 14; i++) {
-            free((void*)tiles[i]);
-        }
-        
-    } else {
-        // File mode: create temporary directory and write files in parallel
-        // printf("File mode: creating tiles on disk (threads enabled)...\n");
+
+    // File mode: create temporary directory and write files in parallel
+    // printf("File mode: creating tiles on disk (threads enabled)...\n");
         
         char tag[32];
         unique_tag(tag, sizeof(tag));
@@ -1680,8 +1254,7 @@ int main(int argc, char **argv) {
         snprintf(pathbuf, sizeof(pathbuf), "rm -rf \"%s\"", tmpdir);
         system(pathbuf);
         // printf("Nettoyage terminé.\n");
-    }
-    
+
     free(processed_src);
     if (opts.keep_folder) free(opts.keep_folder);
     if (opts.filename_prefix) free(opts.filename_prefix);
