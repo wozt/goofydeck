@@ -162,11 +162,29 @@ Button fields:
 - `text`: optional icon text (static).
 - `entity_id`: enables Home Assistant state tracking on that button when HA is enabled.
 - `tap_action:` / `hold_action:` / `longhold_action:` / `released_action:`:
-  - `action`: either internal paging actions (start with `$`) or a Home Assistant service like `light.toggle`
-  - `data`: optional:
-    - for `$page.go_to`: target page name (string)
-    - for HA services: JSON string/obj/array forwarded as HA `service_data` (and `entity_id` is injected when possible)
+  - single action form:
+    - `action`: either internal paging actions (start with `$`) or a Home Assistant service like `light.toggle`
+    - `data`: optional:
+      - for `$page.go_to`: target page name (string)
+      - for HA services: JSON string/obj/array forwarded as HA `service_data` (and `entity_id` is injected when possible)
+  - macro form (action sequences):
+    - `actions:` list of steps, each step being `{action, data}` (executed in order)
 - `states:`: map of HA state string → overrides (`name`, `presets`, and optionally `icon`/`text`).
+
+### Action macros (`actions:`)
+
+You can chain multiple actions for a single event using `actions:`:
+
+```yml
+longhold_action:
+  actions:
+    - action: $cmd.exec
+      data:
+        cmd: "assets/scripts/clear_cache.sh --clear"
+    - action: $cmd.text_clear
+```
+
+This is useful for “do something, then restore base icon / clear overlay”.
 
 ## Host command buttons (`$cmd.*`)
 
@@ -229,7 +247,7 @@ poll:
       max_len: 32
 ```
 
-### Polling/loops warning (device limitation)
+### Polling/loops warning (may be a device limitation)
 
 The D200 can become slow or unstable if you refresh icons too frequently for a long time while staying on the same page (for example when using `$cmd.poll_*` or `state_cmd` for “live” widgets).
 
@@ -267,6 +285,36 @@ states:
     presets: [light_off]
 ```
 
+### Cache management example (manual refresh)
+
+The repository includes helper scripts to inspect/clear caches:
+- `assets/scripts/clear_cache_ram.sh`
+- `assets/scripts/clear_cache.sh`
+
+They support:
+- `--text` (prints 2 lines: `<N> files` then `<SIZE>`)
+- `--clear` (no output)
+
+Example button (manual refresh on tap, clear on longhold):
+
+```yml
+- name: "DISK cache"
+  presets: [cmd_button]
+  icon: mdi:database
+  tap_action:
+    action: $cmd.exec_text
+    data:
+      cmd: "assets/scripts/clear_cache.sh --text"
+      trim: no
+      max_len: 32
+  longhold_action:
+    actions:
+      - action: $cmd.exec
+        data:
+          cmd: "assets/scripts/clear_cache.sh --clear"
+      - action: $cmd.text_clear
+```
+
 ## Paging control commands
 
 Send one line to `/tmp/goofydeck_paging_control.sock`:
@@ -292,6 +340,17 @@ HA_ACCESS_TOKEN=""
 
 Optional:
 - `USERNAME`: used by helper scripts like `bin/get_username.sh` (falls back to `whoami` if unset).
+
+Home Assistant UI note:
+- If a button has `entity_id` but no `states:` mapping, the daemon does **not** display raw on/off states for toggle-like entities (e.g. `script.*`). For value-like entities (`sensor.*`, `number.*`, `input_number.*`), the raw value is rendered as text by default.
+
+## Ulanzi device daemon commands
+
+The Ulanzi daemon accepts simple text commands on `/tmp/ulanzi_device.sock`:
+- `ping` → `ok` / `err no_device`
+- `read-buttons` → subscribe to button events (push)
+- `set-buttons-explicit`, `set-buttons-explicit-14`, `set-partial-explicit`, `set-label-style`, `set-brightness`, `set-small-window`
+- `device-info` → returns the last captured `IN_DEVICE_INFO (0x0303)` packet as `ok {json...}` (if available)
 
 ## Contributing
 
