@@ -457,6 +457,12 @@ The Ulanzi daemon accepts simple text commands on `/tmp/ulanzi_device.sock`:
 - `set-buttons-explicit`, `set-buttons-explicit-14`, `set-partial-explicit`, `set-label-style`, `set-brightness`, `set-small-window`
 - `device-info` → returns the last captured `IN_DEVICE_INFO (0x0303)` packet as `ok {json...}` (if available)
 
+### Small window (CPU/RAM/GPU)
+
+`ulanzi_d200_daemon` periodically sends a keep-alive `set-small-window` (protocol `0x0006`). When the small window is in **STATS** mode (`mode=0`), it fills `cpu/mem/gpu` with **real host values** (clamped to `0..99`).
+
+GPU is best-effort across vendors. The daemon first tries an optional helper script `assets/scripts/gpu_usage.sh` (you can override the path with `ULANZI_GPU_SCRIPT`). If the script is missing, outputs nothing/non-numeric, or outputs `0`, the daemon falls back to internal sysfs-based probing and optional `nvidia-smi` if available.
+
 ## Contributing
 
 The project is developed in C for optimal performance, with bash scripts for automation. Old Python versions are kept in `legacy/` for reference.

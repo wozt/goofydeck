@@ -16,6 +16,7 @@
 #include <dirent.h>
 #include <stdarg.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <hidapi/hidapi.h>
 #include <zlib.h>
 #include <inttypes.h>
@@ -54,6 +55,265 @@ static void on_signal(int sig) {
 
 static hid_device *open_device(void) {
     return hid_open(VID, PID, NULL);
+}
+
+static int clamp_0_99(int v) {
+    if (v < 0) return 0;
+    if (v > 99) return 99;
+    return v;
+}
+
+static int read_u64_from_file(const char *path, uint64_t *out) {
+    if (!path || !out) return -1;
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    char buf[128];
+    if (!fgets(buf, (int)sizeof(buf), f)) {
+        fclose(f);
+        return -1;
+    }
+    fclose(f);
+    char *end = NULL;
+    errno = 0;
+    uint64_t v = strtoull(buf, &end, 0);
+    if (errno != 0 || end == buf) return -1;
+    *out = v;
+    return 0;
+}
+
+static int host_cpu_usage_percent_0_99(void) {
+    static uint64_t prev_total = 0;
+    static uint64_t prev_idle = 0;
+
+    FILE *f = fopen("/proc/stat", "rb");
+    if (!f) return 0;
+    char line[512];
+    if (!fgets(line, (int)sizeof(line), f)) {
+        fclose(f);
+        return 0;
+    }
+    fclose(f);
+
+    uint64_t user=0,nice=0,system=0,idle=0,iowait=0,irq=0,softirq=0,steal=0,guest=0,guest_nice=0;
+    int n = sscanf(line,
+                   "cpu %" SCNu64 " %" SCNu64 " %" SCNu64 " %" SCNu64 " %" SCNu64 " %" SCNu64 " %" SCNu64 " %" SCNu64 " %" SCNu64 " %" SCNu64,
+                   &user,&nice,&system,&idle,&iowait,&irq,&softirq,&steal,&guest,&guest_nice);
+    if (n < 4) return 0;
+
+    uint64_t idle_all = idle + iowait;
+    uint64_t non_idle = user + nice + system + irq + softirq + steal;
+    uint64_t total = idle_all + non_idle;
+
+    if (prev_total == 0) {
+        prev_total = total;
+        prev_idle = idle_all;
+        return 0;
+    }
+
+    uint64_t dt = (total > prev_total) ? (total - prev_total) : 0;
+    uint64_t didle = (idle_all > prev_idle) ? (idle_all - prev_idle) : 0;
+    prev_total = total;
+    prev_idle = idle_all;
+    if (dt == 0) return 0;
+
+    double usage = (double)(dt - didle) * 100.0 / (double)dt;
+    int v = (int)(usage + 0.5);
+    return clamp_0_99(v);
+}
+
+static int host_mem_usage_percent_0_99(void) {
+    FILE *f = fopen("/proc/meminfo", "rb");
+    if (!f) return 0;
+    char line[256];
+    uint64_t mem_total_kb = 0;
+    uint64_t mem_avail_kb = 0;
+    while (fgets(line, (int)sizeof(line), f)) {
+        if (strncmp(line, "MemTotal:", 9) == 0) {
+            sscanf(line + 9, "%" SCNu64, &mem_total_kb);
+        } else if (strncmp(line, "MemAvailable:", 13) == 0) {
+            sscanf(line + 13, "%" SCNu64, &mem_avail_kb);
+        }
+        if (mem_total_kb && mem_avail_kb) break;
+    }
+    fclose(f);
+    if (!mem_total_kb) return 0;
+    if (mem_avail_kb > mem_total_kb) mem_avail_kb = mem_total_kb;
+
+    uint64_t used_kb = mem_total_kb - mem_avail_kb;
+    double pct = (double)used_kb * 100.0 / (double)mem_total_kb;
+    int v = (int)(pct + 0.5);
+    return clamp_0_99(v);
+}
+
+static int drm_gpu_busy_percent_for_driver(const char *want_driver, uint64_t *out_busy) {
+    if (!want_driver || !out_busy) return -1;
+    DIR *d = opendir("/sys/class/drm");
+    if (!d) return -1;
+    struct dirent *de = NULL;
+    while ((de = readdir(d))) {
+        if (strncmp(de->d_name, "card", 4) != 0) continue;
+        if (strstr(de->d_name, "render")) continue;
+
+        char p_busy[768];
+        snprintf(p_busy, sizeof(p_busy), "/sys/class/drm/%s/device/gpu_busy_percent", de->d_name);
+        uint64_t busy = 0;
+        if (read_u64_from_file(p_busy, &busy) != 0) continue;
+
+        char p_drv[768];
+        snprintf(p_drv, sizeof(p_drv), "/sys/class/drm/%s/device/driver", de->d_name);
+        char linkbuf[768];
+        ssize_t n = readlink(p_drv, linkbuf, (sizeof(linkbuf) - 1));
+        if (n <= 0) continue;
+        linkbuf[n] = '\0';
+        const char *base = strrchr(linkbuf, '/');
+        const char *drv = base ? (base + 1) : linkbuf;
+        if (strcmp(drv, want_driver) != 0) continue;
+
+        *out_busy = busy;
+        closedir(d);
+        return 0;
+    }
+    closedir(d);
+    return -1;
+}
+
+static int try_gpu_usage_from_script_0_99(void) {
+    const char *paths[4] = {0};
+    int npaths = 0;
+
+    const char *env = getenv("ULANZI_GPU_SCRIPT");
+    if (env && env[0]) paths[npaths++] = env;
+    paths[npaths++] = "./assets/scripts/gpu_usage.sh";
+
+    // Also try next to the executable: <exe_dir>/assets/scripts/gpu_usage.sh
+    static char exe_path[1024];
+    static char exe_script[2048];
+    ssize_t exen = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (exen > 0) {
+        exe_path[exen] = '\0';
+        char *slash = strrchr(exe_path, '/');
+        if (slash) {
+            *slash = '\0';
+            snprintf(exe_script, sizeof(exe_script), "%s/assets/scripts/gpu_usage.sh", exe_path);
+            paths[npaths++] = exe_script;
+        }
+    }
+
+    for (int i = 0; i < npaths; i++) {
+        const char *path = paths[i];
+        if (!path || !path[0]) continue;
+        if (access(path, X_OK) != 0) continue;
+
+        int pipefd[2];
+        if (pipe(pipefd) != 0) continue;
+        pid_t pid = fork();
+        if (pid < 0) {
+            close(pipefd[0]);
+            close(pipefd[1]);
+            continue;
+        }
+        if (pid == 0) {
+            // Child
+            close(pipefd[0]);
+            dup2(pipefd[1], STDOUT_FILENO);
+            close(pipefd[1]);
+            int devnull = open("/dev/null", O_WRONLY);
+            if (devnull >= 0) {
+                dup2(devnull, STDERR_FILENO);
+                close(devnull);
+            }
+            execl(path, path, (char *)NULL);
+            _exit(127);
+        }
+        // Parent
+        close(pipefd[1]);
+        char buf[128];
+        ssize_t r = read(pipefd[0], buf, sizeof(buf) - 1);
+        close(pipefd[0]);
+        int st = 0;
+        (void)waitpid(pid, &st, 0);
+        if (r <= 0) continue;
+        buf[r] = '\0';
+
+        // Parse first integer token.
+        char *p = buf;
+        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+        errno = 0;
+        char *end = NULL;
+        long v = strtol(p, &end, 10);
+        if (errno != 0 || end == p) continue;
+        if (v <= 0) continue; // treat 0 as "unknown" so we can fall back to C logic
+        return clamp_0_99((int)v);
+    }
+    return -1;
+}
+
+static int host_gpu_usage_percent_0_99_fallback(void) {
+    // Mirror the provided bash logic:
+    //  1) Prefer amdgpu: /sys/class/drm/card*/device/gpu_busy_percent where driver basename == "amdgpu"
+    //  2) If available, use nvidia-smi utilization.gpu
+    //  3) Then try i915: /sys/class/drm/card*/device/gpu_busy_percent where driver basename == "i915"
+    //  4) Then other best-effort fallbacks (devfreq), else 0
+    uint64_t busy = 0;
+    if (drm_gpu_busy_percent_for_driver("amdgpu", &busy) == 0) {
+        return clamp_0_99((int)busy);
+    }
+
+    // NVIDIA fallback via external tool if available.
+    FILE *p = popen("command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -n 1", "r");
+    if (p) {
+        char buf[128];
+        if (fgets(buf, (int)sizeof(buf), p)) {
+            // Accept only a pure integer.
+            char *end = NULL;
+            errno = 0;
+            long v = strtol(buf, &end, 10);
+            if (errno == 0 && end && end != buf) {
+                while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') end++;
+                if (*end == '\0') {
+                    pclose(p);
+                    return clamp_0_99((int)v);
+                }
+            }
+        }
+        pclose(p);
+    }
+
+    if (drm_gpu_busy_percent_for_driver("i915", &busy) == 0) {
+        return clamp_0_99((int)busy);
+    }
+
+    // Generic devfreq fallback for many ARM SoCs.
+    DIR *df = opendir("/sys/class/devfreq");
+    if (df) {
+        struct dirent *de = NULL;
+        while ((de = readdir(df))) {
+            if (de->d_name[0] == '.') continue;
+            if (!strstr(de->d_name, "gpu") && !strstr(de->d_name, "GPU")) continue;
+
+            char p_util[320];
+            uint64_t util = 0;
+            snprintf(p_util, sizeof(p_util), "/sys/class/devfreq/%s/utilization", de->d_name);
+            if (read_u64_from_file(p_util, &util) == 0) {
+                closedir(df);
+                return clamp_0_99((int)util);
+            }
+            snprintf(p_util, sizeof(p_util), "/sys/class/devfreq/%s/load", de->d_name);
+            if (read_u64_from_file(p_util, &util) == 0) {
+                closedir(df);
+                return clamp_0_99((int)util);
+            }
+        }
+        closedir(df);
+    }
+
+    return 0;
+}
+
+static int host_gpu_usage_percent_0_99(void) {
+    int v = try_gpu_usage_from_script_0_99();
+    if (v > 0) return v;
+    return host_gpu_usage_percent_0_99_fallback();
 }
 
 static int write_packet(hid_device *dev, const uint8_t *packet, size_t len) {
@@ -1256,6 +1516,14 @@ cmd_done:
         // auto keep-alive
         time_t now_keep = time(NULL);
         if (now_keep - last_keepalive >= KEEPALIVE_INTERVAL) {
+            // Refresh host stats in STATS mode (mode 0). In CLOCK/BACKGROUND modes,
+            // the device typically ignores cpu/mem/gpu but we keep the last values.
+            if (sw_mode == 0) {
+                sw_cpu = host_cpu_usage_percent_0_99();
+                sw_mem = host_mem_usage_percent_0_99();
+                sw_gpu = host_gpu_usage_percent_0_99();
+            }
+
             char buf_time[16];
             struct tm *tm = localtime(&now_keep);
             strftime(buf_time,sizeof(buf_time),"%H:%M:%S",tm);

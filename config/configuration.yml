@@ -68,7 +68,7 @@ presets:
     text_offset: 0,0 
   settings_folder:
     icon_border_width: 4
-    icon_border_color: "ECEBED"
+    icon_border_color: "44EB22"
     icon_border_size: 128
     icon_color: "FFFFFF"
     icon_background_color: "transparent"
@@ -235,9 +235,11 @@ pages:
             name: "ND OFF"
             presets:
               - light_off
-
   chambre:
     buttons:
+      - name: "Temperature chambre"
+        entity_id: sensor.tz3000_utwgoauk_snzb_02_temperature
+        presets: [cmd_button,base_button]
       - name: "Lampe droite de la chambre"
         entity_id: light.lampe_droite_de_la_chambre
         presets:
@@ -267,17 +269,12 @@ pages:
             name: "LDG OFF"
             presets:
               - light_off
-
-      - name: "Temperature chambre"
-        entity_id: sensor.tz3000_utwgoauk_snzb_02_temperature
-        presets: [cmd_button,base_button]
   debian_pc:
     buttons:
       - name: "reboot"
         entity_id: script.reboot_debian_pc
         presets:
           - base_button
-
         icon: mdi:restart
         tap_action:
           action: script.reboot_debian_pc
