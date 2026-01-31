@@ -461,6 +461,8 @@ The Ulanzi daemon accepts simple text commands on `/tmp/ulanzi_device.sock`:
 
 `ulanzi_d200_daemon` periodically sends a keep-alive `set-small-window` (protocol `0x0006`). When the small window is in **STATS** mode (`mode=0`), it fills `cpu/mem/gpu` with **real host values** (clamped to `0..99`).
 
+Note: the keep-alive interval is `24s`, and it can take **two cycles (~48s)** for CPU/RAM/GPU to visibly refresh (and only if button 14 is on the correct mode).
+
 GPU is best-effort across vendors. The daemon first tries an optional helper script `assets/scripts/gpu_usage.sh` (you can override the path with `ULANZI_GPU_SCRIPT`). If the script is missing, outputs nothing/non-numeric, or outputs `0`, the daemon falls back to internal sysfs-based probing and optional `nvidia-smi` if available.
 
 ## Contributing
