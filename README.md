@@ -336,6 +336,85 @@ printf 'simule-button TAP1\n' | socat - UNIX-CONNECT:/tmp/goofydeck_paging_contr
 printf 'simule-button LONGHOLD14\n' | socat - UNIX-CONNECT:/tmp/goofydeck_paging_control.sock
 ```
 
+## Miniapps
+
+Miniapps are small interactive programs (usually bash) that temporarily take control of the deck UI:
+- They tell `paging_daemon` to stop reacting to physical buttons (`stop-control`).
+- They subscribe to button events directly from `ulanzi_d200_daemon` (`read-buttons`).
+- They render their own UI by sending full pages (`set-buttons-explicit-14`) and/or partial updates (`set-partial-explicit`).
+- On exit, they return control to `paging_daemon` (`start-control`) and typically ask it to reload the last page (`load-last-page`).
+
+Examples in this repo:
+- `mymedia/miniapp/video_miniapp.sh` (video browser + player)
+- `mymedia/miniapp/tictactoe_miniapp.sh` (tic-tac-toe)
+
+### Miniapp skeleton (bash)
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ULANZI_SOCK="${ULANZI_SOCK:-/tmp/ulanzi_device.sock}"
+PAGING_CTRL_SOCK="${PAGING_CTRL_SOCK:-/tmp/goofydeck_paging_control.sock}"
+
+RAM_DIR="/dev/shm/goofydeck/myminiapp/$$"
+mkdir -p "${RAM_DIR}"
+
+cleanup() {
+  rm -rf "${RAM_DIR}" 2>/dev/null || true
+  printf 'start-control\n' | nc -w 1 -U "${PAGING_CTRL_SOCK}" >/dev/null 2>&1 || true
+  printf 'load-last-page\n' | nc -w 1 -U "${PAGING_CTRL_SOCK}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT INT TERM
+
+printf 'stop-control\n' | nc -w 1 -U "${PAGING_CTRL_SOCK}" >/dev/null 2>&1 || true
+
+coproc RB { socat - UNIX-CONNECT:"${ULANZI_SOCK}"; }
+printf 'read-buttons\n' >&"${RB[1]}"
+read -r _ok <&"${RB[0]}" || true
+
+# TODO: send UI (set-buttons-explicit-14)
+# TODO: loop read events from "${RB[0]}" and react
+```
+
+### Reusing existing binaries (recommended)
+
+Miniapps should reuse project tools instead of reinventing pipelines:
+- Icon/image tools: `icons/draw_square`, `icons/draw_border`, `icons/draw_mdi`, `icons/draw_text`, `icons/draw_over`, `icons/draw_normalize`, `icons/draw_optimize`
+- Video render/player helpers: `bin/send_video_page_wrapper`, `bin/play_rendered_video.sh`, `bin/convert_video.sh`
+
+### Caching advice
+
+For performance and to avoid disk churn:
+- Disk cache for miniapps: `mymedia/miniapp/.cache/<miniappname>/` (persistent between runs)
+- RAM cache for the current session: `/dev/shm/goofydeck/<miniappname>/<pid>/` (delete on exit)
+- Pregen expensive assets once on disk, then copy them into RAM at startup.
+
+### Adding a miniapp to the YAML config
+
+Miniapps are typically started with a host command button:
+
+```yml
+pages:
+  apps:
+    buttons:
+      - name: "My MiniApp"
+        presets: [cmd_button]
+        icon: mdi:gamepad-variant
+        tap_action:
+          action: $cmd.exec
+          data:
+            cmd: "mymedia/miniapp/my_miniapp.sh"
+```
+
+### Example LLM prompt (when generating a new miniapp)
+
+Use a prompt like:
+
+> Implement a GoofyDeck miniapp in bash at `mymedia/miniapp/<name>_miniapp.sh`.  
+> Requirements: use `stop-control`/`start-control`/`load-last-page` via `/tmp/goofydeck_paging_control.sock`, subscribe to `read-buttons` from `/tmp/ulanzi_device.sock`, render UI with `set-buttons-explicit-14`, store persistent cache in `mymedia/miniapp/.cache/<name>/`, store session temp files in `/dev/shm/goofydeck/<name>/$$` and clean them on exit.
+
 ## Home Assistant (`ha_daemon`)
 
 Create a Home Assistant **long-lived access token** (Profile → Security → Long-Lived Access Tokens), then put credentials in `.env` (see `example.env`):
