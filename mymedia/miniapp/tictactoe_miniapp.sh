@@ -9,10 +9,11 @@ set -euo pipefail
 #
 # Layout:
 # - Grid (3x3): 1,2,3 / 6,7,8 / 11,12,13
-# - Exit: 5
+# - Starter select: 5 (toggles who starts next; resets board)
 # - Reset: 4
 # - Score O: 9 (label)
 # - Score X: 10 (label)
+# - Exit: 14 (wide tile, icon only; no label support)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -21,6 +22,15 @@ MINIAPP_NAME="tictactoe"
 
 ULANZI_SOCK="${ULANZI_SOCK:-/tmp/ulanzi_device.sock}"
 PAGING_CTRL_SOCK="${PAGING_CTRL_SOCK:-/tmp/goofydeck_paging_control.sock}"
+
+SOUND_DIR="${ROOT}/mymedia/miniapp/.assets/tictactoe"
+SOUND_X="${SOUND_DIR}/x_stone.wav"
+SOUND_O="${SOUND_DIR}/o_drop.wav"
+SOUND_WIN="${SOUND_DIR}/win_tadaa.wav"
+SOUND_RESET="${SOUND_DIR}/reset.wav"
+
+# Quick knob
+SOUND_ENABLE=1
 
 DISK_CACHE_DIR="${ROOT}/mymedia/miniapp/.cache/${MINIAPP_NAME}"
 PREGEN_DIR="${DISK_CACHE_DIR}/pregen"
@@ -54,6 +64,34 @@ ul_cmd() {
   printf '%s\n' "${cmd}" | nc -w 1 -U "${ULANZI_SOCK}" 2>/dev/null || true
 }
 
+sound_player_init() {
+  SOUND_PLAYER=()
+  if [ "${SOUND_ENABLE}" -ne 1 ]; then
+    return 0
+  fi
+  if command -v aplay >/dev/null 2>&1; then
+    SOUND_PLAYER=(aplay -q)
+    return 0
+  fi
+  if command -v paplay >/dev/null 2>&1; then
+    SOUND_PLAYER=(paplay)
+    return 0
+  fi
+  if command -v ffplay >/dev/null 2>&1; then
+    SOUND_PLAYER=(ffplay -nodisp -autoexit -loglevel error)
+    return 0
+  fi
+  SOUND_ENABLE=0
+}
+
+play_sound_file() {
+  [ "${SOUND_ENABLE}" -eq 1 ] || return 0
+  [ "${#SOUND_PLAYER[@]}" -gt 0 ] || return 0
+  local f="$1"
+  [ -f "${f}" ] || return 0
+  "${SOUND_PLAYER[@]}" "${f}" >/dev/null 2>&1 &
+}
+
 abs_path() {
   if command -v realpath >/dev/null 2>&1; then
     realpath -m "$1"
@@ -81,8 +119,9 @@ ensure_pregen() {
   local cell_x="${PREGEN_DIR}/cell_x.png"
   local cell_o="${PREGEN_DIR}/cell_o.png"
   local label_bg="${PREGEN_DIR}/label_bg.png"
-  local btn_exit="${PREGEN_DIR}/btn_exit.png"
+  local btn_app="${PREGEN_DIR}/btn_app.png"
   local btn_reset="${PREGEN_DIR}/btn_reset.png"
+  local exit14="${PREGEN_DIR}/exit14.png"
 
   if [ ! -f "${cell_empty}" ]; then
     "${ROOT}/icons/draw_square" 111111 --size="${ICON_SIZE}" "${cell_empty}" >/dev/null
@@ -102,16 +141,22 @@ ensure_pregen() {
     "${ROOT}/icons/draw_square" transparent --size="${ICON_SIZE}" "${label_bg}" >/dev/null
     "${ROOT}/icons/draw_optimize" -c=8 "${label_bg}" >/dev/null 2>&1 || true
   fi
-  if [ ! -f "${btn_exit}" ]; then
-    "${ROOT}/icons/draw_square" transparent --size="${ICON_SIZE}" "${btn_exit}" >/dev/null
-    "${ROOT}/icons/draw_mdi" mdi:exit-to-app FFFFFF --size=160 "${btn_exit}" >/dev/null
-    "${ROOT}/icons/draw_optimize" -c=16 "${btn_exit}" >/dev/null 2>&1 || true
+  if [ ! -f "${btn_app}" ]; then
+    "${ROOT}/icons/draw_square" transparent --size="${ICON_SIZE}" "${btn_app}" >/dev/null
+    "${ROOT}/icons/draw_mdi" mdi:gamepad-variant-outline C0C0C0 --size=140 "${btn_app}" >/dev/null 2>&1 || true
+    "${ROOT}/icons/draw_optimize" -c=16 "${btn_app}" >/dev/null 2>&1 || true
   fi
   if [ ! -f "${btn_reset}" ]; then
     "${ROOT}/icons/draw_square" transparent --size="${ICON_SIZE}" "${btn_reset}" >/dev/null
     "${ROOT}/icons/draw_mdi" mdi:restart FFFFFF --size=160 "${btn_reset}" >/dev/null
     "${ROOT}/icons/draw_optimize" -c=16 "${btn_reset}" >/dev/null 2>&1 || true
   fi
+
+  # Button 14 is a wide tile (442x196). Always (re)generate to ensure it matches the latest tools.
+  rm -f "${exit14}" 2>/dev/null || true
+  "${ROOT}/icons/draw_rectangle" transparent --size="${ICON_SIZE}" "${exit14}" >/dev/null
+  "${ROOT}/icons/draw_mdi_rectangle" mdi:exit-to-app C0C0C0 --size=56 --offset=183,58 "${exit14}" >/dev/null 2>&1 || true
+  "${ROOT}/icons/draw_optimize" -c=32 "${exit14}" >/dev/null 2>&1 || true
 }
 
 load_pregen_to_ram() {
@@ -120,13 +165,14 @@ load_pregen_to_ram() {
   cp -f "${PREGEN_DIR}/cell_x.png" "${RAM_DIR}/pregen/cell_x.png"
   cp -f "${PREGEN_DIR}/cell_o.png" "${RAM_DIR}/pregen/cell_o.png"
   cp -f "${PREGEN_DIR}/label_bg.png" "${RAM_DIR}/pregen/label_bg.png"
-  cp -f "${PREGEN_DIR}/btn_exit.png" "${RAM_DIR}/pregen/btn_exit.png"
+  cp -f "${PREGEN_DIR}/btn_app.png" "${RAM_DIR}/pregen/btn_app.png"
   cp -f "${PREGEN_DIR}/btn_reset.png" "${RAM_DIR}/pregen/btn_reset.png"
+  cp -f "${PREGEN_DIR}/exit14.png" "${RAM_DIR}/pregen/exit14.png"
 }
 
 board_reset() {
   for i in $(seq 0 8); do board[$i]=0; done
-  cur_player=1 # 1=X, 2=O
+  cur_player="${start_player}" # 1=X, 2=O
   msg_label=""
 }
 
@@ -184,15 +230,18 @@ cell_icon_for_value() {
 render() {
   local empty="${ROOT}/assets/pregen/empty.png"
   local label_bg="${RAM_DIR}/pregen/label_bg.png"
-  local btn_exit="${RAM_DIR}/pregen/btn_exit.png"
+  local btn_app="${RAM_DIR}/pregen/btn_app.png"
   local btn_reset="${RAM_DIR}/pregen/btn_reset.png"
+  local exit14="${RAM_DIR}/pregen/exit14.png"
+  local starter_label="X1ST"
+  if [ "${start_player}" -eq 2 ]; then starter_label="O1ST"; fi
 
   local b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b11 b12 b13 b14
   b1="$(cell_icon_for_value "${board[0]}")"
   b2="$(cell_icon_for_value "${board[1]}")"
   b3="$(cell_icon_for_value "${board[2]}")"
   b4="${btn_reset}"
-  b5="${btn_exit}"
+  b5="${btn_app}"
   b6="$(cell_icon_for_value "${board[3]}")"
   b7="$(cell_icon_for_value "${board[4]}")"
   b8="$(cell_icon_for_value "${board[5]}")"
@@ -201,7 +250,7 @@ render() {
   b11="$(cell_icon_for_value "${board[6]}")"
   b12="$(cell_icon_for_value "${board[7]}")"
   b13="$(cell_icon_for_value "${board[8]}")"
-  b14="${empty}"
+  b14="${exit14}"
 
   local cmd="set-buttons-explicit-14"
   cmd+=" --button-1=$(abs_path "${b1}")"
@@ -218,6 +267,7 @@ render() {
   cmd+=" --button-12=$(abs_path "${b12}")"
   cmd+=" --button-13=$(abs_path "${b13}")"
   cmd+=" --button-14=$(abs_path "${b14}")"
+  cmd+=" --label-5=${starter_label}"
   cmd+=" --label-9=O:${score_o}"
   cmd+=" --label-10=X:${score_x}"
   if [ -n "${msg_label}" ]; then
@@ -230,6 +280,8 @@ render() {
 
 main() {
   [ -S "${ULANZI_SOCK}" ] || { echo "Missing ulanzi socket: ${ULANZI_SOCK}" >&2; exit 1; }
+
+  sound_player_init
 
   ensure_pregen
   load_pregen_to_ram
@@ -245,6 +297,7 @@ main() {
   score_o=0
   msg_label=""
   declare -a board
+  start_player=1
   cur_player=1
   board_reset
   render
@@ -263,9 +316,16 @@ main() {
     evt="$(printf "%s" "${parsed}" | awk '{print $2}')"
     [ "${evt}" = "TAP" ] || continue
 
-    if [ "${btn}" -eq 5 ]; then
+    if [ "${btn}" -eq 14 ]; then
       return 0
     elif [ "${btn}" -eq 4 ]; then
+      play_sound_file "${SOUND_RESET}"
+      board_reset
+      render
+      continue
+    elif [ "${btn}" -eq 5 ]; then
+      if [ "${start_player}" -eq 1 ]; then start_player=2; else start_player=1; fi
+      play_sound_file "${SOUND_RESET}"
       board_reset
       render
       continue
@@ -280,6 +340,11 @@ main() {
       continue
     fi
 
+    if [ "${cur_player}" -eq 1 ]; then
+      play_sound_file "${SOUND_X}"
+    else
+      play_sound_file "${SOUND_O}"
+    fi
     board[${idx}]="${cur_player}"
     if [ "${cur_player}" -eq 1 ]; then cur_player=2; else cur_player=1; fi
 
@@ -294,9 +359,11 @@ main() {
     if [ "${w}" -eq 1 ]; then
       score_x=$((score_x + 1))
       msg_label="XWIN"
+      play_sound_file "${SOUND_WIN}"
     elif [ "${w}" -eq 2 ]; then
       score_o=$((score_o + 1))
       msg_label="OWIN"
+      play_sound_file "${SOUND_WIN}"
     else
       msg_label="DRAW"
     fi
@@ -309,4 +376,3 @@ main() {
 }
 
 main "$@"
-

@@ -55,9 +55,13 @@ bin/send_image_page: src/lib/send_image_page.c | dir_bin
 bin/send_video_page_wrapper: src/lib/send_video_page_wrapper.c | dir_bin
 	$(CC) $(CFLAGS) $(FFMPEG_CFLAGS) -o $@ $< $(FFMPEG_LIBS) $(PNG_LIBS) $(ZLIB_LIBS) $(PTHREAD_LIBS) $(MATH_LIBS)
 
-icons: icons/draw_border icons/draw_optimize icons/draw_over icons/draw_square icons/draw_text icons/draw_normalize
+icons: icons/draw_border icons/draw_optimize icons/draw_over icons/draw_square icons/draw_rectangle icons/draw_text icons/draw_normalize
+icons: icons/draw_border_rectangle icons/draw_broder_rectangle
+icons: icons/draw_text_rectangle icons/draw_optimize_rectangle icons/draw_optimize_recangle icons/draw_over_rectangle
+icons: icons/draw_normalize_rectangle icons/draw_normalise_rectangle
 ifeq ($(HAVE_MDI),1)
 icons: icons/draw_mdi icons/draw_svg
+icons: icons/draw_mdi_rectangle icons/draw_svg_rectangle
 else
 icons:
 	@echo "Skipping icons/draw_mdi (missing cairo/librsvg dev libs or pkg-config)"
@@ -69,6 +73,9 @@ icons/draw_%: src/icons/draw_%.c | dir_icons
 icons/draw_normalize: src/icons/draw_normalize.c | dir_icons
 	$(CC) $(CFLAGS) -o $@ $< $(PNG_LIBS) $(ZLIB_LIBS)
 
+icons/draw_normalize_rectangle: src/icons/draw_normalize_rectangle.c | dir_icons
+	$(CC) $(CFLAGS) -o $@ $< $(PNG_LIBS) $(ZLIB_LIBS)
+
 icons/draw_mdi: src/icons/draw_mdi.c | dir_icons
 ifeq ($(HAVE_MDI),1)
 	$(CC) $(CFLAGS) $(MDI_CFLAGS) -o $@ $< $(ZLIB_LIBS) $(MDI_LIBS)
@@ -78,6 +85,14 @@ else
 endif
 
 icons/draw_svg: src/icons/draw_svg.c | dir_icons
+ifeq ($(HAVE_MDI),1)
+	$(CC) $(CFLAGS) $(MDI_CFLAGS) -o $@ $< $(MDI_LIBS)
+else
+	@echo "Cannot build $@: missing cairo/librsvg dev libs or pkg-config" >&2
+	@exit 1
+endif
+
+icons/draw_svg_rectangle: src/icons/draw_svg_rectangle.c | dir_icons
 ifeq ($(HAVE_MDI),1)
 	$(CC) $(CFLAGS) $(MDI_CFLAGS) -o $@ $< $(MDI_LIBS)
 else
@@ -105,5 +120,9 @@ clean:
 	rm -f bin/ha_daemon
 	rm -f bin/send_video_page_wrapper
 	rm -f bin/send_image_page
-	rm -f icons/draw_border icons/draw_mdi icons/draw_svg icons/draw_normalize icons/draw_optimize icons/draw_over icons/draw_square icons/draw_text
+	rm -f icons/draw_border icons/draw_mdi icons/draw_svg icons/draw_normalize icons/draw_optimize icons/draw_over icons/draw_square icons/draw_rectangle icons/draw_text
+	rm -f icons/draw_border_rectangle icons/draw_broder_rectangle
+	rm -f icons/draw_text_rectangle icons/draw_optimize_rectangle icons/draw_optimize_recangle icons/draw_over_rectangle
+	rm -f icons/draw_normalize_rectangle icons/draw_normalise_rectangle
+	rm -f icons/draw_mdi_rectangle icons/draw_svg_rectangle
 	rm -f standalone/draw_optimize_std

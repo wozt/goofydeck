@@ -261,9 +261,11 @@ int main(int argc, char **argv) {
         }
     }
 
+    // Classic buttons are 196x196, but button 14 is a wide tile (roughly 442x196).
+    // Allow rectangles up to 442x196 so miniapps can render text on button 14 assets.
     int w=0,h=0;
-    if (get_size(target,&w,&h)!=0 || w>196 || h>196) {
-        fprintf(stderr,"Input exceeds 196x196 or unreadable\n");
+    if (get_size(target,&w,&h)!=0 || w<1 || h<1 || w>442 || h>196) {
+        fprintf(stderr,"Input exceeds 442x196 or unreadable\n");
         return 1;
     }
 
@@ -277,7 +279,7 @@ int main(int argc, char **argv) {
         if (dir_exists(font_dir)) {
             char cmd[PATH_MAX*2];
             snprintf_checked(cmd, sizeof(cmd), "find_first_font",
-                             "find '%s' -maxdepth 1 -type f -iname '*.ttf' | sort -f | head -n1",
+                             "find '%s' -maxdepth 1 -type f -iname '*.ttf' 2>/dev/null | sort -f 2>/dev/null | head -n1",
                              font_dir);
             FILE *fp = popen(cmd,"r");
             if (fp) {

@@ -6,8 +6,8 @@ sleep:
   sleep_timeout: 86400
 
 wallpaper:
-  path: "mymedia/wallpapers/valley.png"
-  quality: 30
+  path: "mymedia/wallpapers/valley16bits.png"
+  quality: 56
   magnify: 100
   dithering: yes
 
@@ -88,8 +88,8 @@ presets:
 pages:
   $root:
     wallpaper:
-      path: "mymedia/wallpapers/neige.png"
-      quality: 60
+      path: "mymedia/wallpapers/neigesombre16bits.png"
+      quality: 56
       magnify: 100
       dithering: yes
     buttons:
@@ -387,6 +387,21 @@ pages:
               data:
                 cmd: "assets/scripts/clear_miniapp_cache.sh --clear"
             - action: $cmd.text_clear
+      - name: "Wallpaper cache"
+        presets: [cmd_button]
+        icon: mdi:image
+        tap_action:
+          action: $cmd.exec_text
+          data:
+            cmd: "assets/scripts/clear_wallpaper_cache.sh --text"
+            trim: no
+            max_len: 32
+        longhold_action:
+          actions:
+            - action: $cmd.exec
+              data:
+                cmd: "assets/scripts/clear_wallpaper_cache.sh --clear"
+            - action: $cmd.text_clear
 
       # - name: "Clock"
       #   presets: [cmd_button]
@@ -471,6 +486,15 @@ pages:
           action: $cmd.exec
           data:
             cmd: "mymedia/miniapp/video_miniapp.sh"
+      - name: "Games"
+        presets: [cmd_button]
+        icon: mdi:controller-classic
+        tap_action:
+          action: $page.go_to
+          data: games
+
+  games:
+    buttons:
       - name: "TicTacToe"
         presets: [cmd_button]
         icon: mdi:gamepad-variant
@@ -478,3 +502,24 @@ pages:
           action: $cmd.exec
           data:
             cmd: "mymedia/miniapp/tictactoe_miniapp.sh"
+      - name: "2048"
+        presets: [cmd_button]
+        icon: mdi:numeric-8-box-outline
+        tap_action:
+          action: $cmd.exec
+          data:
+            cmd: "mymedia/miniapp/2048_miniapp.sh"
+      - name: "Simon"
+        presets: [cmd_button]
+        icon: mdi:gesture-tap
+        tap_action:
+          action: $cmd.exec
+          data:
+            cmd: "mymedia/miniapp/simon_miniapp.sh"
+      - name: "Mastermind"
+        presets: [cmd_button]
+        icon: mdi:bullseye
+        tap_action:
+          action: $cmd.exec
+          data:
+            cmd: "mymedia/miniapp/mastermind_miniapp.sh"

@@ -16,6 +16,8 @@
 #endif
 
 #define MAX_SIZE 196
+#define MAX_WIDE_W 442
+#define MAX_WIDE_H 196
 #define DEFAULT_COLORS 64
 
 // CRC helpers
@@ -435,7 +437,14 @@ int main(int argc, char **argv) {
     }
     PngRaw png;
     if (load_png_rgba(path,&png)!=0) return 1;
-    if (png.width!=png.height || png.width<1 || png.width>MAX_SIZE) { free(png.pixels); return 1; }
+    if (png.width < 1 || png.height < 1) { free(png.pixels); return 1; }
+    // Classic icons: square up to 196x196
+    // Button 14 (wide tile): allow rectangles up to 442x196
+    if (!((png.width == png.height && png.width <= MAX_SIZE) ||
+          (png.width <= MAX_WIDE_W && png.height <= MAX_WIDE_H))) {
+        free(png.pixels);
+        return 1;
+    }
 
     size_t pixels = (size_t)png.width * png.height;
     int seen_white = 0;

@@ -115,6 +115,8 @@ install_deps_debian() {
     jq bc
     netcat-openbsd socat
     fonts-noto-core fonts-noto-color-emoji
+    sox
+    sonic-pi
   )
   log "Installing apt dependencies..."
   as_root apt-get update
@@ -130,6 +132,7 @@ install_deps_arch() {
     jq bc
     openbsd-netcat socat
     noto-fonts noto-fonts-emoji
+    sox
   )
   log "Installing pacman dependencies..."
   as_root pacman -Sy --noconfirm "${pkgs[@]}"
@@ -144,6 +147,7 @@ install_deps_redhat() {
     jq bc
     nmap-ncat socat
     google-noto-emoji-color-fonts google-noto-sans-fonts
+    sox
   )
   if command -v dnf >/dev/null 2>&1; then
     log "Installing dnf dependencies..."
@@ -166,8 +170,10 @@ install_deps_brew() {
     imagemagick librsvg cairo
     jq bc
     netcat socat
+    sox
   )
   local -a font_casks=(font-noto-sans font-noto-emoji)
+  local -a app_casks=(sonic-pi)
   log "Installing Homebrew dependencies..."
   brew update
   brew install "${pkgs[@]}"
@@ -185,6 +191,9 @@ install_deps_brew() {
   fi
   log "Installing Homebrew font casks..."
   brew install --cask "${font_casks[@]}" || true
+
+  log "Installing Homebrew app casks..."
+  brew install --cask "${app_casks[@]}" || true
 }
 
 ensure_fonts() {
