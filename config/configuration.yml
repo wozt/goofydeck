@@ -372,66 +372,96 @@ pages:
               data:
                 cmd: "assets/scripts/clear_cache.sh --clear"
             - action: $cmd.text_clear
-      - name: "Clock"
+      - name: "Miniapp cache"
         presets: [cmd_button]
-        icon: mdi:clock-outline
+        icon: mdi:apps
         tap_action:
-          action: $cmd.poll_start
-        hold_action:
-          action: $cmd.poll_stop
-        poll:
-          every_ms: 1000
-          action:
-            action: $cmd.exec_text
-            data:
-              cmd: "assets/scripts/clock_now.sh"
-              trim: yes
-              max_len: 32
-      - name: "CPU"
-        presets: [cmd_button]
-        icon: mdi:cpu-64-bit
-        tap_action:
-          action: $cmd.poll_start
-        hold_action:
-          action: $cmd.poll_stop
-        poll:
-          every_ms: 2000
-          action:
-            action: $cmd.exec_text
-            data:
-              cmd: "assets/scripts/cpu_usage.sh"
-              trim: yes
-              max_len: 32
-      - name: "RAM"
-        presets: [cmd_button]
-        icon: mdi:memory
-        tap_action:
-          action: $cmd.poll_start
-        hold_action:
-          action: $cmd.poll_stop
-        poll:
-          every_ms: 2000
-          action:
-            action: $cmd.exec_text
-            data:
-              cmd: "assets/scripts/ram_usage.sh"
-              trim: yes
-              max_len: 32
-      - name: "GPU"
-        presets: [cmd_button]
-        icon: mdi:expansion-card-variant
-        tap_action:
-          action: $cmd.poll_start
-        hold_action:
-          action: $cmd.poll_stop
-        poll:
-          every_ms: 2000
-          action:
-            action: $cmd.exec_text
-            data:
-              cmd: "assets/scripts/gpu_usage_text.sh"
-              trim: yes
-              max_len: 32
+          action: $cmd.exec_text
+          data:
+            cmd: "assets/scripts/clear_miniapp_cache.sh --text"
+            trim: no
+            max_len: 32
+        longhold_action:
+          actions:
+            - action: $cmd.exec
+              data:
+                cmd: "assets/scripts/clear_miniapp_cache.sh --clear"
+            - action: $cmd.text_clear
+
+      # - name: "Clock"
+      #   presets: [cmd_button]
+      #   icon: mdi:clock-outline
+      #   tap_action:
+      #     action: $cmd.poll_start
+      #   hold_action:
+      #     action: $cmd.poll_stop
+      #   poll:
+      #     every_ms: 1000
+      #     action:
+      #       action: $cmd.exec_text
+      #       data:
+      #         cmd: "assets/scripts/clock_now.sh"
+      #         trim: yes
+      #         max_len: 32
+      # - name: "CPU"
+      #   presets: [cmd_button]
+      #   icon: mdi:cpu-64-bit
+      #   tap_action:
+      #     action: $cmd.poll_start
+      #   hold_action:
+      #     action: $cmd.poll_stop
+      #   poll:
+      #     every_ms: 2000
+      #     action:
+      #       action: $cmd.exec_text
+      #       data:
+      #         cmd: "assets/scripts/cpu_usage.sh"
+      #         trim: yes
+      #         max_len: 32
+      # - name: "RAM"
+      #   presets: [cmd_button]
+      #   icon: mdi:memory
+      #   tap_action:
+      #     action: $cmd.poll_start
+      #   hold_action:
+      #     action: $cmd.poll_stop
+      #   poll:
+      #     every_ms: 2000
+      #     action:
+      #       action: $cmd.exec_text
+      #       data:
+      #         cmd: "assets/scripts/ram_usage.
+      #   presets: [cmd_button]
+      #   icon: mdi:expansion-card-variant
+      #   tap_action:
+      #     action: $cmd.poll_start
+      #   hold_action:
+      #     action: $cmd.poll_stop
+      #   poll:
+      #     every_ms: 2000
+      #     action:
+      #       action: $cmd.exec_text
+      #       data:
+      #         cmd: "assets/scripts/gpu_usage_text.sh"
+      #         trim: yes
+      #         max_len: 32sh"
+      #         trim: yes
+      #         max_len: 32
+      # - name: "GPU"
+      #   presets: [cmd_button]
+      #   icon: mdi:expansion-card-variant
+      #   tap_action:
+      #     action: $cmd.poll_start
+      #   hold_action:
+      #     action: $cmd.poll_stop
+      #   poll:
+      #     every_ms: 2000
+      #     action:
+      #       action: $cmd.exec_text
+      #       data:
+      #         cmd: "assets/scripts/gpu_usage_text.sh"
+      #         trim: yes
+      #         max_len: 32
   apps:
     buttons:
       - name: "Videos"
