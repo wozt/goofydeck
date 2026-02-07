@@ -33,6 +33,32 @@
 // Variables globales pour la gestion du signal
 static volatile sig_atomic_t stop_requested = 0;
 
+static void show_help(FILE *out, const char *prog) {
+    fprintf(out, "Usage: %s [OPTIONS] <video_file>\n", prog);
+    fprintf(out, "\nOptions:\n");
+    fprintf(out, "  --max-frames=N          Max frames to process (0 = no limit)\n");
+    fprintf(out, "  -m, --magnify=PCT       Forwarded to send_image_page (10-100, default: disabled)\n");
+    fprintf(out, "  -q, --quality=PCT       Forwarded to send_image_page (10-100, default: disabled)\n");
+    fprintf(out, "  -d, --dither            Enable Floyd-Steinberg dithering (forwarded to convert_video.sh and send_image_page)\n");
+    fprintf(out, "  -s, --sleep=MS          Delay between frames in milliseconds (>=1, default: 0.1ms)\n");
+    fprintf(out, "  -r, --render            Render mode: write per-frame icons into folders (no playback)\n");
+    fprintf(out, "  -c, --convert=OPTS      Convert before processing (calls bin/convert_video.sh OPTS <video_file>)\n");
+    fprintf(out, "  -h, --help              Show this help\n");
+
+    fprintf(out, "\nExamples:\n");
+    fprintf(out, "  %s video.mp4\n", prog);
+    fprintf(out, "  %s --max-frames=30 video.mp4\n", prog);
+    fprintf(out, "  %s -m=128 video.mp4\n", prog);
+    fprintf(out, "  %s -q=64 video.mp4\n", prog);
+    fprintf(out, "  %s -d -m=128 -q=64 --max-frames=10 video.mp4\n", prog);
+    fprintf(out, "  %s -r --max-frames=120 video.mp4\n", prog);
+    fprintf(out, "  %s --convert=\"--size=360\" video.mp4\n", prog);
+
+    fprintf(out, "\nRender mode (-r/--render):\n");
+    fprintf(out, "  Writes a folder tree next to the input video: <video_name>/<button_number>/\n");
+    fprintf(out, "  Filenames include the button prefix: b<btn>_<frame> (e.g. b1_000.png)\n");
+}
+
 static void die_snprintf(const char *label) {
     fprintf(stderr, "Erreur: buffer trop petit (snprintf) pour %s\n", label);
     exit(1);
@@ -206,55 +232,32 @@ int main(int argc, char **argv) {
     // Parser les arguments
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            printf("Usage: %s [options] <video_file>\n", argv[0]);
-            printf("\nOptions:\n");
-            printf("  --max-frames=N         Nombre maximum de frames à traiter\n");
-            printf("  -m, --magnify=N      Magnifier les icônes (16-196, défaut: désactivé)\n");
-            printf("  -q, --quality=N      Redimensionner les icônes (16-196, défaut: 196)\n");
-            printf("  -r, --render         Mode render: génère des icônes par frame dans des dossiers\n");
-            printf("  -d, --dither         Activer le dithering Floyd-Steinberg\n");
-            printf("  -s, --sleep=MS      Délai entre chaque frame en millisecondes (défaut: 33)\n");
-            printf("  -c, --convert=OPTS  Convertir la vidéo avant traitement (passe options à convert_video.sh)\n");
-            printf("  -h, --help            Afficher cette aide\n");
-            printf("\nExemples:\n");
-            printf("  %s video.mp4                                    # Comportement par défaut\n", argv[0]);
-            printf("  %s --max-frames=30 video.mp4                    # Traiter 30 frames maximum\n", argv[0]);
-            printf("  %s -m=128 video.mp4                             # Magnifier les icônes en 128x128\n", argv[0]);
-            printf("  %s -q=64 video.mp4                              # Redimensionner en 64x64\n", argv[0]);
-            printf("  %s --max-frames=10 -m=196 video.mp4            # 10 frames avec icônes 196x196\n", argv[0]);
-            printf("  %s -r video.mp4                                 # Mode render: génère des dossiers par bouton\n", argv[0]);
-            printf("  %s -r --max-frames=5 video.mp4                  # Render avec 5 frames seulement\n", argv[0]);
-            printf("  %s -c=\"--size=720 --fps=30\" video.mp4           # Convertir en 720p 30fps puis traiter\n", argv[0]);
-            printf("  %s --convert=\"--size=360\" video.mp4               # Convertir en 360p puis traiter\n", argv[0]);
-            printf("\nMode render (-r/--render):\n");
-            printf("  Crée une structure de dossiers: <video_name>/<button_number>/\n");
-            printf("  Génère des icônes pour chaque frame avec préfixe numéroté (000, 001, ...)\n");
-            printf("  Exemple: video.mp4/1/000.png, video.mp4/1/001.png, ..., video.mp4/14/999.png\n");
+            show_help(stdout, argv[0]);
             return 0;
         } else if (strncmp(argv[i], "--max-frames=", 12) == 0) {
             opts.max_frames = atoi(argv[i] + 12);
         } else if (strncmp(argv[i], "-m=", 3) == 0) {
             opts.magnify_size = atoi(argv[i] + 3);
-            if (opts.magnify_size < 16 || opts.magnify_size > 196) {
-                fprintf(stderr, "Erreur: taille de magnification doit être entre 16 et 196\n");
+            if (opts.magnify_size < 10 || opts.magnify_size > 100) {
+                fprintf(stderr, "Erreur: magnify doit être entre 10 et 100\n");
                 return 1;
             }
         } else if (strncmp(argv[i], "--magnify=", 10) == 0) {
             opts.magnify_size = atoi(argv[i] + 10);
-            if (opts.magnify_size < 16 || opts.magnify_size > 196) {
-                fprintf(stderr, "Erreur: taille de magnification doit être entre 16 et 196\n");
+            if (opts.magnify_size < 10 || opts.magnify_size > 100) {
+                fprintf(stderr, "Erreur: magnify doit être entre 10 et 100\n");
                 return 1;
             }
         } else if (strncmp(argv[i], "-q=", 3) == 0) {
             opts.quality_size = atoi(argv[i] + 3);
-            if (opts.quality_size < 16 || opts.quality_size > 196) {
-                fprintf(stderr, "Erreur: taille de quality doit être entre 16 et 196\n");
+            if (opts.quality_size < 10 || opts.quality_size > 100) {
+                fprintf(stderr, "Erreur: quality doit être entre 10 et 100\n");
                 return 1;
             }
         } else if (strncmp(argv[i], "--quality=", 10) == 0) {
             opts.quality_size = atoi(argv[i] + 10);
-            if (opts.quality_size < 16 || opts.quality_size > 196) {
-                fprintf(stderr, "Erreur: taille de quality doit être entre 16 et 196\n");
+            if (opts.quality_size < 10 || opts.quality_size > 100) {
+                fprintf(stderr, "Erreur: quality doit être entre 10 et 100\n");
                 return 1;
             }
         } else if (strncmp(argv[i], "-c=", 3) == 0) {
@@ -312,7 +315,8 @@ int main(int argc, char **argv) {
                      "%s/bin/send_image_page", cwd);
     
     if (!video_path) {
-        fprintf(stderr, "Erreur: fichier vidéo requis\n");
+        fprintf(stderr, "Erreur: fichier vidéo requis\n\n");
+        show_help(stderr, argv[0]);
         return 1;
     }
     
@@ -322,8 +326,9 @@ int main(int argc, char **argv) {
         printf("Conversion de la vidéo avant traitement...\n");
         
         // Construire la commande de conversion
-        char *convert_cmd = asprintf_alloc("convert_cmd", "%s/bin/convert_video.sh %s \"%s\"",
-                                           cwd, opts.convert_opts, video_path);
+        // Note: pass dithering to convert_video.sh too, so its frame quantization uses dithering.
+        char *convert_cmd = asprintf_alloc("convert_cmd", "%s/bin/convert_video.sh %s%s \"%s\"",
+                                           cwd, opts.convert_opts, opts.dither_mode ? " -d" : "", video_path);
         
         printf("Commande: %s\n", convert_cmd);
         

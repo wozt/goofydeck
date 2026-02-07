@@ -208,6 +208,10 @@ static int g_cmd_logs_verbose = 0;
 // 0 = normal (only button press status line), 1 = debug (verbose console logs)
 static int g_paging_debug = 0;
 
+// When enabled, command loop updates (poll/state) trigger a full page resend
+// (set-buttons-explicit or set-buttons-explicit-14 with wallpaper) instead of partial updates.
+static int g_cmd_loop_full_page_refresh = 1;
+
 typedef enum { 
     BR_NORMAL = 0,
     BR_DIM = 1,
@@ -6222,7 +6226,13 @@ int main(int argc, char **argv) {
                 if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
                 break;
             }
-            cmd_apply_updates_current_page(&opt, &cfg, cur_page, offset, blank_png);
+            if (g_cmd_loop_full_page_refresh) {
+                // Force a full resend so command-driven text/state changes are reflected without partial updates.
+                last_sig[0] = 0;
+                render_and_send(&opt, &cfg, cur_page, offset, &ha_map, blank_png, last_sig, sizeof(last_sig));
+            } else {
+                cmd_apply_updates_current_page(&opt, &cfg, cur_page, offset, blank_png);
+            }
         }
 
         // Ulanzi events

@@ -1044,11 +1044,52 @@ static void trim_line(char *line) {
     }
 }
 
-static void notify_rb_event(int *rb_fd, const char *msg) {
-    if (!rb_fd || *rb_fd < 0 || !msg) return;
-    if (write(*rb_fd, msg, strlen(msg)) < 0) {
-        close(*rb_fd);
-        *rb_fd = -1;
+// Multiple read-buttons subscribers (paging, miniapps, debug tools...).
+// We keep connections open across device disconnects so clients can survive USB resets.
+#define MAX_RB_SUBS 16
+typedef struct {
+    int fds[MAX_RB_SUBS];
+    int nfds;
+} RbSubs;
+
+static void rb_subs_remove_idx(RbSubs *s, int idx) {
+    if (!s) return;
+    if (idx < 0 || idx >= s->nfds) return;
+    close(s->fds[idx]);
+    for (int i = idx + 1; i < s->nfds; i++) s->fds[i - 1] = s->fds[i];
+    s->nfds--;
+}
+
+static void rb_subs_add(RbSubs *s, int fd) {
+    if (!s || fd < 0) return;
+    for (int i = 0; i < s->nfds; i++) {
+        if (s->fds[i] == fd) return;
+    }
+    if (s->nfds >= MAX_RB_SUBS) {
+        close(fd);
+        return;
+    }
+    // Non-blocking writes so a slow client can't stall the daemon.
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags >= 0) (void)fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    s->fds[s->nfds++] = fd;
+}
+
+static void rb_subs_broadcast(RbSubs *s, const char *msg) {
+    if (!s || !msg) return;
+    size_t len = strlen(msg);
+    for (int i = 0; i < s->nfds; /* inc inside */) {
+        int fd = s->fds[i];
+        ssize_t w = write(fd, msg, len);
+        if (w < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                i++;
+                continue;
+            }
+            rb_subs_remove_idx(s, i);
+            continue;
+        }
+        i++;
     }
 }
 
@@ -1089,7 +1130,8 @@ int main(void) {
     int listen_fd = make_listen_socket();
     printf("ulanzi_d200_daemon listening on %s\n", SOCK_PATH);
 
-    int rb_fd = -1;
+    RbSubs rb_subs;
+    memset(&rb_subs, 0, sizeof(rb_subs));
     double down_time[14] = {0};
     int hold_emitted[14] = {0};
     int longhold_emitted[14] = {0};
@@ -1122,7 +1164,7 @@ int main(void) {
                     memset(tap_pending, 0, sizeof(tap_pending));
                     last_keepalive = time(NULL);
                     if (debug) fprintf(stderr, "[debug] Reconnected to HID device\n");
-                    notify_rb_event(&rb_fd, "evt connected\n");
+                    rb_subs_broadcast(&rb_subs, "evt connected\n");
                 } else {
                     next_reconnect = now + 0.5;
                 }
@@ -1383,8 +1425,8 @@ int main(void) {
                     }
                     for (int i=0;i<13;i++) free(labels[i]);
                 } else if (strncmp(line,"read-buttons",12)==0) {
-                    rb_fd = cfd;
                     write(cfd,"ok\n",3);
+                    rb_subs_add(&rb_subs, cfd);
                     cfd = -1; // keep open
                 } else {
                     write(cfd,"unknown\n",8);
@@ -1399,8 +1441,8 @@ cmd_done:
             }
         }
 
-        // stream button events to read-buttons subscriber (only when device is connected)
-        if (rb_fd >= 0 && dev) {
+        // stream button events to read-buttons subscribers (only when device is connected)
+        if (rb_subs.nfds > 0 && dev) {
             uint8_t buf[PACKET_SIZE];
             int r = hid_read_timeout(dev, buf, sizeof(buf), 50);
             if (r > 0 && buf[0]==HEADER0 && buf[1]==HEADER1) {
@@ -1444,11 +1486,11 @@ cmd_done:
                             longhold_emitted[idx] = 0;
                             tap_pending[idx] = 1;
                             if (debug) fprintf(stderr, "[dbg] press start idx=%d t=%.3f\n", idx+1, now);
-                            if (idx == 13) {
-                                char out[64];
-        snprintf(out, sizeof(out), "button %d TAP\n", idx+1);
-        if (write(rb_fd, out, strlen(out)) < 0) { close(rb_fd); rb_fd = -1; }
-                            }
+	                            if (idx == 13) {
+	                                char out[64];
+	                                snprintf(out, sizeof(out), "button %d TAP\n", idx+1);
+	                                rb_subs_broadcast(&rb_subs, out);
+	                            }
                         }
                     } else if (release_evt) {
                         char out[200];
@@ -1465,8 +1507,8 @@ cmd_done:
                                 snprintf(out, sizeof(out), "button %d RELEASED\n", idx+1);
                             }
                         }
-                        if (write(rb_fd,out,strlen(out))<0) { close(rb_fd); rb_fd=-1; }
-                        down_time[idx]=0; hold_emitted[idx]=0; longhold_emitted[idx]=0; tap_pending[idx]=0;
+	                        rb_subs_broadcast(&rb_subs, out);
+	                        down_time[idx]=0; hold_emitted[idx]=0; longhold_emitted[idx]=0; tap_pending[idx]=0;
                     }
                 } else {
                     // Unknown command, ignore but continue loop
@@ -1482,16 +1524,16 @@ cmd_done:
                         if (!hold_emitted[i] && held >= HOLD_THRESHOLD) {
                             char out[128];
                             snprintf(out, sizeof(out), "button %d HOLD (%.2fs)\n", i + 1, held);
-                            if (write(rb_fd, out, strlen(out)) < 0) { close(rb_fd); rb_fd = -1; break; }
-                            hold_emitted[i] = 1;
-                            if (debug) fprintf(stderr, "[dbg] idle HOLD idx=%d held=%.3f\n", i+1, held);
-                        } else if (hold_emitted[i] && !longhold_emitted[i] && held >= LONGHOLD_THRESHOLD) {
-                            char out[128];
-                            snprintf(out, sizeof(out), "button %d LONGHOLD (%.2fs)\n", i + 1, held);
-                            if (write(rb_fd, out, strlen(out)) < 0) { close(rb_fd); rb_fd = -1; break; }
-                            longhold_emitted[i] = 1;
-                            if (debug) fprintf(stderr, "[dbg] idle LONGHOLD idx=%d held=%.3f\n", i+1, held);
-                        }
+	                            rb_subs_broadcast(&rb_subs, out);
+	                            hold_emitted[i] = 1;
+	                            if (debug) fprintf(stderr, "[dbg] idle HOLD idx=%d held=%.3f\n", i+1, held);
+	                        } else if (hold_emitted[i] && !longhold_emitted[i] && held >= LONGHOLD_THRESHOLD) {
+	                            char out[128];
+	                            snprintf(out, sizeof(out), "button %d LONGHOLD (%.2fs)\n", i + 1, held);
+	                            rb_subs_broadcast(&rb_subs, out);
+	                            longhold_emitted[i] = 1;
+	                            if (debug) fprintf(stderr, "[dbg] idle LONGHOLD idx=%d held=%.3f\n", i+1, held);
+	                        }
                     }
                 }
             } else {
@@ -1501,11 +1543,12 @@ cmd_done:
                 } else {
                     fprintf(stderr, "[ulanzi] device disconnected (hid_read_timeout=%d)\n", r);
                 }
-                notify_rb_event(&rb_fd, "evt disconnected\n");
-                hid_close(dev);
+	                rb_subs_broadcast(&rb_subs, "evt disconnected\n");
+	                hid_close(dev);
                 dev = NULL;
                 next_reconnect = 0.0;
-                // Keep rb_fd open so subscribers (paging_daemon) stay connected and recover after reconnect.
+                // Keep read-buttons subscriber sockets open so clients (paging_daemon, miniapps)
+                // stay connected and recover after reconnect.
                 memset(down_time, 0, sizeof(down_time));
                 memset(hold_emitted, 0, sizeof(hold_emitted));
                 memset(longhold_emitted, 0, sizeof(longhold_emitted));
@@ -1530,12 +1573,12 @@ cmd_done:
             char payload[64];
             snprintf(payload,sizeof(payload),"%d|%d|%d|%s|%d",sw_mode,sw_cpu,sw_mem,buf_time,sw_gpu);
             if (dev) {
-                if (send_command(dev,0x0006,(uint8_t*)payload,strlen(payload)) < 0) {
-                    notify_rb_event(&rb_fd, "evt disconnected\n");
-                    hid_close(dev);
-                    dev = NULL;
-                    next_reconnect = 0.0;
-                }
+	                if (send_command(dev,0x0006,(uint8_t*)payload,strlen(payload)) < 0) {
+	                    rb_subs_broadcast(&rb_subs, "evt disconnected\n");
+	                    hid_close(dev);
+	                    dev = NULL;
+	                    next_reconnect = 0.0;
+	                }
             }
             last_keepalive = now_keep;
         }
@@ -1544,8 +1587,8 @@ cmd_done:
         nanosleep(&ts, NULL);
     }
 
-    if (rb_fd>=0) close(rb_fd);
-    close(listen_fd);
+	    while (rb_subs.nfds > 0) rb_subs_remove_idx(&rb_subs, 0);
+	    close(listen_fd);
     if (dev) hid_close(dev);
     hid_exit();
     unlink(SOCK_PATH);

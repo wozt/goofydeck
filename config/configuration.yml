@@ -141,7 +141,12 @@ pages:
         tap_action:
           action: $page.go_to
           data: pi4
-      - name: ""
+      - name: "Apps"
+        presets: [room_folder]
+        icon: mdi:apps
+        tap_action:
+          action: $page.go_to
+          data: apps
       - name: ""
       - name: "settings"
         presets:
@@ -367,3 +372,72 @@ pages:
               data:
                 cmd: "assets/scripts/clear_cache.sh --clear"
             - action: $cmd.text_clear
+      - name: "Clock"
+        presets: [cmd_button]
+        icon: mdi:clock-outline
+        tap_action:
+          action: $cmd.poll_start
+        hold_action:
+          action: $cmd.poll_stop
+        poll:
+          every_ms: 1000
+          action:
+            action: $cmd.exec_text
+            data:
+              cmd: "assets/scripts/clock_now.sh"
+              trim: yes
+              max_len: 32
+      - name: "CPU"
+        presets: [cmd_button]
+        icon: mdi:cpu-64-bit
+        tap_action:
+          action: $cmd.poll_start
+        hold_action:
+          action: $cmd.poll_stop
+        poll:
+          every_ms: 2000
+          action:
+            action: $cmd.exec_text
+            data:
+              cmd: "assets/scripts/cpu_usage.sh"
+              trim: yes
+              max_len: 32
+      - name: "RAM"
+        presets: [cmd_button]
+        icon: mdi:memory
+        tap_action:
+          action: $cmd.poll_start
+        hold_action:
+          action: $cmd.poll_stop
+        poll:
+          every_ms: 2000
+          action:
+            action: $cmd.exec_text
+            data:
+              cmd: "assets/scripts/ram_usage.sh"
+              trim: yes
+              max_len: 32
+      - name: "GPU"
+        presets: [cmd_button]
+        icon: mdi:expansion-card-variant
+        tap_action:
+          action: $cmd.poll_start
+        hold_action:
+          action: $cmd.poll_stop
+        poll:
+          every_ms: 2000
+          action:
+            action: $cmd.exec_text
+            data:
+              cmd: "assets/scripts/gpu_usage_text.sh"
+              trim: yes
+              max_len: 32
+  apps:
+    buttons:
+      - name: "Videos"
+        presets: [cmd_button]
+        icon: mdi:movie-open
+        tap_action:
+          action: $cmd.exec
+          data:
+            cmd: "mymedia/miniapp/video_miniapp.sh"
