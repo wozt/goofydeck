@@ -23,7 +23,10 @@ ULANZI_SOCK="${ULANZI_SOCK:-/tmp/ulanzi_device.sock}"
 PAGING_CTRL_SOCK="${PAGING_CTRL_SOCK:-/tmp/goofydeck_paging_control.sock}"
 
 VIDEOS_DIR="${ROOT}/mymedia/videos"
-CACHE_DIR="${ROOT}/.cache/${MINIAPP_NAME}"
+# Miniapp disk cache (thumbs, etc). Keep it out of the global .cache/.
+CACHE_DIR="${ROOT}/mymedia/miniapp/.cache/${MINIAPP_NAME}"
+# Backward-compat read-only location (older versions wrote here).
+CACHE_DIR_OLD="${ROOT}/.cache/${MINIAPP_NAME}"
 RAM_BASE="/dev/shm/goofydeck/video_miniapp"
 RAM_DIR="${RAM_BASE}/$$"
 
@@ -38,9 +41,6 @@ SEEK_FRAMES=75
 TARGET_W=640
 TARGET_H=360
 TARGET_FPS=15
-
-# Used by convert_in_place_if_needed
-DID_CONVERT=0
 
 # 0 = replace buttons with control icons (fast)
 # 1 = attempt draw_over overlay (slow, for testing)
@@ -68,6 +68,13 @@ pg_cmd() {
 ul_cmd() {
   local cmd="$1"
   printf '%s\n' "${cmd}" | nc -w 1 -U "${ULANZI_SOCK}" 2>/dev/null || true
+}
+
+set_partial_btn_icon() {
+  local btn="$1"
+  local icon_path="$2"
+  local cmd="set-partial-explicit --button-${btn}=$(abs_path "${icon_path}")"
+  ul_cmd "${cmd}" >/dev/null
 }
 
 abs_path() {
@@ -123,150 +130,6 @@ video_basename() {
   basename "$1" .mp4
 }
 
-mp4_path_for_base() {
-  local base="$1"
-  printf "%s/%s.mp4\n" "${VIDEOS_DIR}" "${base}"
-}
-
-render_dir_for_base() {
-  local base="$1"
-  printf "%s/%s\n" "${VIDEOS_DIR}" "${base}"
-}
-
-render_dir_for_video() {
-  local video="$1"
-  local base
-  base="$(video_basename "${video}")"
-  printf "%s/%s\n" "$(dirname "${video}")" "${base}"
-}
-
-has_rendered_video() {
-  local video="$1"
-  local rd
-  rd="$(render_dir_for_video "${video}")"
-  [ -d "${rd}/1" ]
-}
-
-has_rendered_base() {
-  local base="$1"
-  local rd
-  rd="$(render_dir_for_base "${base}")"
-  [ -d "${rd}/1" ]
-}
-
-thumb_path_disk() {
-  local video="$1"
-  local base
-  base="$(video_basename "${video}")"
-  printf "%s/thumbs/%s.png\n" "${CACHE_DIR}" "${base}"
-}
-
-thumb_render_path_disk() {
-  local video="$1"
-  local base
-  base="$(video_basename "${video}")"
-  printf "%s/thumbs/%s_render.png\n" "${CACHE_DIR}" "${base}"
-}
-
-thumb_path_disk_by_base() {
-  local base="$1"
-  printf "%s/thumbs/%s.png\n" "${CACHE_DIR}" "${base}"
-}
-
-thumb_render_path_disk_by_base() {
-  local base="$1"
-  printf "%s/thumbs/%s_render.png\n" "${CACHE_DIR}" "${base}"
-}
-
-ensure_thumb() {
-  local video="$1"
-  local out
-  out="$(thumb_path_disk "${video}")"
-  if [ -f "${out}" ]; then
-    return 0
-  fi
-  mkdir -p "${CACHE_DIR}/thumbs"
-  [ -f "${video}" ] || return 1
-
-  # Prefer frame 15 to avoid black first frames.
-  if ! ffmpeg -hide_banner -loglevel error -y \
-      -i "${video}" \
-      -vf "select=eq(n\\,15),scale=${THUMB_SIZE}:${THUMB_SIZE}:force_original_aspect_ratio=increase,crop=${THUMB_SIZE}:${THUMB_SIZE}" \
-      -frames:v 1 \
-      "${out}"; then
-    ffmpeg -hide_banner -loglevel error -y \
-      -ss 00:00:01 -i "${video}" \
-      -vf "scale=${THUMB_SIZE}:${THUMB_SIZE}:force_original_aspect_ratio=increase,crop=${THUMB_SIZE}:${THUMB_SIZE}" \
-      -frames:v 1 \
-      "${out}" || true
-  fi
-  [ -f "${out}" ]
-}
-
-ensure_thumb_render_variant() {
-  local video="$1"
-  local base_thumb render_thumb
-  base_thumb="$(thumb_path_disk "${video}")"
-  render_thumb="$(thumb_render_path_disk "${video}")"
-  ensure_thumb "${video}"
-  if [ -f "${render_thumb}" ]; then
-    return 0
-  fi
-  cp -f "${base_thumb}" "${render_thumb}"
-  "${ROOT}/icons/draw_text" \
-    --text="render" \
-    --text_color="FFFFFF" \
-    --text_align="bottom" \
-    --text_size="18" \
-    --text_offset="0,0" \
-    "${render_thumb}" >/dev/null 2>&1 || true
-}
-
-ensure_thumb_by_base() {
-  local base="$1"
-  local out
-  out="$(thumb_path_disk_by_base "${base}")"
-  if [ -f "${out}" ]; then
-    return 0
-  fi
-  local mp4
-  mp4="$(mp4_path_for_base "${base}")"
-  [ -f "${mp4}" ] || return 1
-  mkdir -p "${CACHE_DIR}/thumbs"
-  ensure_thumb "${mp4}"
-}
-
-ensure_thumb_render_variant_by_base() {
-  local base="$1"
-  local base_thumb render_thumb
-  base_thumb="$(thumb_path_disk_by_base "${base}")"
-  render_thumb="$(thumb_render_path_disk_by_base "${base}")"
-  ensure_thumb_by_base "${base}" || return 1
-  if [ -f "${render_thumb}" ]; then
-    return 0
-  fi
-  cp -f "${base_thumb}" "${render_thumb}"
-  "${ROOT}/icons/draw_text" \
-    --text="render" \
-    --text_color="FFFFFF" \
-    --text_align="bottom" \
-    --text_size="18" \
-    --text_offset="0,0" \
-    "${render_thumb}" >/dev/null 2>&1 || true
-  [ -f "${render_thumb}" ]
-}
-
-render_btn8_frame1_png_by_base() {
-  local base="$1"
-  local dir
-  dir="$(render_dir_for_base "${base}")/8"
-  [ -d "${dir}" ] || return 1
-  local f
-  f="$(find "${dir}" -maxdepth 1 -type f -name 'b8_*.png' 2>/dev/null | sort | head -n 1)"
-  [ -n "${f}" ] || return 1
-  printf "%s\n" "${f}"
-}
-
 ffprobe_val() {
   local video="$1"
   local key="$2"
@@ -288,11 +151,11 @@ is_video_target_format() {
 }
 
 convert_in_place_if_needed() {
+  # Returns 0 if converted, 1 if no conversion needed, >1 on error.
   local video="$1"
-  [ -f "${video}" ] || return 1
-  DID_CONVERT=0
+  [ -f "${video}" ] || return 2
   if is_video_target_format "${video}"; then
-    return 0
+    return 1
   fi
 
   local in_dir in_base in_name out
@@ -300,83 +163,123 @@ convert_in_place_if_needed() {
   in_base="$(basename "${video}")"
   in_name="${in_base%.mp4}"
   out="${in_dir}/${in_name}_converted_360p_15fps.mp4"
-  "${ROOT}/bin/convert_video.sh" --size=360 --fps=15 "${video}" >/dev/null 2>&1 || return 1
-  [ -f "${out}" ] || return 1
+
+  "${ROOT}/bin/convert_video.sh" --size=360 --fps=15 "${video}" >/dev/null 2>&1 || return 3
+  [ -f "${out}" ] || return 4
   mv -f "${out}" "${video}"
-  DID_CONVERT=1
   return 0
 }
 
-set_partial_btn_icon() {
-  local btn="$1"
-  local icon_path="$2"
-  local cmd="set-partial-explicit --button-${btn}=$(abs_path "${icon_path}")"
-  ul_cmd "${cmd}" >/dev/null
-}
-
-make_btn_text_tile() {
-  local out="$1"
-  local text="$2"
-  "${ROOT}/icons/draw_square" "000000" --size=196 "${out}" >/dev/null
+make_status_tile() {
+  local text="$1"
+  local out="$2"
+  "${ROOT}/icons/draw_square" "111111" --size="${THUMB_SIZE}" "${out}" >/dev/null
   "${ROOT}/icons/draw_text" \
     --text="${text}" \
     --text_color="FFFFFF" \
     --text_align="center" \
     --text_font="dustismo_bold.ttf" \
-    --text_size="26" \
+    --text_size="16" \
     --text_offset="0,0" \
     "${out}" >/dev/null 2>&1 || true
 }
 
-prompt_delete_mp4_keep_render_by_base() {
-  # After each render, ask if we should delete the original MP4 and keep only the rendered folder.
-  # Layout:
-  #   button 3: message
-  #   button 4: YES
-  #   button 5: NO
-  local base="$1"
-  local mp4
-  mp4="$(mp4_path_for_base "${base}")"
-  [ -f "${mp4}" ] || return 0
-  has_rendered_base "${base}" || return 0
-
-  local msg="${RAM_DIR}/tmp/prompt_msg.png"
-  local yes="${RAM_DIR}/tmp/prompt_yes.png"
-  local no="${RAM_DIR}/tmp/prompt_no.png"
-  local empty="${ROOT}/assets/pregen/empty.png"
-
-  make_btn_text_tile "${msg}" "Delete MP4?"
-
-  "${ROOT}/icons/draw_square" "1e90ff" --size=196 "${yes}" >/dev/null
-  "${ROOT}/icons/draw_mdi" mdi:check-bold FFFFFF --size=120 "${yes}" >/dev/null 2>&1 || true
-  "${ROOT}/icons/draw_square" "8b0000" --size=196 "${no}" >/dev/null
-  "${ROOT}/icons/draw_mdi" mdi:close-thick FFFFFF --size=120 "${no}" >/dev/null 2>&1 || true
-
-  send_page_14 \
-    "${empty}" "${empty}" "${msg}" "${yes}" "${no}" "${empty}" "${empty}" \
-    "${empty}" "${empty}" "${empty}" "${empty}" "${empty}" "${empty}" "${MENU_FRAME_BTN_14}"
-
+drain_rb_events() {
+  # Drain buffered button events after a long render so we don't trigger actions immediately.
+  local seconds="$1"
+  local start now elapsed
+  start="$(date +%s.%N)"
   while true; do
-    local line=""
-    if ! read -r line; then
-      sleep 0.1
+    now="$(date +%s.%N)"
+    elapsed="$(awk -v a="${now}" -v b="${start}" 'BEGIN{print a-b}')"
+    awk -v e="${elapsed}" -v end="${seconds}" 'BEGIN{exit !(e<end)}' || break
+    local _line=""
+    if ! read -r -t 0.05 _line; then
       continue
-    fi
-    local parsed btn evt
-    if ! parsed="$(parse_btn_evt "${line}")"; then
-      continue
-    fi
-    btn="$(printf "%s" "${parsed}" | awk '{print $1}')"
-    evt="$(printf "%s" "${parsed}" | awk '{print $2}')"
-    [ "${evt}" = "TAP" ] || continue
-    if [ "${btn}" -eq 4 ]; then
-      rm -f "${mp4}" 2>/dev/null || true
-      return 0
-    fi
-    if [ "${btn}" -eq 5 ]; then
-      return 0
     fi
   done
+}
+
+render_dir_for_video() {
+  local video="$1"
+  local base
+  base="$(video_basename "${video}")"
+  printf "%s/%s\n" "$(dirname "${video}")" "${base}"
+}
+
+has_rendered_video() {
+  local video="$1"
+  local rd
+  rd="$(render_dir_for_video "${video}")"
+  [ -d "${rd}/1" ]
+}
+
+thumb_path_disk() {
+  local video="$1"
+  local base
+  base="$(video_basename "${video}")"
+  local p="${CACHE_DIR}/thumbs/${base}.png"
+  if [ -f "${p}" ]; then
+    printf "%s\n" "${p}"
+    return 0
+  fi
+  local old="${CACHE_DIR_OLD}/thumbs/${base}.png"
+  if [ -f "${old}" ]; then
+    printf "%s\n" "${old}"
+    return 0
+  fi
+  printf "%s\n" "${p}"
+}
+
+thumb_render_path_disk() {
+  local video="$1"
+  local base
+  base="$(video_basename "${video}")"
+  local p="${CACHE_DIR}/thumbs/${base}_render.png"
+  if [ -f "${p}" ]; then
+    printf "%s\n" "${p}"
+    return 0
+  fi
+  local old="${CACHE_DIR_OLD}/thumbs/${base}_render.png"
+  if [ -f "${old}" ]; then
+    printf "%s\n" "${old}"
+    return 0
+  fi
+  printf "%s\n" "${p}"
+}
+
+ensure_thumb() {
+  local video="$1"
+  local out
+  out="$(thumb_path_disk "${video}")"
+  if [ -f "${out}" ]; then
+    return 0
+  fi
+  mkdir -p "${CACHE_DIR}/thumbs"
+  ffmpeg -hide_banner -loglevel error -y \
+    -ss 00:00:01 -i "${video}" \
+    -frames:v 1 \
+    -vf "scale=${THUMB_SIZE}:${THUMB_SIZE}:force_original_aspect_ratio=increase,crop=${THUMB_SIZE}:${THUMB_SIZE}" \
+    "${out}"
+}
+
+ensure_thumb_render_variant() {
+  local video="$1"
+  local base_thumb render_thumb
+  base_thumb="$(thumb_path_disk "${video}")"
+  render_thumb="$(thumb_render_path_disk "${video}")"
+  ensure_thumb "${video}"
+  if [ -f "${render_thumb}" ]; then
+    return 0
+  fi
+  cp -f "${base_thumb}" "${render_thumb}"
+  "${ROOT}/icons/draw_text" \
+    --text="render" \
+    --text_color="FFFFFF" \
+    --text_align="bottom" \
+    --text_size="18" \
+    --text_offset="0,0" \
+    "${render_thumb}" >/dev/null 2>&1 || true
 }
 
 send_page_14() {
@@ -400,9 +303,9 @@ send_page_14() {
 }
 
 menu_render() {
-  local -n _bases_ref="$1"
+  local -n _videos_ref="$1"
   local offset="$2"
-  local total="${#_bases_ref[@]}"
+  local total="${#_videos_ref[@]}"
 
   local outdir="${RAM_DIR}/menu"
   rm -rf "${outdir}" 2>/dev/null || true
@@ -423,40 +326,13 @@ menu_render() {
       btn_paths[$((b-1))]="${empty}"
       continue
     fi
-    local base="${_bases_ref[${idx}]}"
-    local mp4
-    mp4="$(mp4_path_for_base "${base}")"
-
-    if [ -f "${mp4}" ]; then
-      if has_rendered_base "${base}"; then
-        ensure_thumb_by_base "${base}" || true
-        btn_paths[$((b-1))]="$(thumb_path_disk_by_base "${base}")"
-      else
-        ensure_thumb_render_variant_by_base "${base}" || true
-        btn_paths[$((b-1))]="$(thumb_render_path_disk_by_base "${base}")"
-      fi
-      [ -f "${btn_paths[$((b-1))]}" ] || btn_paths[$((b-1))]="${empty}"
+    local v="${_videos_ref[${idx}]}"
+    if has_rendered_video "${v}"; then
+      ensure_thumb "${v}"
+      btn_paths[$((b-1))]="$(thumb_path_disk "${v}")"
     else
-      # MP4 missing but render folder exists: use cached thumb, else fallback to render frame1 button8 icon.
-      if has_rendered_base "${base}"; then
-        local t
-        t="$(thumb_path_disk_by_base "${base}")"
-        if [ -f "${t}" ]; then
-          btn_paths[$((b-1))]="${t}"
-        else
-          local f
-          if f="$(render_btn8_frame1_png_by_base "${base}")"; then
-            btn_paths[$((b-1))]="${f}"
-          else
-            btn_paths[$((b-1))]="${empty}"
-          fi
-        fi
-      else
-        # Cache-only entry
-        local t
-        t="$(thumb_path_disk_by_base "${base}")"
-        if [ -f "${t}" ]; then btn_paths[$((b-1))]="${t}"; else btn_paths[$((b-1))]="${empty}"; fi
-      fi
+      ensure_thumb_render_variant "${v}"
+      btn_paths[$((b-1))]="$(thumb_render_path_disk "${v}")"
     fi
   done
 
@@ -492,9 +368,9 @@ frame_path() {
 }
 
 playback_loop() {
-  local base="$1"
+  local video="$1"
   local rd
-  rd="$(render_dir_for_base "${base}")"
+  rd="$(render_dir_for_video "${video}")"
   local max_frame
   max_frame="$(find "${rd}/1" -maxdepth 1 -type f -name 'b1_*.png' | wc -l | awk '{print $1}')"
   if [ "${max_frame}" -le 0 ]; then
@@ -515,6 +391,8 @@ playback_loop() {
   local paused=0
   local frame=0
   local controls_left=0
+  local controls_shown_at_s=0
+  local need_redraw=1
 
   while true; do
     local timeout
@@ -527,27 +405,58 @@ playback_loop() {
         btn="$(printf "%s" "${parsed}" | awk '{print $1}')"
         evt="$(printf "%s" "${parsed}" | awk '{print $2}')"
         if [ "${evt}" = "TAP" ]; then
-          if [ "${btn}" -ne 14 ]; then
+          local now_s
+          now_s="$(date +%s)"
+
+          # Any TAP (except button 14) can request showing controls, but the TAP that
+          # triggers the overlay must NOT also trigger the control action.
+          if [ "${btn}" -ne 14 ] && [ "${controls_left}" -le 0 ]; then
             controls_left=100
+            controls_shown_at_s="${now_s}"
+            need_redraw=1
+            if [ "${paused}" -eq 0 ]; then
+              continue
+            fi
           fi
+
+          if [ "${btn}" -ne 14 ] && [ "${controls_left}" -gt 0 ]; then
+            controls_shown_at_s="${now_s}"
+          fi
+
+          # Controls are visible: only then apply actions.
           if [ "${btn}" -eq 1 ]; then
             return 0
           elif [ "${btn}" -eq 11 ]; then
             frame=$((frame - SEEK_FRAMES))
             if [ "${frame}" -lt 0 ]; then frame=0; fi
+            need_redraw=1
           elif [ "${btn}" -eq 12 ]; then
             if [ "${paused}" -eq 1 ]; then paused=0; else paused=1; fi
+            need_redraw=1
           elif [ "${btn}" -eq 13 ]; then
             frame=$((frame + SEEK_FRAMES))
             if [ "${frame}" -gt "${max_frame}" ]; then frame="${max_frame}"; fi
+            need_redraw=1
           fi
         fi
       fi
-      continue
     fi
 
+    local advance_frame=1
     if [ "${paused}" -eq 1 ]; then
-      continue
+      advance_frame=0
+      if [ "${controls_left}" -gt 0 ] && [ "${controls_shown_at_s}" -gt 0 ]; then
+        local now_s
+        now_s="$(date +%s)"
+        if [ $((now_s - controls_shown_at_s)) -ge 5 ]; then
+          controls_left=0
+          need_redraw=1
+        fi
+      fi
+
+      if [ "${need_redraw}" -le 0 ]; then
+        continue
+      fi
     fi
 
     if [ "${frame}" -gt "${max_frame}" ]; then
@@ -596,11 +505,16 @@ playback_loop() {
         if [ "${paused}" -eq 1 ]; then b12="${ctrl_play}"; else b12="${ctrl_pause}"; fi
         b13="${ctrl_fwd}"
       fi
-      controls_left=$((controls_left - 1))
+      if [ "${paused}" -eq 0 ]; then
+        controls_left=$((controls_left - 1))
+      fi
     fi
 
     send_page_14 "${b1}" "${b2}" "${b3}" "${b4}" "${b5}" "${b6}" "${b7}" "${b8}" "${b9}" "${b10}" "${b11}" "${b12}" "${b13}" "${b14}"
-    frame=$((frame + 1))
+    if [ "${advance_frame}" -eq 1 ]; then
+      frame=$((frame + 1))
+    fi
+    need_redraw=0
   done
 }
 
@@ -612,18 +526,9 @@ main() {
 
   pg_cmd "stop-control"
 
-  mkdir -p "${CACHE_DIR}/thumbs"
-  mapfile -t bases < <(
-    {
-      find "${VIDEOS_DIR}" -maxdepth 1 -type f -iname '*.mp4' -printf '%f\n' | sed 's/\\.mp4$//'
-      find "${VIDEOS_DIR}" -maxdepth 1 -type d -name '*' -printf '%f\n' | while read -r d; do
-        [ -d "${VIDEOS_DIR}/${d}/1" ] && printf '%s\n' "${d}"
-      done
-      find "${CACHE_DIR}/thumbs" -maxdepth 1 -type f -name '*.png' -printf '%f\n' 2>/dev/null | sed 's/\\.png$//' | sed 's/_render$//'
-    } | sort -u
-  )
-  if [ "${#bases[@]}" -eq 0 ]; then
-    echo "No videos found (mp4/render/thumb) in ${VIDEOS_DIR}" >&2
+  mapfile -t videos < <(find "${VIDEOS_DIR}" -maxdepth 1 -type f -iname '*.mp4' | sort)
+  if [ "${#videos[@]}" -eq 0 ]; then
+    echo "No MP4 found in ${VIDEOS_DIR}" >&2
   fi
 
   # Button stream (persistent)
@@ -632,7 +537,7 @@ main() {
   read -r okline <&"${RB[0]}" || true
 
   local offset=0
-  menu_render bases "${offset}"
+  menu_render videos "${offset}"
 
   while true; do
     local line=""
@@ -653,61 +558,46 @@ main() {
       elif [ "${btn}" -eq 12 ]; then
         if [ "${offset}" -ge "${MENU_PAGE_SIZE}" ]; then
           offset=$((offset - MENU_PAGE_SIZE))
-          menu_render bases "${offset}"
+          menu_render videos "${offset}"
         fi
       elif [ "${btn}" -eq 13 ]; then
-        if [ $((offset + MENU_PAGE_SIZE)) -lt "${#bases[@]}" ]; then
+        if [ $((offset + MENU_PAGE_SIZE)) -lt "${#videos[@]}" ]; then
           offset=$((offset + MENU_PAGE_SIZE))
-          menu_render bases "${offset}"
+          menu_render videos "${offset}"
         fi
       elif [ "${btn}" -ge 1 ] && [ "${btn}" -le "${MENU_PAGE_SIZE}" ]; then
         local idx=$((offset + btn - 1))
-        if [ "${idx}" -lt "${#bases[@]}" ]; then
-          local base="${bases[${idx}]}"
-          if has_rendered_base "${base}"; then
-            playback_loop "${base}" <&"${RB[0]}"
-            menu_render bases "${offset}"
+        if [ "${idx}" -lt "${#videos[@]}" ]; then
+          local v="${videos[${idx}]}"
+          if has_rendered_video "${v}"; then
+            playback_loop "${v}" <&"${RB[0]}"
+            menu_render videos "${offset}"
           fi
         fi
       fi
     elif [ "${evt}" = "HOLD" ] || [ "${evt}" = "LONGHOLD" ]; then
       if [ "${btn}" -ge 1 ] && [ "${btn}" -le "${MENU_PAGE_SIZE}" ]; then
         local idx=$((offset + btn - 1))
-        if [ "${idx}" -lt "${#bases[@]}" ]; then
-          local base="${bases[${idx}]}"
-          local mp4
-          mp4="$(mp4_path_for_base "${base}")"
-          if [ -f "${mp4}" ]; then
-            # show "convert..." only if conversion is actually needed
-            if ! is_video_target_format "${mp4}"; then
-              ensure_thumb_by_base "${base}" || true
-              local disk_thumb
-              disk_thumb="$(thumb_path_disk_by_base "${base}")"
-              if [ -f "${disk_thumb}" ]; then
-                local tmp_icon="${RAM_DIR}/tmp/${base}_convert.png"
-                cp -f "${disk_thumb}" "${tmp_icon}"
-                "${ROOT}/icons/draw_text" --text="convert..." --text_color="FFFFFF" --text_align="bottom" --text_size="16" "${tmp_icon}" >/dev/null 2>&1 || true
-                set_partial_btn_icon "${btn}" "${tmp_icon}"
-              fi
+        if [ "${idx}" -lt "${#videos[@]}" ]; then
+          local v="${videos[${idx}]}"
+          if [ -f "${v}" ]; then
+            if ! is_video_target_format "${v}"; then
+              local st="${RAM_DIR}/tmp/convert_${btn}.png"
+              make_status_tile "convert..." "${st}"
+              set_partial_btn_icon "${btn}" "${st}"
+              convert_in_place_if_needed "${v}" >/dev/null 2>&1 || true
             fi
 
-            convert_in_place_if_needed "${mp4}" || true
+            local st2="${RAM_DIR}/tmp/render_${btn}.png"
+            make_status_tile "render..." "${st2}"
+            set_partial_btn_icon "${btn}" "${st2}"
 
-            # always show "render..." before rendering
-            ensure_thumb_by_base "${base}" || true
-            local disk_thumb
-            disk_thumb="$(thumb_path_disk_by_base "${base}")"
-            if [ -f "${disk_thumb}" ]; then
-              local tmp_icon2="${RAM_DIR}/tmp/${base}_render.png"
-              cp -f "${disk_thumb}" "${tmp_icon2}"
-              "${ROOT}/icons/draw_text" --text="render..." --text_color="FFFFFF" --text_align="bottom" --text_size="16" "${tmp_icon2}" >/dev/null 2>&1 || true
-              set_partial_btn_icon "${btn}" "${tmp_icon2}"
-            fi
+            "${ROOT}/bin/send_video_page_wrapper" -d -q=60 -r "${v}" || true
 
-            "${ROOT}/bin/send_video_page_wrapper" -d -q=60 -r "${mp4}" || true
-            prompt_delete_mp4_keep_render_by_base "${base}" <&"${RB[0]}"
-            menu_render bases "${offset}"
+            # Restore UI
+            drain_rb_events 0.3 <&"${RB[0]}" || true
           fi
+          menu_render videos "${offset}"
         fi
       fi
     fi

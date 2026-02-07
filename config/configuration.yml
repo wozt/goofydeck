@@ -441,3 +441,10 @@ pages:
           action: $cmd.exec
           data:
             cmd: "mymedia/miniapp/video_miniapp.sh"
+      - name: "TicTacToe"
+        presets: [cmd_button]
+        icon: mdi:gamepad-variant
+        tap_action:
+          action: $cmd.exec
+          data:
+            cmd: "mymedia/miniapp/tictactoe_miniapp.sh"
