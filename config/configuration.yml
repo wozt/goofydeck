@@ -7,7 +7,7 @@ sleep:
 
 wallpaper:
   path: "mymedia/wallpapers/valley16bits.png"
-  quality: 56
+  quality: 60
   magnify: 100
   dithering: yes
 
@@ -156,6 +156,11 @@ pages:
           action: $page.go_to
           data: settings
   salon:
+    wallpaper:
+      path: "mymedia/wallpapers/pinefluid.png"
+      quality: 70
+      magnify: 100
+      dithering: yes
     buttons:
       - name: "Temperature"
         entity_id: sensor.tz3000_utwgoauk_snzb_02_temperature
@@ -341,6 +346,11 @@ pages:
         tap_action:
           action: script.power_off_rpi4
   settings:
+    wallpaper:
+      path: "mymedia/wallpapers/settings16bits.png"
+      quality: 60
+      magnify: 100
+      dithering: yes
     buttons:
       - name: "RAM cache"
         presets: [cmd_button]
@@ -402,81 +412,6 @@ pages:
               data:
                 cmd: "assets/scripts/clear_wallpaper_cache.sh --clear"
             - action: $cmd.text_clear
-
-      # - name: "Clock"
-      #   presets: [cmd_button]
-      #   icon: mdi:clock-outline
-      #   tap_action:
-      #     action: $cmd.poll_start
-      #   hold_action:
-      #     action: $cmd.poll_stop
-      #   poll:
-      #     every_ms: 1000
-      #     action:
-      #       action: $cmd.exec_text
-      #       data:
-      #         cmd: "assets/scripts/clock_now.sh"
-      #         trim: yes
-      #         max_len: 32
-      # - name: "CPU"
-      #   presets: [cmd_button]
-      #   icon: mdi:cpu-64-bit
-      #   tap_action:
-      #     action: $cmd.poll_start
-      #   hold_action:
-      #     action: $cmd.poll_stop
-      #   poll:
-      #     every_ms: 2000
-      #     action:
-      #       action: $cmd.exec_text
-      #       data:
-      #         cmd: "assets/scripts/cpu_usage.sh"
-      #         trim: yes
-      #         max_len: 32
-      # - name: "RAM"
-      #   presets: [cmd_button]
-      #   icon: mdi:memory
-      #   tap_action:
-      #     action: $cmd.poll_start
-      #   hold_action:
-      #     action: $cmd.poll_stop
-      #   poll:
-      #     every_ms: 2000
-      #     action:
-      #       action: $cmd.exec_text
-      #       data:
-      #         cmd: "assets/scripts/ram_usage.
-      #   presets: [cmd_button]
-      #   icon: mdi:expansion-card-variant
-      #   tap_action:
-      #     action: $cmd.poll_start
-      #   hold_action:
-      #     action: $cmd.poll_stop
-      #   poll:
-      #     every_ms: 2000
-      #     action:
-      #       action: $cmd.exec_text
-      #       data:
-      #         cmd: "assets/scripts/gpu_usage_text.sh"
-      #         trim: yes
-      #         max_len: 32sh"
-      #         trim: yes
-      #         max_len: 32
-      # - name: "GPU"
-      #   presets: [cmd_button]
-      #   icon: mdi:expansion-card-variant
-      #   tap_action:
-      #     action: $cmd.poll_start
-      #   hold_action:
-      #     action: $cmd.poll_stop
-      #   poll:
-      #     every_ms: 2000
-      #     action:
-      #       action: $cmd.exec_text
-      #       data:
-      #         cmd: "assets/scripts/gpu_usage_text.sh"
-      #         trim: yes
-      #         max_len: 32
   apps:
     buttons:
       - name: "Videos"

@@ -13,8 +13,14 @@ mdi/
 mymedia/images/*
 mymedia/videos/*
 mymedia/scripts/*
-mymedia/wallpapers/*
 mymedia/games/*
+
+# Miniapps (commit the code/assets, ignore generated caches)
+#!mymedia/miniapp/**
+mymedia/miniapp/.cache/
+
+# Wallpapers: commit images, ignore rendered tile dirs created next to them
+mymedia/wallpapers/*/
 
 # Editor/OS trash (generic)
 .DS_Store
@@ -36,13 +42,21 @@ Android/
 
 # Local binaries (built by Makefile)
 icons/draw_border
+icons/draw_border_rectangle
 icons/draw_mdi
+icons/draw_mdi_rectangle
 icons/draw_optimize
+icons/draw_optimize_rectangle
 icons/draw_over
+icons/draw_over_rectangle
 icons/draw_square
+icons/draw_rectangle
 icons/draw_text
+icons/draw_text_rectangle
 icons/draw_normalize
+icons/draw_normalize_rectangle
 icons/draw_svg
+icons/draw_svg_rectangle
 ulanzi_d200_daemon
 send_video_page
 bin/paging_daemon

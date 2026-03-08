@@ -56,9 +56,9 @@ bin/send_video_page_wrapper: src/lib/send_video_page_wrapper.c | dir_bin
 	$(CC) $(CFLAGS) $(FFMPEG_CFLAGS) -o $@ $< $(FFMPEG_LIBS) $(PNG_LIBS) $(ZLIB_LIBS) $(PTHREAD_LIBS) $(MATH_LIBS)
 
 icons: icons/draw_border icons/draw_optimize icons/draw_over icons/draw_square icons/draw_rectangle icons/draw_text icons/draw_normalize
-icons: icons/draw_border_rectangle icons/draw_broder_rectangle
-icons: icons/draw_text_rectangle icons/draw_optimize_rectangle icons/draw_optimize_recangle icons/draw_over_rectangle
-icons: icons/draw_normalize_rectangle icons/draw_normalise_rectangle
+icons: icons/draw_border_rectangle
+icons: icons/draw_text_rectangle icons/draw_optimize_rectangle icons/draw_over_rectangle
+icons: icons/draw_normalize_rectangle
 ifeq ($(HAVE_MDI),1)
 icons: icons/draw_mdi icons/draw_svg
 icons: icons/draw_mdi_rectangle icons/draw_svg_rectangle
@@ -121,8 +121,8 @@ clean:
 	rm -f bin/send_video_page_wrapper
 	rm -f bin/send_image_page
 	rm -f icons/draw_border icons/draw_mdi icons/draw_svg icons/draw_normalize icons/draw_optimize icons/draw_over icons/draw_square icons/draw_rectangle icons/draw_text
-	rm -f icons/draw_border_rectangle icons/draw_broder_rectangle
-	rm -f icons/draw_text_rectangle icons/draw_optimize_rectangle icons/draw_optimize_recangle icons/draw_over_rectangle
-	rm -f icons/draw_normalize_rectangle icons/draw_normalise_rectangle
+	rm -f icons/draw_border_rectangle
+	rm -f icons/draw_text_rectangle icons/draw_optimize_rectangle icons/draw_over_rectangle
+	rm -f icons/draw_normalize_rectangle
 	rm -f icons/draw_mdi_rectangle icons/draw_svg_rectangle
 	rm -f standalone/draw_optimize_std
