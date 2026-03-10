@@ -1916,7 +1916,7 @@ static int ensure_mdi_svg(const Options *opt, const char *icon_spec) {
     FILE *m = fopen(marker, "wb");
     if (m) fclose(m);
     char script[PATH_MAX];
-    snprintf(script, sizeof(script), "%s/icons/download_mdi.sh", opt->root_dir);
+    snprintf(script, sizeof(script), "%s/icons/download_mdi.sh -m github individual %s", opt->root_dir, name);
     char *argv[] = { script, NULL };
     (void)run_exec(argv);
     return file_exists(svg) ? 0 : -1;

@@ -408,6 +408,25 @@ setup_mdi_icons() {
     fi
   done
 
+  # If some downloads failed, try individual GitHub Raw method for remaining icons
+  if [ "${failed}" -gt 0 ]; then
+    log "Attempting GitHub Raw method for ${failed} failed downloads..."
+    local github_success=0
+    for icon in ${missing_icons}; do
+      local target_file="${mdi_dir}/${icon}.svg"
+      if [ -f "${target_file}" ]; then continue; fi
+      
+      if "${ROOT}/icons/download_mdi.sh" "${icon}"; then
+        github_success=$((github_success + 1))
+        failed=$((failed - 1))
+      fi
+    done
+    
+    if [ "${github_success}" -gt 0 ]; then
+      log "✅ GitHub Raw method succeeded for ${github_success} icons"
+    fi
+  fi
+
   log "MDI icons download completed: ${downloaded} downloaded, ${failed} failed"
   
   if [ "${failed}" -gt 0 ]; then
