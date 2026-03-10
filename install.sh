@@ -358,9 +358,14 @@ setup_mdi_icons() {
   local missing_count=0
   local missing_icons=""
   for icon in ${mdi_icons}; do
-    if [ ! -f "${mdi_dir}/${icon}.svg" ]; then
+    local icon_path="${mdi_dir}/${icon}.svg"
+    log "Checking ${icon_path}..."
+    if [ ! -f "${icon_path}" ]; then
       missing_count=$((missing_count + 1))
       missing_icons="${missing_icons} ${icon}"
+      log "Missing: ${icon}"
+    else
+      log "Found: ${icon}"
     fi
   done
 
@@ -379,16 +384,16 @@ setup_mdi_icons() {
     local icon_url="https://cdn.jsdelivr.net/npm/@mdi/svg@latest/svg/${icon}.svg"
     local target_file="${mdi_dir}/${icon}.svg"
     
-    if command -v wget >/dev/null 2>&1; then
-      if wget -q "${icon_url}" -O "${target_file}" 2>/dev/null; then
+    if command -v curl >/dev/null 2>&1; then
+      if curl -s "${icon_url}" -o "${target_file}" 2>/dev/null; then
         downloaded=$((downloaded + 1))
         log "Downloaded ${icon}.svg"
       else
         failed=$((failed + 1))
         log "Failed to download ${icon}.svg"
       fi
-    elif command -v curl >/dev/null 2>&1; then
-      if curl -s "${icon_url}" -o "${target_file}" 2>/dev/null; then
+    elif command -v wget >/dev/null 2>&1; then
+      if wget -q "${icon_url}" -O "${target_file}" 2>/dev/null; then
         downloaded=$((downloaded + 1))
         log "Downloaded ${icon}.svg"
       else
