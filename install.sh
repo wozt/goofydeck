@@ -376,7 +376,7 @@ setup_mdi_icons() {
   local downloaded=0
   local failed=0
   for icon in ${missing_icons}; do
-    local icon_url="https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/svg/${icon}.svg"
+    local icon_url="https://cdn.jsdelivr.net/npm/@mdi/svg@latest/svg/${icon}.svg"
     local target_file="${mdi_dir}/${icon}.svg"
     
     if command -v wget >/dev/null 2>&1; then
