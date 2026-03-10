@@ -551,7 +551,12 @@ suggest_disable_wallpapers() {
     if [ -f "${config_file}" ]; then
       # Check if global section already exists
       if grep -q "^global:" "${config_file}"; then
-        sed -i '/^global:/a\  disable_wallpapers: true' "${config_file}"
+        # Update existing disable_wallpapers value or add it if not present
+        if grep -q "disable_wallpapers:" "${config_file}"; then
+          sed -i 's/^  disable_wallpapers:.*$/  disable_wallpapers: true/' "${config_file}"
+        else
+          sed -i '/^global:/a\  disable_wallpapers: true' "${config_file}"
+        fi
       else
         sed -i '1i\global:\n  disable_wallpapers: true' "${config_file}"
       fi
