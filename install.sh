@@ -12,6 +12,10 @@ FORCE_COMPILE=0
 NO_COMPILE=0
 DEPS_ONLY=0
 NO_FONTS=0
+NO_UDEV=0
+NO_MDI=0
+SETUP_ENV=1
+INTERACTIVE=1
 
 usage() {
   cat >&2 <<EOF
@@ -24,6 +28,10 @@ Options:
   --no-compile         Do not build anything
   --deps-only          Install deps only (implies --no-compile)
   --no-fonts           Skip fonts collection/copy
+  --no-udev            Skip udev rules setup (for Docker/containers)
+  --no-mdi             Skip MDI icons download
+  --no-setup-env       Skip interactive .env setup
+  --no-interactive     Skip interactive component selection (use defaults)
   --env-file <path>    Use a specific .env file (default: ${ENV_FILE})
   -h, --help           Show this help
 
@@ -45,6 +53,12 @@ while [ "$#" -gt 0 ]; do
     --no-compile) NO_COMPILE=1; shift ;;
     --deps-only) DEPS_ONLY=1; NO_COMPILE=1; shift ;;
     --no-fonts) NO_FONTS=1; shift ;;
+    --no-udev) NO_UDEV=1; shift ;;
+    --no-mdi) NO_MDI=1; shift ;;
+    --setup-env) SETUP_ENV=1; shift ;;
+    --no-setup-env) SETUP_ENV=0; shift ;;
+    --interactive) INTERACTIVE=1; shift ;;
+    --no-interactive) INTERACTIVE=0; shift ;;
     --env-file) ENV_FILE="${2:-}"; shift 2 || { usage; exit 2; } ;;
     --env-file=*) ENV_FILE="${1#*=}"; shift ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
@@ -61,6 +75,363 @@ as_root() {
     command -v sudo >/dev/null 2>&1 || die "sudo not found; run as root."
     sudo -E "$@"
   fi
+}
+
+setup_udev_rules() {
+  if [ "${NO_UDEV}" -eq 1 ]; then
+    log "Skipping udev rules setup (--no-udev specified)"
+    return 0
+  fi
+
+  if [ "$(uname -s)" = "Darwin" ]; then
+    log "Skipping udev rules on macOS (not applicable)"
+    return 0
+  fi
+
+  local udev_file="/etc/udev/rules.d/50-ulanzi.rules"
+  local vid="2207"
+  local pid="0019"
+
+  # Check if udev rules are actually needed
+  local need_udev=0
+  local current_user
+  current_user="$(load_env_user || whoami)"
+  
+  log "Checking USB device access requirements..."
+  
+  # Check if device is connected and accessible
+  if command -v lsusb >/dev/null 2>&1; then
+    if lsusb -d "${vid}:${pid}" >/dev/null 2>&1; then
+      log "Ulanzi D200 device found via USB"
+      
+      # Check if user can access hidraw devices
+      local hidraw_accessible=0
+      for hidraw in /dev/hidraw*; do
+        if [ -e "${hidraw}" ]; then
+          if [ -r "${hidraw}" ] && [ -w "${hidraw}" ]; then
+            # Check if this hidraw belongs to Ulanzi device
+            local uevent_path="/sys/class/hidraw/$(basename "${hidraw}")/device/uevent"
+            if [ -f "${uevent_path}" ]; then
+              local device_vid device_pid
+              device_vid=$(grep "^ID_VENDOR_ID=" "${uevent_path}" 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+              device_pid=$(grep "^ID_MODEL_ID=" "${uevent_path}" 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+              if [ "${device_vid}" = "${vid,,}" ] && [ "${device_pid}" = "${pid,,}" ]; then
+                hidraw_accessible=1
+                log "Device ${hidraw} is accessible to user ${current_user}"
+                break
+              fi
+            fi
+          fi
+        fi
+      done
+      
+      if [ "${hidraw_accessible}" -eq 1 ]; then
+        log "USB device access is already properly configured"
+        need_udev=0
+      else
+        log "USB device found but not accessible to user ${current_user}"
+        need_udev=1
+      fi
+    else
+      log "Ulanzi D200 device not currently connected"
+      log "Will setup udev rules for future device connection"
+      need_udev=1
+    fi
+  else
+    log "lsusb not available, assuming udev rules are needed"
+    need_udev=1
+  fi
+
+  # Check if user is in plugdev group
+  if groups "${current_user}" 2>/dev/null | grep -q "plugdev"; then
+    log "User ${current_user} is already in plugdev group"
+  else
+    log "User ${current_user} is not in plugdev group"
+    need_udev=1
+  fi
+
+  if [ "${need_udev}" -eq 0 ] && [ -f "${udev_file}" ]; then
+    log "Udev rules already exist and device access is working"
+    return 0
+  fi
+
+  if [ "${INTERACTIVE}" -eq 1 ]; then
+    echo
+    if [ "${need_udev}" -eq 1 ]; then
+      read -p "Setup USB device permissions (udev rules) for Ulanzi D200? [Y/n]: " setup_udev_confirm
+    else
+      read -p "USB access is already configured. Setup udev rules anyway? [y/N]: " setup_udev_confirm
+    fi
+    
+    if [[ "${setup_udev_confirm}" =~ ^[Nn]*$ ]] && [ "${need_udev}" -eq 0 ]; then
+      log "Skipping udev rules setup"
+      return 0
+    elif [[ "${setup_udev_confirm}" =~ ^[Nn]*$ ]]; then
+      log "Skipping udev rules setup (may cause device access issues)"
+      return 0
+    fi
+  fi
+
+  if [ -f "${udev_file}" ]; then
+    log "Udev rules already exist at ${udev_file}"
+    return 0
+  fi
+
+  log "Setting up udev rules for Ulanzi D200 (${vid}:${pid})..."
+  cat <<EOF | as_root tee "${udev_file}" >/dev/null
+# Ulanzi D200 Stream Deck
+SUBSYSTEM=="usb", ATTR{idVendor}=="${vid}", ATTR{idProduct}=="${pid}", MODE="0666", GROUP="plugdev"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="${vid}", ATTRS{idProduct}=="${pid}", MODE="0666", GROUP="plugdev"
+EOF
+
+  log "Reloading udev rules..."
+  as_root udevadm control --reload-rules
+  as_root udevadm trigger
+
+  # Add user to plugdev group if not already
+  if ! groups "${current_user}" 2>/dev/null | grep -q "plugdev"; then
+    log "Adding user ${current_user} to plugdev group..."
+    as_root usermod -a -G plugdev "${current_user}"
+    log "NOTE: You may need to log out and log back in for group changes to take effect"
+  fi
+
+  log "Udev rules installed successfully"
+}
+
+setup_env_file() {
+  if [ "${SETUP_ENV}" -eq 0 ] && [ -f "${ENV_FILE}" ]; then
+    log "Environment file already exists at ${ENV_FILE} (use --setup-env to recreate)"
+    return 0
+  fi
+
+  local example_env="${ROOT}/example.env"
+  if [ ! -f "${example_env}" ]; then
+    log "Example environment file not found at ${example_env}"
+    return 0
+  fi
+
+  log "Setting up environment file..."
+  
+  # Copy example.env if .env doesn't exist
+  if [ ! -f "${ENV_FILE}" ]; then
+    cp "${example_env}" "${ENV_FILE}"
+    log "Created ${ENV_FILE} from example.env"
+  fi
+
+  # Interactive setup (only if in interactive mode or explicitly requested)
+  if [ "${INTERACTIVE}" -eq 1 ] || [ "${SETUP_ENV}" -eq 1 ]; then
+    echo
+    log "Environment Configuration (optional):"
+    echo "=================================="
+    
+    # Setup USERNAME
+    local current_user
+    current_user="$(whoami)"
+    echo "Current user: ${current_user}"
+    read -p "Set USERNAME in .env? [Y/n]: " setup_username
+    if [[ "${setup_username}" =~ ^[Yy]*$ ]] || [ -z "${setup_username}" ]; then
+      sed -i "s/USERNAME=\"<username>\"/USERNAME=\"${current_user}\"/" "${ENV_FILE}"
+      log "Set USERNAME=${current_user}"
+    fi
+
+    # Setup Home Assistant
+    echo
+    read -p "Configure Home Assistant integration? [y/N]: " setup_ha
+    if [[ "${setup_ha}" =~ ^[Yy]*$ ]]; then
+      echo
+      echo "Home Assistant WebSocket Configuration:"
+      echo "- Get long-lived access token: https://www.home-assistant.io/docs/authentication"
+      echo
+      
+      read -p "HA Host [ws://localhost:8123]: " ha_host
+      ha_host="${ha_host:-ws://localhost:8123}"
+      
+      read -p "HA Access Token (leave empty if not using HA): " ha_token
+      
+      # Update .env
+      sed -i "s|HA_HOST=\"ws://localhost:8123\"|HA_HOST=\"${ha_host}\"|" "${ENV_FILE}"
+      sed -i "s|HA_ACCESS_TOKEN=\"\"|HA_ACCESS_TOKEN=\"${ha_token}\"|" "${ENV_FILE}"
+      
+      log "Set HA_HOST=${ha_host}"
+      if [ -n "${ha_token}" ]; then
+        log "Set HA_ACCESS_TOKEN=[configured]"
+      else
+        log "HA_ACCESS_TOKEN left empty (HA integration disabled)"
+      fi
+    else
+      log "Home Assistant configuration skipped"
+    fi
+
+    echo
+    log "Environment file configured at ${ENV_FILE}"
+    log "You can edit it manually anytime to change settings"
+  else
+    log "Environment file created with default values"
+  fi
+}
+
+setup_mdi_icons() {
+  if [ "${NO_MDI}" -eq 1 ]; then
+    log "Skipping MDI icons download (--no-mdi specified)"
+    return 0
+  fi
+
+  local config_file="${ROOT}/config/configuration.yml"
+  local mdi_script="${ROOT}/icons/download_mdi.sh"
+  local mdi_dir="${ROOT}/assets/mdi"
+
+  if [ ! -f "${config_file}" ]; then
+    log "Configuration file not found at ${config_file}, skipping MDI download"
+    return 0
+  fi
+
+  if [ ! -x "${mdi_script}" ]; then
+    log "MDI download script not found or not executable at ${mdi_script}"
+    return 0
+  fi
+
+  # Extract MDI icons from configuration
+  local mdi_icons
+  mdi_icons=$(grep -o 'mdi:[a-zA-Z0-9_-]*' "${config_file}" | sed 's/mdi://' | sort -u | tr '\n' ' ')
+  
+  if [ -z "${mdi_icons}" ]; then
+    log "No MDI icons found in configuration.yml"
+    return 0
+  fi
+
+  local icon_count
+  icon_count=$(echo "${mdi_icons}" | wc -w)
+  log "Found ${icon_count} unique MDI icons in configuration.yml"
+
+  # Check which icons are missing
+  local missing_count=0
+  local missing_icons=""
+  for icon in ${mdi_icons}; do
+    if [ ! -f "${mdi_dir}/${icon}.svg" ]; then
+      missing_count=$((missing_count + 1))
+      missing_icons="${missing_icons} ${icon}"
+    fi
+  done
+
+  if [ "${missing_count}" -eq 0 ]; then
+    log "All ${icon_count} MDI icons already present in ${mdi_dir}"
+    return 0
+  fi
+
+  log "Downloading ${missing_count} missing MDI icons..."
+  log "Missing icons:${missing_icons}"
+
+  # Run the download script
+  if "${mdi_script}"; then
+    log "MDI icons download completed"
+    
+    # Verify all icons are now present
+    local still_missing=0
+    for icon in ${mdi_icons}; do
+      if [ ! -f "${mdi_dir}/${icon}.svg" ]; then
+        still_missing=$((still_missing + 1))
+      fi
+    done
+    
+    if [ "${still_missing}" -gt 0 ]; then
+      log "WARNING: ${still_missing} icons still missing after download"
+    else
+      log "All ${icon_count} MDI icons are now available"
+    fi
+  else
+    log "WARNING: MDI icons download failed"
+    log "You can run manually: ${mdi_script}"
+  fi
+}
+
+interactive_setup() {
+  echo
+  log "GoofyDeck Interactive Setup"
+  echo "=========================="
+  echo
+  
+  # Ask for components to install
+  local setup_udev="yes"
+  local setup_env="auto"
+  local setup_mdi="yes"
+  local setup_fonts="yes"
+  local setup_compile="yes"
+  
+  echo "Select components to install:"
+  echo
+  
+  # Udev rules
+  if [ "$(uname -s)" != "Darwin" ]; then
+    echo "USB device permissions will be checked and configured if needed"
+    setup_udev="checked"
+  else
+    echo "USB permissions: Not applicable on macOS"
+    setup_udev="no"
+  fi
+  
+  # Environment file
+  if [ -f "${ENV_FILE}" ]; then
+    read -p "Recreate environment file (.env)? [y/N]: " setup_env
+    setup_env="${setup_env:-no}"
+  else
+    echo "Environment file (.env): Not found, will create"
+    setup_env="yes"
+  fi
+  
+  # MDI icons
+  read -p "Download MDI icons from configuration.yml? [Y/n]: " setup_mdi
+  setup_mdi="${setup_mdi:-yes}"
+  
+  # Fonts
+  read -p "Setup fonts collection? [Y/n]: " setup_fonts
+  setup_fonts="${setup_fonts:-yes}"
+  
+  # Compilation
+  if need_build; then
+    read -p "Compile binaries? [Y/n]: " setup_compile
+    setup_compile="${setup_compile:-yes}"
+  else
+    echo "Compilation: Binaries already exist, will skip"
+    setup_compile="no"
+  fi
+  
+  echo
+  log "Configuration Summary:"
+  echo "- USB permissions (udev): ${setup_udev}"
+  echo "- Environment file: ${setup_env}"
+  echo "- MDI icons download: ${setup_mdi}"
+  echo "- Fonts setup: ${setup_fonts}"
+  echo "- Compilation: ${setup_compile}"
+  echo
+  
+  read -p "Proceed with this configuration? [Y/n]: " proceed
+  if [[ "${proceed}" =~ ^[Nn]*$ ]]; then
+    log "Setup cancelled by user"
+    exit 0
+  fi
+  
+  # Set global flags based on user choices
+  if [ "${setup_udev}" = "no" ]; then
+    NO_UDEV=1
+  fi
+  
+  if [ "${setup_env}" = "yes" ]; then
+    SETUP_ENV=1
+  fi
+  
+  if [ "${setup_mdi}" = "no" ]; then
+    NO_MDI=1
+  fi
+  
+  if [ "${setup_fonts}" = "no" ]; then
+    NO_FONTS=1
+  fi
+  
+  if [ "${setup_compile}" = "no" ]; then
+    NO_COMPILE=1
+  fi
+  
+  log "Interactive configuration applied"
 }
 
 load_env_user() {
@@ -261,6 +632,11 @@ build_all() {
 }
 
 main() {
+  # Interactive setup by default (can be disabled with --no-interactive)
+  if [ "${INTERACTIVE}" -eq 1 ]; then
+    interactive_setup
+  fi
+
   platform="$(detect_platform)"
   case "${platform}" in
     debian) install_deps_debian ;;
@@ -270,10 +646,32 @@ main() {
     *) die "Unsupported platform. Install deps manually: gcc/make/pkg-config, hidapi+libusb, zlib+libpng, ffmpeg, ImageMagick, (optional) cairo+librsvg, jq, bc, netcat, socat." ;;
   esac
 
+  # Setup udev rules for USB device access
+  setup_udev_rules
+
+  # Setup environment file (interactive by default)
+  setup_env_file
+
+  # Download required MDI icons
+  setup_mdi_icons
+
+  # Setup fonts
   ensure_fonts
+
+  # Build binaries
   build_all
 
   log "Done."
+  log ""
+  log "Next steps:"
+  log "1. Connect your Ulanzi D200 device"
+  log "2. Run: ./ulanzi_d200_daemon"
+  log "3. Run: ./bin/paging_daemon"
+  log ""
+  log "If device is not found, try:"
+  log "- Unplug/replug the USB device"
+  log "- Run: groups | grep plugdev (should contain your username)"
+  log "- If needed: newgrp plugdev or log out/in"
 }
 
 main
