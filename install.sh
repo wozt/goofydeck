@@ -88,85 +88,22 @@ setup_udev_rules() {
     return 0
   fi
 
-  local udev_file="/etc/udev/rules.d/50-ulanzi.rules"
-  local vid="2207"
-  local pid="0019"
-
-  # Check if udev rules are actually needed
-  local need_udev=0
-  local current_user
-  current_user="$(load_env_user || whoami)"
-  
-  log "Checking USB device access requirements..."
-  
-  # Check if device is connected and accessible
-  if command -v lsusb >/dev/null 2>&1; then
-    if lsusb -d "${vid}:${pid}" >/dev/null 2>&1; then
-      log "Ulanzi D200 device found via USB"
-      
-      # Check if user can access hidraw devices
-      local hidraw_accessible=0
-      for hidraw in /dev/hidraw*; do
-        if [ -e "${hidraw}" ]; then
-          if [ -r "${hidraw}" ] && [ -w "${hidraw}" ]; then
-            # Check if this hidraw belongs to Ulanzi device
-            local uevent_path="/sys/class/hidraw/$(basename "${hidraw}")/device/uevent"
-            if [ -f "${uevent_path}" ]; then
-              local device_vid device_pid
-              device_vid=$(grep "^ID_VENDOR_ID=" "${uevent_path}" 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
-              device_pid=$(grep "^ID_MODEL_ID=" "${uevent_path}" 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
-              if [ "${device_vid}" = "${vid,,}" ] && [ "${device_pid}" = "${pid,,}" ]; then
-                hidraw_accessible=1
-                log "Device ${hidraw} is accessible to user ${current_user}"
-                break
-              fi
-            fi
-          fi
-        fi
-      done
-      
-      if [ "${hidraw_accessible}" -eq 1 ]; then
-        log "USB device access is already properly configured"
-        need_udev=0
-      else
-        log "USB device found but not accessible to user ${current_user}"
-        need_udev=1
-      fi
-    else
-      log "Ulanzi D200 device not currently connected"
-      log "Will setup udev rules for future device connection"
-      need_udev=1
-    fi
-  else
-    log "lsusb not available, assuming udev rules are needed"
-    need_udev=1
-  fi
-
-  # Check if user is in plugdev group
-  if groups "${current_user}" 2>/dev/null | grep -q "plugdev"; then
-    log "User ${current_user} is already in plugdev group"
-  else
-    log "User ${current_user} is not in plugdev group"
-    need_udev=1
-  fi
-
-  if [ "${need_udev}" -eq 0 ] && [ -f "${udev_file}" ]; then
-    log "Udev rules already exist and device access is working"
+  # Check if udev setup is needed (from early check)
+  if [ "${UDEV_NEEDED:-0}" -eq 0 ]; then
+    log "USB access is already properly configured - skipping udev setup"
     return 0
   fi
 
+  local udev_file="/etc/udev/rules.d/50-ulanzi.rules"
+  local vid="2207"
+  local pid="0019"
+  local current_user
+  current_user="$(load_env_user || whoami)"
+
   if [ "${INTERACTIVE}" -eq 1 ]; then
     echo
-    if [ "${need_udev}" -eq 1 ]; then
-      read -p "Setup USB device permissions (udev rules) for Ulanzi D200? [Y/n]: " setup_udev_confirm
-    else
-      read -p "USB access is already configured. Setup udev rules anyway? [y/N]: " setup_udev_confirm
-    fi
-    
-    if [[ "${setup_udev_confirm}" =~ ^[Nn]*$ ]] && [ "${need_udev}" -eq 0 ]; then
-      log "Skipping udev rules setup"
-      return 0
-    elif [[ "${setup_udev_confirm}" =~ ^[Nn]*$ ]]; then
+    read -p "Setup USB device permissions (udev rules) for Ulanzi D200? [Y/n]: " setup_udev_confirm
+    if [[ "${setup_udev_confirm}" =~ ^[Nn]*$ ]]; then
       log "Skipping udev rules setup (may cause device access issues)"
       return 0
     fi
@@ -196,6 +133,98 @@ EOF
   fi
 
   log "Udev rules installed successfully"
+}
+
+check_usb_access_needs() {
+  local vid="2207"
+  local pid="0019"
+  local current_user
+  current_user="$(load_env_user || whoami)"
+  
+  log "Checking USB device access for Ulanzi D200 (${vid}:${pid})..."
+  
+  # Check if device is connected
+  local device_connected=0
+  if command -v lsusb >/dev/null 2>&1; then
+    if lsusb -d "${vid}:${pid}" >/dev/null 2>&1; then
+      device_connected=1
+      log "✓ Ulanzi D200 device found via USB"
+    else
+      log "⚠ Ulanzi D200 device not currently connected"
+    fi
+  else
+    log "⚠ lsusb not available, cannot check device connection"
+  fi
+  
+  # Check if user is in plugdev group
+  local in_plugdev=0
+  if groups "${current_user}" 2>/dev/null | grep -q "plugdev"; then
+    in_plugdev=1
+    log "✓ User ${current_user} is in plugdev group"
+  else
+    log "✗ User ${current_user} is NOT in plugdev group"
+  fi
+  
+  # Check if udev rules exist
+  local udev_file="/etc/udev/rules.d/50-ulanzi.rules"
+  local udev_exists=0
+  if [ -f "${udev_file}" ]; then
+    udev_exists=1
+    log "✓ Udev rules already exist"
+  else
+    log "✗ Udev rules do not exist"
+  fi
+  
+  # Check if device is accessible (if connected)
+  local device_accessible=0
+  if [ "${device_connected}" -eq 1 ]; then
+    for hidraw in /dev/hidraw*; do
+      if [ -e "${hidraw}" ] && [ -r "${hidraw}" ] && [ -w "${hidraw}" ]; then
+        local uevent_path="/sys/class/hidraw/$(basename "${hidraw}")/device/uevent"
+        if [ -f "${uevent_path}" ]; then
+          local device_vid device_pid
+          device_vid=$(grep "^ID_VENDOR_ID=" "${uevent_path}" 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+          device_pid=$(grep "^ID_MODEL_ID=" "${uevent_path}" 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+          if [ "${device_vid}" = "${vid,,}" ] && [ "${device_pid}" = "${pid,,}" ]; then
+            device_accessible=1
+            log "✓ Device ${hidraw} is accessible to user ${current_user}"
+            break
+          fi
+        fi
+      fi
+    done
+    
+    if [ "${device_accessible}" -eq 0 ]; then
+      log "✗ Ulanzi D200 device found but NOT accessible to user ${current_user}"
+    fi
+  fi
+  
+  # Summary and recommendation
+  echo
+  log "USB Access Summary:"
+  echo "- Device connected: $([ "${device_connected}" -eq 1 ] && echo "Yes" || echo "No")"
+  echo "- User in plugdev group: $([ "${in_plugdev}" -eq 1 ] && echo "Yes" || echo "No")"
+  echo "- Udev rules exist: $([ "${udev_exists}" -eq 1 ] && echo "Yes" || echo "No")"
+  echo "- Device accessible: $([ "${device_accessible}" -eq 1 ] && echo "Yes" || echo "No")"
+  echo
+  
+  # Determine if udev setup is needed
+  if [ "${in_plugdev}" -eq 1 ] && [ "${udev_exists}" -eq 1 ] && [ "${device_accessible}" -eq 1 ]; then
+    log "✅ USB access is properly configured - no action needed"
+    export UDEV_NEEDED=0
+  else
+    log "🔧 USB access needs configuration"
+    if [ "${in_plugdev}" -eq 0 ]; then
+      log "   → User needs to be added to plugdev group"
+    fi
+    if [ "${udev_exists}" -eq 0 ]; then
+      log "   → Udev rules need to be created"
+    fi
+    if [ "${device_connected}" -eq 1 ] && [ "${device_accessible}" -eq 0 ]; then
+      log "   → Current permissions are insufficient"
+    fi
+    export UDEV_NEEDED=1
+  fi
 }
 
 setup_env_file() {
@@ -632,6 +661,18 @@ build_all() {
 }
 
 main() {
+  # Early USB device access check (before dependencies)
+  if [ "$(uname -s)" != "Darwin" ] && [ "${NO_UDEV}" -eq 0 ]; then
+    log "Early USB device access check..."
+    check_usb_access_needs
+    echo
+  fi
+
+  # Check if sudo is available
+  if ! command -v sudo >/dev/null 2>&1; then
+    die "sudo is required for installation."
+  fi
+
   # Interactive setup by default (can be disabled with --no-interactive)
   if [ "${INTERACTIVE}" -eq 1 ]; then
     interactive_setup
@@ -646,7 +687,7 @@ main() {
     *) die "Unsupported platform. Install deps manually: gcc/make/pkg-config, hidapi+libusb, zlib+libpng, ffmpeg, ImageMagick, (optional) cairo+librsvg, jq, bc, netcat, socat." ;;
   esac
 
-  # Setup udev rules for USB device access
+  # Setup udev rules for USB device access (only if needed)
   setup_udev_rules
 
   # Setup environment file (interactive by default)
