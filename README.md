@@ -5,6 +5,24 @@ GoofyDeck controls an Ulanzi D200 with C daemons and config-driven paging, with 
 
 The previous (long) README has been archived to `legacy/README.md`.
 
+## 🚀 Quick Start
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd GoofyDeck
+
+# Install dependencies and download icons
+./install.sh
+
+# Launch GoofyDeck
+./launch_stack.sh --byobu
+```
+
+### 🎯 Raspberry Pi Zero 2W Optimization
+
+The installer automatically detects Raspberry Pi Zero 2W and other low-memory devices, offering to disable wallpapers for better performance. The MDI icon downloader uses lightweight methods optimized for constrained environments.
+
 ## Prerequisites
 
 - **Firmware update**: The Ulanzi D200 must have its firmware updated once using the official Windows software. Using a Windows VM works for this step.
