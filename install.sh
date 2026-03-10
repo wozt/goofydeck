@@ -178,19 +178,32 @@ check_usb_access_needs() {
   # Check if device is accessible (if connected)
   local device_accessible=0
   if [ "${device_connected}" -eq 1 ]; then
-    # First, try to find the correct hidraw device
+    # Try to find the correct hidraw device
     local target_hidraw=""
     for hidraw in /dev/hidraw*; do
       if [ -e "${hidraw}" ]; then
         local uevent_path="/sys/class/hidraw/$(basename "${hidraw}")/device/uevent"
         if [ -f "${uevent_path}" ]; then
-          local device_vid device_pid
-          device_vid=$(grep "^ID_VENDOR_ID=" "${uevent_path}" 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
-          device_pid=$(grep "^ID_MODEL_ID=" "${uevent_path}" 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
-          if [ "${device_vid}" = "${vid,,}" ] && [ "${device_pid}" = "${pid,,}" ]; then
-            target_hidraw="${hidraw}"
-            log "✓ Found Ulanzi D200 at ${hidraw}"
-            break
+          local hid_id device_vid device_pid
+          hid_id=$(grep "^HID_ID=" "${uevent_path}" 2>/dev/null | cut -d= -f2)
+          # HID_ID format: BUS:VID:PID (hex)
+          if [ -n "${hid_id}" ]; then
+            device_vid=$(echo "${hid_id}" | cut -d: -f2)
+            device_pid=$(echo "${hid_id}" | cut -d: -f3)
+            # Convert hex to lowercase for comparison
+            device_vid=$(echo "${device_vid}" | tr '[:upper:]' '[:lower:]')
+            device_pid=$(echo "${device_pid}" | tr '[:upper:]' '[:lower:]')
+            # Convert expected VID/PID to hex format (4 digits)
+            local expected_vid expected_pid
+            expected_vid=$(echo "0000${vid}" | tail -c 5)
+            expected_pid=$(echo "0000${pid}" | tail -c 5)
+            expected_vid=$(echo "${expected_vid}" | tr '[:upper:]' '[:lower:]')
+            expected_pid=$(echo "${expected_pid}" | tr '[:upper:]' '[:lower:]')
+            if [ "${device_vid}" = "${expected_vid}" ] && [ "${device_pid}" = "${expected_pid}" ]; then
+              target_hidraw="${hidraw}"
+              log "✓ Found Ulanzi D200 at ${hidraw}"
+              break
+            fi
           fi
         fi
       fi
