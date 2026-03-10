@@ -1,5 +1,8 @@
 brightness: 100
 
+global:
+  disable_wallpapers: false
+
 sleep:
   dim_brightness: 10
   dim_timeout: 600

@@ -334,16 +334,10 @@ setup_mdi_icons() {
   fi
 
   local config_file="${ROOT}/config/configuration.yml"
-  local mdi_script="${ROOT}/icons/download_mdi.sh"
   local mdi_dir="${ROOT}/assets/mdi"
 
   if [ ! -f "${config_file}" ]; then
     log "Configuration file not found at ${config_file}, skipping MDI download"
-    return 0
-  fi
-
-  if [ ! -x "${mdi_script}" ]; then
-    log "MDI download script not found or not executable at ${mdi_script}"
     return 0
   fi
 
@@ -378,26 +372,44 @@ setup_mdi_icons() {
   log "Downloading ${missing_count} missing MDI icons..."
   log "Missing icons:${missing_icons}"
 
-  # Run the download script
-  if "${mdi_script}"; then
-    log "MDI icons download completed"
+  # Download only required icons using individual downloads
+  local downloaded=0
+  local failed=0
+  for icon in ${missing_icons}; do
+    local icon_url="https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/svg/${icon}.svg"
+    local target_file="${mdi_dir}/${icon}.svg"
     
-    # Verify all icons are now present
-    local still_missing=0
-    for icon in ${mdi_icons}; do
-      if [ ! -f "${mdi_dir}/${icon}.svg" ]; then
-        still_missing=$((still_missing + 1))
+    if command -v wget >/dev/null 2>&1; then
+      if wget -q "${icon_url}" -O "${target_file}" 2>/dev/null; then
+        downloaded=$((downloaded + 1))
+        log "Downloaded ${icon}.svg"
+      else
+        failed=$((failed + 1))
+        log "Failed to download ${icon}.svg"
       fi
-    done
-    
-    if [ "${still_missing}" -gt 0 ]; then
-      log "WARNING: ${still_missing} icons still missing after download"
+    elif command -v curl >/dev/null 2>&1; then
+      if curl -s "${icon_url}" -o "${target_file}" 2>/dev/null; then
+        downloaded=$((downloaded + 1))
+        log "Downloaded ${icon}.svg"
+      else
+        failed=$((failed + 1))
+        log "Failed to download ${icon}.svg"
+      fi
     else
-      log "All ${icon_count} MDI icons are now available"
+      log "Neither wget nor curl available, falling back to full MDI download"
+      # Fallback to full download
+      "${ROOT}/icons/download_mdi.sh"
+      return 0
     fi
+  done
+
+  log "MDI icons download completed: ${downloaded} downloaded, ${failed} failed"
+  
+  if [ "${failed}" -gt 0 ]; then
+    log "WARNING: ${failed} icons failed to download"
+    log "You can run manually: ${ROOT}/icons/download_mdi.sh"
   else
-    log "WARNING: MDI icons download failed"
-    log "You can run manually: ${mdi_script}"
+    log "All ${icon_count} MDI icons are now available"
   fi
 }
 
@@ -489,6 +501,62 @@ interactive_setup() {
   fi
   
   log "Interactive configuration applied"
+}
+
+is_rpi_zero_2w() {
+  # Detection via /proc/cpuinfo
+  if grep -q "Raspberry Pi Zero 2 W" /proc/cpuinfo 2>/dev/null; then
+    return 0
+  fi
+  
+  # Alternative detection: BCM2835 + low RAM
+  if [ "$(awk '/Hardware/ {print $3}' /proc/cpuinfo 2>/dev/null)" = "BCM2835" ]; then
+    local ram_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)
+    if [ "${ram_mb}" -le 2048 ]; then
+      return 0
+    fi
+  fi
+  
+  return 1
+}
+
+suggest_disable_wallpapers() {
+  # Vérifier si les wallpapers sont déjà désactivés dans la config
+  local config_file="${ROOT}/config/configuration.yml"
+  local already_disabled=false
+  
+  if [ -f "${config_file}" ]; then
+    if grep -q "disable_wallpapers: true" "${config_file}"; then
+      already_disabled=true
+    fi
+  fi
+  
+  # Ne proposer que si c'est un Raspberry Pi Zero 2W ET que les wallpapers ne sont pas déjà désactivés
+  if ! is_rpi_zero_2w || [ "${already_disabled}" = true ]; then
+    return 0
+  fi
+  
+  echo
+  log "⚠️  Raspberry Pi Zero 2W detected with limited RAM"
+  log "Wallpapers can impact performance on this device."
+  echo
+  
+  read -p "Disable wallpapers in configuration for better performance? [Y/n]: " disable_wallpapers
+  if [[ "${disable_wallpapers}" =~ ^[Yy]*$ ]] || [ -z "${disable_wallpapers}" ]; then
+    if [ -f "${config_file}" ]; then
+      # Check if global section already exists
+      if grep -q "^global:" "${config_file}"; then
+        sed -i '/^global:/a\  disable_wallpapers: true' "${config_file}"
+      else
+        sed -i '1i\global:\n  disable_wallpapers: true' "${config_file}"
+      fi
+      log "✅ Wallpapers disabled in configuration.yml"
+    else
+      log "Configuration file not found, cannot disable wallpapers"
+    fi
+  else
+    log "Keeping wallpapers enabled"
+  fi
 }
 
 load_env_user() {
@@ -695,6 +763,10 @@ main() {
     check_usb_access_needs
     echo
   fi
+
+  # Suggest wallpaper optimization for low-end devices
+  suggest_disable_wallpapers
+  echo
 
   # Check if sudo is available
   if ! command -v sudo >/dev/null 2>&1; then

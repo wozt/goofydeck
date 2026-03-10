@@ -179,6 +179,7 @@ typedef struct {
     size_t page_cap;
     
     WallpaperCfg wallpaper;
+    bool disable_wallpapers;  // Global wallpaper disable setting
 } Config;
 
 typedef struct {
@@ -1422,6 +1423,7 @@ static void config_init_defaults(Config *cfg) {
     cfg->wallpaper.magnify = 100;
     cfg->wallpaper.dithering = true;
     cfg->wallpaper.set = false;
+    cfg->disable_wallpapers = false;  // Default: wallpapers enabled
 }
 
 static void preset_init_defaults(Preset *p, const char *name) {
@@ -1593,6 +1595,22 @@ static int load_config(const char *path, Config *out) {
         const char *cs = yaml_scalar_cstr(cn);
         int v = 0;
         if (cs && parse_int_scalar(cs, &v) == 0) cfg.cmd_timeout_ms = (v < 0) ? 0 : v;
+    }
+
+    // global section
+    {
+        yaml_node_t *gn = yaml_mapping_get(&doc, root, "global");
+        if (gn && gn->type == YAML_MAPPING_NODE) {
+            yaml_node_t *dn = yaml_mapping_get(&doc, gn, "disable_wallpapers");
+            if (dn && dn->type == YAML_SCALAR_NODE) {
+                const char *value = yaml_scalar_cstr(dn);
+                if (value && strcmp(value, "true") == 0) {
+                    cfg.disable_wallpapers = true;
+                } else if (value && strcmp(value, "false") == 0) {
+                    cfg.disable_wallpapers = false;
+                }
+            }
+        }
     }
 
     // wallpaper (global): string path or mapping { path, quality, magnify, dithering }
@@ -1949,6 +1967,12 @@ static WallpaperEff effective_wallpaper(const Config *cfg, const Page *page) {
     out.magnify = 100;
     out.dithering = true;
     out.enabled = false;
+
+    // Check global disable_wallpapers setting
+    if (cfg && cfg->disable_wallpapers) {
+        log_msg("Wallpapers disabled in configuration, skipping wallpaper processing");
+        return out;
+    }
 
     if (page && page->wallpaper_set) {
         if (page->wallpaper_path && page->wallpaper_path[0]) {
