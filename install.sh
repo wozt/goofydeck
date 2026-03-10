@@ -360,12 +360,15 @@ setup_mdi_icons() {
   for icon in ${mdi_icons}; do
     local icon_path="${mdi_dir}/${icon}.svg"
     log "Checking ${icon_path}..."
-    if [ ! -f "${icon_path}" ]; then
+    log "mdi_dir: ${mdi_dir}"
+    log "icon: ${icon}"
+    log "pwd: $(pwd)"
+    if [ -f "${icon_path}" ]; then
+      log "Found: ${icon}"
+    else
+      log "Missing: ${icon}"
       missing_count=$((missing_count + 1))
       missing_icons="${missing_icons} ${icon}"
-      log "Missing: ${icon}"
-    else
-      log "Found: ${icon}"
     fi
   done
 
@@ -411,14 +414,24 @@ setup_mdi_icons() {
   # If some downloads failed, try individual GitHub Raw method for remaining icons
   if [ "${failed}" -gt 0 ]; then
     log "Attempting GitHub Raw method for ${failed} failed downloads..."
+    log "Current working directory: $(pwd)"
+    log "ROOT directory: ${ROOT}"
     local github_success=0
     for icon in ${missing_icons}; do
       local target_file="${mdi_dir}/${icon}.svg"
-      if [ -f "${target_file}" ]; then continue; fi
+      log "Trying to download ${icon} to ${target_file}"
+      if [ -f "${target_file}" ]; then 
+        log "File ${target_file} already exists, skipping"
+        continue
+      fi
       
-      if "${ROOT}/icons/download_mdi.sh" "${icon}"; then
+      log "Calling: ${ROOT}/icons/download_mdi.sh -m github individual ${icon}"
+      if "${ROOT}/icons/download_mdi.sh" -m github individual "${icon}"; then
         github_success=$((github_success + 1))
         failed=$((failed - 1))
+        log "Successfully downloaded ${icon}"
+      else
+        log "Failed to download ${icon}"
       fi
     done
     
