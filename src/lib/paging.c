@@ -595,6 +595,19 @@ static int is_abs_path(const char *p) {
     return p && p[0] == '/';
 }
 
+static int path_snprintf(char *buf, size_t bufsize, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, bufsize, fmt, ap);
+    va_end(ap);
+    if (n < 0) return -1;
+    if ((size_t)n >= bufsize) {
+        buf[bufsize - 1] = '\0';
+        return -1;
+    }
+    return 0;
+}
+
 static char *resolve_path(const char *root_dir, const char *p) {
     if (!p) return xstrdup("");
     
@@ -1051,7 +1064,10 @@ static int run_shell_capture_text(const char *cmd, int timeout_ms, char *out, si
         tmp[ml] = 0;
     }
     
-    snprintf(out, out_cap, "%s", tmp);
+    size_t tlen = strlen(tmp);
+    if (tlen >= out_cap) tlen = out_cap - 1;
+    memcpy(out, tmp, tlen);
+    out[tlen] = '\0';
     return 0;
 }
 
@@ -1997,7 +2013,7 @@ static int session_cache_icon(const Options *opt, const char *src_png, char *out
     char dir[PATH_MAX];
     state_dir(opt, dir, sizeof(dir));
     char cdir[PATH_MAX];
-    snprintf(cdir, sizeof(cdir), "%s/icon_cache", dir);
+    if (path_snprintf(cdir, sizeof(cdir), "%s/icon_cache", dir) != 0) return -1;
     ensure_dir(cdir);
 
     char key[PATH_MAX + 64];
@@ -2005,7 +2021,7 @@ static int session_cache_icon(const Options *opt, const char *src_png, char *out
     uint32_t h = fnv1a32(key, strlen(key));
 
     char dst[PATH_MAX];
-    snprintf(dst, sizeof(dst), "%s/%08x_%s", cdir, (unsigned)h, base);
+    if (path_snprintf(dst, sizeof(dst), "%s/%08x_%s", cdir, (unsigned)h, base) != 0) return -1;
     if (!file_exists(dst)) {
         if (copy_file(src_png, dst) != 0) return -1;
     }
@@ -2035,7 +2051,7 @@ static int wallpaper_render_dir_and_prefix(const char *wallpaper_abs_png,
     if (slash) *slash = 0;
     else snprintf(dirbuf, sizeof(dirbuf), ".");
 
-    snprintf(out_dir, dir_cap, "%s/%s", dirbuf, out_prefix);
+    if (path_snprintf(out_dir, dir_cap, "%s/%s", dirbuf, out_prefix) != 0) return -1;
     return 0;
 }
 
@@ -2102,14 +2118,14 @@ static int wp_compose_cached(const Options *opt, uint32_t wp_sig, const char *re
     char dir[PATH_MAX];
     state_dir(opt, dir, sizeof(dir));
     char tmpdir[PATH_MAX];
-    snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", dir);
+    if (path_snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", dir) != 0) return -1;
     if (strncmp(icon_path, tmpdir, strlen(tmpdir)) == 0) can_cache = false;
 
     char base[PATH_MAX];
     if (!path_basename(icon_path, base, sizeof(base))) return -1;
 
     char cache_dir[PATH_MAX];
-    snprintf(cache_dir, sizeof(cache_dir), "%s/wp_comp/%08x/%02d", dir, (unsigned)wp_sig, pos);
+    if (path_snprintf(cache_dir, sizeof(cache_dir), "%s/wp_comp/%08x/%02d", dir, (unsigned)wp_sig, pos) != 0) return -1;
     if (can_cache) {
         // This is a nested path; create parents best-effort. If it fails, fall back to tmp (no cache).
         if (try_ensure_dir_parent(cache_dir) != 0 || try_ensure_dir(cache_dir) != 0) {
@@ -2120,7 +2136,7 @@ static int wp_compose_cached(const Options *opt, uint32_t wp_sig, const char *re
     // IMPORTANT: include the position in the filename (not just the directory). The Ulanzi daemon
     // may use basenames when preparing zips/patches, and without this we can end up with multiple
     // different images collapsing into the same entry if the same icon is reused across positions.
-    snprintf(cached, sizeof(cached), "%s/%02d_%s", cache_dir, pos, base);
+    if (path_snprintf(cached, sizeof(cached), "%s/%02d_%s", cache_dir, pos, base) != 0) return -1;
     if (can_cache && file_exists(cached)) {
         snprintf(out_png, out_cap, "%s", cached);
         return 0;
@@ -2177,7 +2193,7 @@ static int wallpaper_session_tile(const Options *opt, const char *render_dir, co
     char dir[PATH_MAX];
     state_dir(opt, dir, sizeof(dir));
     char wdir[PATH_MAX];
-    snprintf(wdir, sizeof(wdir), "%s/wallpaper", dir);
+    if (path_snprintf(wdir, sizeof(wdir), "%s/wallpaper", dir) != 0) return -1;
     ensure_dir(wdir);
 
     char key[PATH_MAX + 128];
@@ -2185,11 +2201,11 @@ static int wallpaper_session_tile(const Options *opt, const char *render_dir, co
              render_dir, prefix, wp->quality, wp->magnify, wp->dithering ? 1 : 0);
     uint32_t h = fnv1a32(key, strlen(key));
     char sub[PATH_MAX];
-    snprintf(sub, sizeof(sub), "%s/%08x", wdir, h);
+    if (path_snprintf(sub, sizeof(sub), "%s/%08x", wdir, h) != 0) return -1;
     ensure_dir(sub);
 
     char dst[PATH_MAX];
-    snprintf(dst, sizeof(dst), "%s/%s-%d.png", sub, prefix, tile_num);
+    if (path_snprintf(dst, sizeof(dst), "%s/%s-%d.png", sub, prefix, tile_num) != 0) return -1;
     if (!file_exists(dst)) {
         (void)copy_file(src, dst);
     }
@@ -3134,7 +3150,7 @@ static int render_value_text_on_base_tmp(const Options *opt, const Preset *prese
     char dir[PATH_MAX];
     state_dir(opt, dir, sizeof(dir));
     char tmpdir[PATH_MAX];
-    snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", dir);
+    if (path_snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", dir) != 0) return -1;
     ensure_dir(tmpdir);
 
     char page_tag[96];
@@ -3144,7 +3160,7 @@ static int render_value_text_on_base_tmp(const Options *opt, const Preset *prese
     long t = (long)time(NULL);
     pid_t pid = getpid();
     char outpng[PATH_MAX];
-    snprintf(outpng, sizeof(outpng), "%s/value_%s_%d_%ld_%d.png", tmpdir, page_tag, (int)pid, t, pos);
+    if (path_snprintf(outpng, sizeof(outpng), "%s/value_%s_%d_%ld_%d.png", tmpdir, page_tag, (int)pid, t, pos) != 0) return -1;
 
     // If base_png is the minimal 1x1 empty.png (used to keep zips small), drawing text on it produces a
     // single pixel that the device scales up. In that case, create a proper 196x196 base first.
@@ -3414,16 +3430,16 @@ static bool resolve_external_icon_session(const Options *opt, const char *spec, 
     ensure_dir(cache_dir);
 
     char disk[PATH_MAX];
-    snprintf(disk, sizeof(disk), "%s/%08x.png", cache_dir, (unsigned)h);
+    if (path_snprintf(disk, sizeof(disk), "%s/%08x.png", cache_dir, (unsigned)h) != 0) return false;
 
     // Session cache under /dev/shm (copy of disk cache)
     char sdir[PATH_MAX];
     state_dir(opt, sdir, sizeof(sdir));
     char sess_dir[PATH_MAX];
-    snprintf(sess_dir, sizeof(sess_dir), "%s/external_icons_session", sdir);
+    if (path_snprintf(sess_dir, sizeof(sess_dir), "%s/external_icons_session", sdir) != 0) return false;
     ensure_dir(sess_dir);
     char sess[PATH_MAX];
-    snprintf(sess, sizeof(sess), "%s/%08x.png", sess_dir, (unsigned)h);
+    if (path_snprintf(sess, sizeof(sess), "%s/%08x.png", sess_dir, (unsigned)h) != 0) return false;
 
     // If session copy exists and is valid, use it.
     if (file_exists(sess) && validate_external_png_final(sess) == 0) {
@@ -3444,7 +3460,7 @@ static bool resolve_external_icon_session(const Options *opt, const char *spec, 
 
     // Build cache.
     char tmp_out[PATH_MAX];
-    snprintf(tmp_out, sizeof(tmp_out), "%s/%08x.tmp.%d.png", cache_dir, (unsigned)h, (int)getpid());
+    if (path_snprintf(tmp_out, sizeof(tmp_out), "%s/%08x.tmp.%d.png", cache_dir, (unsigned)h, (int)getpid()) != 0) return false;
     (void)unlink(tmp_out);
 
     char draw_norm_bin[PATH_MAX];
@@ -3462,9 +3478,9 @@ static bool resolve_external_icon_session(const Options *opt, const char *spec, 
         if (!file_exists(input_path)) return false;
     } else {
         char tmpdir[PATH_MAX];
-        snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", sdir);
+        if (path_snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", sdir) != 0) return false;
         ensure_dir(tmpdir);
-        snprintf(dl_tmp, sizeof(dl_tmp), "%s/url_%08x.bin", tmpdir, (unsigned)h);
+        if (path_snprintf(dl_tmp, sizeof(dl_tmp), "%s/url_%08x.bin", tmpdir, (unsigned)h) != 0) return false;
         (void)unlink(dl_tmp);
         if (download_url_to_file(val, dl_tmp) != 0) {
             (void)unlink(dl_tmp);
@@ -3486,7 +3502,7 @@ static bool resolve_external_icon_session(const Options *opt, const char *spec, 
         }
         // Render SVG to a temporary PNG (196x196), then normalize to target size (default 128x128).
         char tmp_svg[PATH_MAX];
-        snprintf(tmp_svg, sizeof(tmp_svg), "%s/%08x.svg.%d.png", cache_dir, (unsigned)h, (int)getpid());
+        if (path_snprintf(tmp_svg, sizeof(tmp_svg), "%s/%08x.svg.%d.png", cache_dir, (unsigned)h, (int)getpid()) != 0) return false;
         (void)unlink(tmp_svg);
         char *argv_svg[] = { draw_svg_bin, input_path, (char *)"keep", tmp_svg, NULL };
         if (run_exec(argv_svg) == 0 && file_exists(tmp_svg)) {
@@ -3521,7 +3537,7 @@ static bool resolve_external_icon_session(const Options *opt, const char *spec, 
     if (stat(tmp_out, &st) == 0 && st.st_size > 6 * 1024) {
         if (access(draw_norm_bin, X_OK) == 0) {
             char tmp2[PATH_MAX];
-            snprintf(tmp2, sizeof(tmp2), "%s/%08x.repack.%d.png", cache_dir, (unsigned)h, (int)getpid());
+            if (path_snprintf(tmp2, sizeof(tmp2), "%s/%08x.repack.%d.png", cache_dir, (unsigned)h, (int)getpid()) != 0) return false;
             (void)unlink(tmp2);
             char *argv_repack[] = { draw_norm_bin, tmp_out, tmp2, NULL };
             if (run_exec(argv_repack) == 0 && file_exists(tmp2)) {
@@ -3951,17 +3967,17 @@ static bool nav_wallpaper_composed_cached(const Options *opt, const Config *cfg,
     // IMPORTANT: include wp_sig in the filename (not just the directory) so the Ulanzi daemon,
     // which may use basenames when creating zip entries, cannot accidentally treat two different
     // wallpapers as the "same" nav file.
-    snprintf(disk_png, sizeof(disk_png), "%s/%s_%08x_%02d.png", disk_dir, nav_name, (unsigned)wp_sig, pos);
+    if (path_snprintf(disk_png, sizeof(disk_png), "%s/%s_%08x_%02d.png", disk_dir, nav_name, (unsigned)wp_sig, pos) != 0) return false;
 
     // Session RAM cache: /dev/shm/.../nav/<page>/<wp_sig>/<nav>_<pos>.png
     char sdir[PATH_MAX];
     state_dir(opt, sdir, sizeof(sdir));
     char shm_dir[PATH_MAX];
-    snprintf(shm_dir, sizeof(shm_dir), "%s/nav/%s", sdir, page_tag);
+    if (path_snprintf(shm_dir, sizeof(shm_dir), "%s/nav/%s", sdir, page_tag) != 0) return false;
     bool shm_ok = (try_ensure_dir_parent(shm_dir) == 0 && try_ensure_dir(shm_dir) == 0 && access(shm_dir, W_OK | X_OK) == 0);
 
     char shm_png[PATH_MAX];
-    snprintf(shm_png, sizeof(shm_png), "%s/%s_%08x_%02d.png", shm_dir, nav_name, (unsigned)wp_sig, pos);
+    if (path_snprintf(shm_png, sizeof(shm_png), "%s/%s_%08x_%02d.png", shm_dir, nav_name, (unsigned)wp_sig, pos) != 0) return false;
 
     // Prefer RAM copy.
     if (shm_ok && file_exists(shm_png)) {
@@ -4002,10 +4018,10 @@ static bool nav_wallpaper_composed_cached(const Options *opt, const Config *cfg,
     }
 
     char tmpdir[PATH_MAX];
-    snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", sdir);
+    if (path_snprintf(tmpdir, sizeof(tmpdir), "%s/tmp", sdir) != 0) return false;
     if (try_ensure_dir(tmpdir) != 0) return false;
     char tmp_out[PATH_MAX];
-    snprintf(tmp_out, sizeof(tmp_out), "%s/nav_%s_%02d_%d.png", tmpdir, nav_name, pos, (int)getpid());
+    if (path_snprintf(tmp_out, sizeof(tmp_out), "%s/nav_%s_%02d_%d.png", tmpdir, nav_name, pos, (int)getpid()) != 0) return false;
     (void)unlink(tmp_out);
 
     if (copy_file(tile, tmp_out) != 0) return false;
@@ -4553,14 +4569,25 @@ static void state_dir(const Options *opt, char *out, size_t cap) {
     }
 
     char per_uid[PATH_MAX];
-    snprintf(per_uid, sizeof(per_uid), "/dev/shm/goofydeck_%u/paging", (unsigned)getuid());
+    if (path_snprintf(per_uid, sizeof(per_uid), "/dev/shm/goofydeck_%u/paging", (unsigned)getuid()) != 0) {
+        snprintf(out, cap, "/tmp/goofydeck_paging_%u", (unsigned)getuid());
+        if (try_ensure_dir(out) == 0 && access(out, W_OK | X_OK) == 0) return;
+        snprintf(out, cap, "%s/paging", (opt && opt->cache_root) ? opt->cache_root : ".cache");
+        ensure_dir(out);
+        return;
+    }
     if (try_ensure_dir_parent(per_uid) == 0 && try_ensure_dir(per_uid) == 0 && access(per_uid, W_OK | X_OK) == 0) {
         snprintf(out, cap, "%s", per_uid);
         return;
     }
 
     // Fallback: /tmp is also typically tmpfs and avoids repo permission issues.
-    snprintf(out, cap, "/tmp/goofydeck_paging_%u", (unsigned)getuid());
+    if (path_snprintf(out, cap, "/tmp/goofydeck_paging_%u", (unsigned)getuid()) != 0) {
+        // Last resort: inside repo cache
+        snprintf(out, cap, "%s/paging", (opt && opt->cache_root) ? opt->cache_root : ".cache");
+        ensure_dir(out);
+        return;
+    }
     if (try_ensure_dir(out) == 0 && access(out, W_OK | X_OK) == 0) return;
 
     // Last resort: inside repo cache
@@ -4583,7 +4610,7 @@ static int rm_tree_contents(const char *dir_path) {
         if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
 
         char p[PATH_MAX];
-        snprintf(p, sizeof(p), "%s/%s", dir_path, ent->d_name);
+        if (path_snprintf(p, sizeof(p), "%s/%s", dir_path, ent->d_name) != 0) { rc = -1; continue; }
 
         struct stat st;
         if (lstat(p, &st) != 0) {

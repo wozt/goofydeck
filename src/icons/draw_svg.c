@@ -18,10 +18,12 @@
 #define PATH_MAX 4096
 #endif
 
-static void die(const char *msg) {
-    fprintf(stderr, "Error: %s\n", msg);
-    exit(1);
-}
+// Compatibility with older librsvg versions
+#if !defined(LIBRSVG_MAJOR_VERSION) || (LIBRSVG_MAJOR_VERSION < 2) || (LIBRSVG_MAJOR_VERSION == 2 && LIBRSVG_MINOR_VERSION < 52)
+#define USE_LEGACY_SVG_API 1
+#else
+#define USE_LEGACY_SVG_API 0
+#endif
 
 static int hexbyte(char h, char l) {
     int v = 0;
@@ -192,6 +194,7 @@ int main(int argc, char **argv) {
     cairo_set_operator(cr_tmp, CAIRO_OPERATOR_OVER);
 
     // Scale SVG to fit "size".
+#if USE_LEGACY_SVG_API
     RsvgDimensionData dim;
     rsvg_handle_get_dimensions(handle, &dim);
     double sx = 1.0, sy = 1.0;
@@ -203,6 +206,21 @@ int main(int argc, char **argv) {
     cairo_scale(cr_tmp, s, s);
 
     if (!rsvg_handle_render_cairo(handle, cr_tmp)) {
+#else
+    // New API (librsvg >= 2.52)
+    double iw = 0, ih = 0;
+    (void)rsvg_handle_get_intrinsic_size_in_pixels(handle, &iw, &ih);
+    double sx = 1.0, sy = 1.0;
+    if (iw > 0 && ih > 0) {
+        sx = (double)size / iw;
+        sy = (double)size / ih;
+    }
+    double s = sx < sy ? sx : sy;
+    cairo_scale(cr_tmp, s, s);
+
+    RsvgRectangle viewport = { 0, 0, size / s, size / s };
+    if (!rsvg_handle_render_document(handle, cr_tmp, &viewport, NULL)) {
+#endif
         fprintf(stderr, "Error: failed to render SVG\n");
         cairo_destroy(cr_tmp);
         cairo_surface_destroy(tmp);

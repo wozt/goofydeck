@@ -5,6 +5,10 @@ GoofyDeck controls an Ulanzi D200 with C daemons and config-driven paging, with 
 
 The previous (long) README has been archived to `legacy/README.md`.
 
+## Prerequisites
+
+- **Firmware update**: The Ulanzi D200 must have its firmware updated once using the official Windows software. Using a Windows VM works for this step.
+
 ## Build
 
 ```bash
