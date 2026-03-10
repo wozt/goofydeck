@@ -178,24 +178,39 @@ check_usb_access_needs() {
   # Check if device is accessible (if connected)
   local device_accessible=0
   if [ "${device_connected}" -eq 1 ]; then
+    # First, try to find the correct hidraw device
+    local target_hidraw=""
     for hidraw in /dev/hidraw*; do
-      if [ -e "${hidraw}" ] && [ -r "${hidraw}" ] && [ -w "${hidraw}" ]; then
+      if [ -e "${hidraw}" ]; then
         local uevent_path="/sys/class/hidraw/$(basename "${hidraw}")/device/uevent"
         if [ -f "${uevent_path}" ]; then
           local device_vid device_pid
           device_vid=$(grep "^ID_VENDOR_ID=" "${uevent_path}" 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
           device_pid=$(grep "^ID_MODEL_ID=" "${uevent_path}" 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
           if [ "${device_vid}" = "${vid,,}" ] && [ "${device_pid}" = "${pid,,}" ]; then
-            device_accessible=1
-            log "✓ Device ${hidraw} is accessible to user ${current_user}"
+            target_hidraw="${hidraw}"
+            log "✓ Found Ulanzi D200 at ${hidraw}"
             break
           fi
         fi
       fi
     done
     
-    if [ "${device_accessible}" -eq 0 ]; then
-      log "✗ Ulanzi D200 device found but NOT accessible to user ${current_user}"
+    if [ -n "${target_hidraw}" ]; then
+      # Test actual access to the device
+      if [ -r "${target_hidraw}" ] && [ -w "${target_hidraw}" ]; then
+        # Try a simple read test (non-blocking)
+        if timeout 2 dd if="${target_hidraw}" of=/dev/null bs=1 count=1 2>/dev/null; then
+          device_accessible=1
+          log "✓ Device ${target_hidraw} is accessible to user ${current_user}"
+        else
+          log "✗ Device ${target_hidraw} exists but cannot be accessed (permission denied)"
+        fi
+      else
+        log "✗ Device ${target_hidraw} exists but no read/write permissions"
+      fi
+    else
+      log "✗ Ulanzi D200 hidraw device not found in /dev/hidraw*"
     fi
   fi
   
