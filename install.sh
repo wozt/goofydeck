@@ -16,6 +16,8 @@ NO_UDEV=0
 NO_MDI=0
 SETUP_ENV=1
 INTERACTIVE=1
+INSTALL_SERVICE=0
+UNINSTALL_SERVICE=0
 
 usage() {
   cat >&2 <<EOF
@@ -32,6 +34,8 @@ Options:
   --no-mdi             Skip MDI icons download
   --no-setup-env       Skip interactive .env setup
   --no-interactive     Skip interactive component selection (use defaults)
+  --install-service    Install systemd service (Linux only)
+  --uninstall-service  Uninstall systemd service (Linux only)
   --env-file <path>    Use a specific .env file (default: ${ENV_FILE})
   -h, --help           Show this help
 
@@ -59,6 +63,8 @@ while [ "$#" -gt 0 ]; do
     --no-setup-env) SETUP_ENV=0; shift ;;
     --interactive) INTERACTIVE=1; shift ;;
     --no-interactive) INTERACTIVE=0; shift ;;
+    --install-service) INSTALL_SERVICE=1; shift ;;
+    --uninstall-service) UNINSTALL_SERVICE=1; shift ;;
     --env-file) ENV_FILE="${2:-}"; shift 2 || { usage; exit 2; } ;;
     --env-file=*) ENV_FILE="${1#*=}"; shift ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
@@ -263,13 +269,9 @@ setup_env_file() {
 
   local example_env="${ROOT}/example.env"
   if [ ! -f "${example_env}" ]; then
-    log "Example environment file not found at ${example_env}"
-    return 0
+    die "example.env not found at ${example_env}"
   fi
 
-  log "Setting up environment file..."
-  
-  # Copy example.env if .env doesn't exist
   if [ ! -f "${ENV_FILE}" ]; then
     cp "${example_env}" "${ENV_FILE}"
     log "Created ${ENV_FILE} from example.env"
@@ -281,55 +283,66 @@ setup_env_file() {
     log "Environment Configuration (optional):"
     echo "=================================="
     
-    # Setup USERNAME
+    # Setup USERNAME (use pre-configured choice)
     local current_user
     current_user="$(whoami)"
     echo "Current user: ${current_user}"
-    read -p "Set USERNAME in .env? [Y/n]: " setup_username
-    if [[ "${setup_username}" =~ ^[Yy]*$ ]] || [ -z "${setup_username}" ]; then
-      sed -i "s/USERNAME=\"<username>\"/USERNAME=\"${current_user}\"/" "${ENV_FILE}"
-      log "Set USERNAME=${current_user}"
-    fi
-
-    # Setup Home Assistant
-    echo
-    read -p "Configure Home Assistant integration? [y/N]: " setup_ha
-    if [[ "${setup_ha}" =~ ^[Yy]*$ ]]; then
-      echo
-      echo "Home Assistant WebSocket Configuration:"
-      echo "- Get long-lived access token: https://www.home-assistant.io/docs/authentication"
-      echo
-      
-      read -p "HA Host [ws://localhost:8123]: " ha_host
-      ha_host="${ha_host:-ws://localhost:8123}"
-      
-      read -p "HA Access Token (leave empty if not using HA): " ha_token
-      
-      # Update .env
-      sed -i "s|HA_HOST=\"ws://localhost:8123\"|HA_HOST=\"${ha_host}\"|" "${ENV_FILE}"
-      sed -i "s|HA_ACCESS_TOKEN=\"\"|HA_ACCESS_TOKEN=\"${ha_token}\"|" "${ENV_FILE}"
-      
-      log "Set HA_HOST=${ha_host}"
-      if [ -n "${ha_token}" ]; then
-        log "Set HA_ACCESS_TOKEN=[configured]"
-      else
-        log "HA_ACCESS_TOKEN left empty (HA integration disabled)"
+    
+    # Check if username was configured in interactive setup
+    if [ "${INTERACTIVE}" -eq 1 ] && [ -n "${SETUP_USERNAME:-}" ]; then
+      if [ "${SETUP_USERNAME}" = "yes" ]; then
+        sed -i "s/USERNAME=\"<username>\"/USERNAME=\"${current_user}\"/" "${ENV_FILE}"
+        log "Set USERNAME=${current_user}"
       fi
     else
-      log "Home Assistant configuration skipped"
+      # Fallback to interactive question
+      read -p "Set USERNAME in .env? [Y/n]: " setup_username
+      if [[ "${setup_username}" =~ ^[Yy]*$ ]] || [ -z "${setup_username}" ]; then
+        sed -i "s/USERNAME=\"<username>\"/USERNAME=\"${current_user}\"/" "${ENV_FILE}"
+        log "Set USERNAME=${current_user}"
+      fi
+    fi
+
+    # Setup Home Assistant (use pre-configured choice)
+    if [ "${INTERACTIVE}" -eq 1 ] && [ -n "${SETUP_HA_HOST:-}" ]; then
+      if [ "${SETUP_HA_HOST}" != "no" ]; then
+        echo
+        log "Configuring Home Assistant integration..."
+        sed -i "s|HA_HOST=\"ws://localhost:8123\"|HA_HOST=\"${SETUP_HA_HOST}\"|" "${ENV_FILE}"
+        if [ -n "${SETUP_HA_TOKEN:-}" ]; then
+          sed -i "s|HA_ACCESS_TOKEN=\"\"|HA_ACCESS_TOKEN=\"${SETUP_HA_TOKEN}\"|" "${ENV_FILE}"
+          log "Set HA_ACCESS_TOKEN=[configured]"
+        fi
+        log "Set HA_HOST=${SETUP_HA_HOST}"
+      fi
+    else
+      # Fallback to interactive question
+      echo
+      read -p "Configure Home Assistant integration? [y/N]: " setup_ha
+      if [[ "${setup_ha}" =~ ^[Yy]*$ ]]; then
+        echo
+        echo "Home Assistant WebSocket Configuration:"
+        echo "- Get long-lived access token: https://www.home-assistant.io/docs/authentication"
+        echo
+        
+        read -p "HA Host [ws://localhost:8123]: " ha_host
+        ha_host="${ha_host:-ws://localhost:8123}"
+        
+        read -p "HA Access Token (leave empty if not using HA): " ha_token
+        
+        # Update .env
+        sed -i "s|HA_HOST=\"ws://localhost:8123\"|HA_HOST=\"${ha_host}\"|" "${ENV_FILE}"
+        if [ -n "${ha_token}" ]; then
+          sed -i "s|HA_ACCESS_TOKEN=\"\"|HA_ACCESS_TOKEN=\"${ha_token}\"|" "${ENV_FILE}"
+          log "Set HA_ACCESS_TOKEN=[configured]"
+        fi
+        log "Set HA_HOST=${ha_host}"
+      fi
     fi
 
     echo
     log "Environment file configured at ${ENV_FILE}"
     log "You can edit it manually anytime to change settings"
-  else
-    log "Environment file created with default values"
-  fi
-}
-
-setup_mdi_icons() {
-  if [ "${NO_MDI}" -eq 1 ]; then
-    log "Skipping MDI icons download (--no-mdi specified)"
     return 0
   fi
 
@@ -462,6 +475,11 @@ interactive_setup() {
   local setup_mdi="yes"
   local setup_fonts="yes"
   local setup_compile="yes"
+  local setup_service="no"
+  local setup_udev_confirm="yes"
+  local setup_username="yes"
+  local setup_ha="no"
+  local disable_wallpapers="no"
   
   echo "Select components to install:"
   echo
@@ -470,6 +488,10 @@ interactive_setup() {
   if [ "$(uname -s)" != "Darwin" ]; then
     echo "USB device permissions will be checked and configured if needed"
     setup_udev="checked"
+    read -p "Setup USB device permissions (udev rules) for Ulanzi D200? [Y/n]: " setup_udev_confirm
+    if [[ "${setup_udev_confirm}" =~ ^[Nn]*$ ]]; then
+      setup_udev="no"
+    fi
   else
     echo "USB permissions: Not applicable on macOS"
     setup_udev="no"
@@ -482,6 +504,36 @@ interactive_setup() {
   else
     echo "Environment file (.env): Not found, will create"
     setup_env="yes"
+  fi
+  
+  # Username setup
+  if [ "${setup_env}" = "yes" ]; then
+    local current_user
+    current_user="$(whoami)"
+    echo "Current user: ${current_user}"
+    read -p "Set USERNAME in .env? [Y/n]: " setup_username
+    if [[ "${setup_username}" =~ ^[Yy]*$ ]] || [ -z "${setup_username}" ]; then
+      setup_username="yes"
+    else
+      setup_username="no"
+    fi
+  fi
+  
+  # Home Assistant setup
+  if [ "${setup_env}" = "yes" ]; then
+    read -p "Configure Home Assistant integration? [y/N]: " setup_ha
+    if [[ "${setup_ha}" =~ ^[Yy]*$ ]]; then
+      setup_ha="yes"
+      echo
+      echo "Home Assistant WebSocket Configuration:"
+      echo "- Get long-lived access token: https://www.home-assistant.io/docs/authentication"
+      echo
+      read -p "HA Host [ws://localhost:8123]: " ha_host
+      ha_host="${ha_host:-ws://localhost:8123}"
+      read -p "HA Access Token (leave empty if not using HA): " ha_token
+    else
+      setup_ha="no"
+    fi
   fi
   
   # MDI icons
@@ -501,6 +553,29 @@ interactive_setup() {
     setup_compile="no"
   fi
   
+  # Systemd service (Linux only)
+  if [ "$(uname -s)" = "Linux" ]; then
+    echo
+    read -p "Install GoofyDeck as systemd service (auto-start at boot)? [y/N]: " setup_service
+    setup_service="${setup_service:-no}"
+  else
+    echo "Systemd service: Not applicable on this platform"
+  fi
+  
+  # RPI Zero 2W wallpapers optimization
+  if is_rpi_zero_2w; then
+    echo
+    log "⚠️  Raspberry Pi Zero 2W detected with limited RAM"
+    log "Wallpapers can impact performance on this device."
+    echo
+    read -p "Disable wallpapers in configuration for better performance? [Y/n]: " disable_wallpapers
+    if [[ "${disable_wallpapers}" =~ ^[Yy]*$ ]] || [ -z "${disable_wallpapers}" ]; then
+      disable_wallpapers="yes"
+    else
+      disable_wallpapers="no"
+    fi
+  fi
+  
   echo
   log "Configuration Summary:"
   echo "- USB permissions (udev): ${setup_udev}"
@@ -508,6 +583,7 @@ interactive_setup() {
   echo "- MDI icons download: ${setup_mdi}"
   echo "- Fonts setup: ${setup_fonts}"
   echo "- Compilation: ${setup_compile}"
+  echo "- Systemd service: ${setup_service}"
   echo
   
   read -p "Proceed with this configuration? [Y/n]: " proceed
@@ -535,6 +611,30 @@ interactive_setup() {
   
   if [ "${setup_compile}" = "no" ]; then
     NO_COMPILE=1
+  fi
+  
+  if [ "${setup_service}" = "yes" ]; then
+    INSTALL_SERVICE=1
+  fi
+  
+  # Apply wallpapers optimization immediately if requested
+  if [ "${disable_wallpapers}" = "yes" ]; then
+    local config_file="${ROOT}/config/configuration.yml"
+    if [ -f "${config_file}" ]; then
+      sed -i 's/disable_wallpapers: false/disable_wallpapers: true/' "${config_file}"
+      log "✅ Wallpapers disabled in configuration.yml"
+    fi
+  fi
+  
+  # Store HA config for later use
+  if [ "${setup_ha}" = "yes" ]; then
+    export SETUP_HA_HOST="${ha_host}"
+    export SETUP_HA_TOKEN="${ha_token}"
+  fi
+  
+  # Store username choice for later use
+  if [ "${setup_env}" = "yes" ]; then
+    export SETUP_USERNAME="${setup_username}"
   fi
   
   log "Interactive configuration applied"
@@ -571,33 +671,6 @@ suggest_disable_wallpapers() {
   # Ne proposer que si c'est un Raspberry Pi Zero 2W ET que les wallpapers ne sont pas déjà désactivés
   if ! is_rpi_zero_2w || [ "${already_disabled}" = true ]; then
     return 0
-  fi
-  
-  echo
-  log "⚠️  Raspberry Pi Zero 2W detected with limited RAM"
-  log "Wallpapers can impact performance on this device."
-  echo
-  
-  read -p "Disable wallpapers in configuration for better performance? [Y/n]: " disable_wallpapers
-  if [[ "${disable_wallpapers}" =~ ^[Yy]*$ ]] || [ -z "${disable_wallpapers}" ]; then
-    if [ -f "${config_file}" ]; then
-      # Check if global section already exists
-      if grep -q "^global:" "${config_file}"; then
-        # Update existing disable_wallpapers value or add it if not present
-        if grep -q "disable_wallpapers:" "${config_file}"; then
-          sed -i 's/^  disable_wallpapers:.*$/  disable_wallpapers: true/' "${config_file}"
-        else
-          sed -i '/^global:/a\  disable_wallpapers: true' "${config_file}"
-        fi
-      else
-        sed -i '1i\global:\n  disable_wallpapers: true' "${config_file}"
-      fi
-      log "✅ Wallpapers disabled in configuration.yml"
-    else
-      log "Configuration file not found, cannot disable wallpapers"
-    fi
-  else
-    log "Keeping wallpapers enabled"
   fi
 }
 
@@ -846,9 +919,41 @@ main() {
 
   log "Done."
   log ""
+  
+  # Handle service operations
+  if [ "${UNINSTALL_SERVICE}" -eq 1 ]; then
+    uninstall_systemd_service
+    exit 0
+  fi
+  
+  # Install systemd service if requested (but continue with normal flow)
+  if [ "${INSTALL_SERVICE}" -eq 1 ]; then
+    log "Installing systemd service as part of installation..."
+    install_systemd_service
+    if [ $? -eq 0 ]; then
+      log_success "Systemd service installed successfully!"
+    else
+      log_warning "Systemd service installation failed, but continuing..."
+    fi
+  fi
+  
   log "Next steps:"
-  log "1. Connect your Ulanzi D200 device"
-  log "2. Run: ./launch_stack.sh --byobu"
+  if [ "${INSTALL_SERVICE}" -eq 1 ]; then
+    log "1. Connect your Ulanzi D200 device"
+    log "2. Service will start automatically at boot"
+    log "3. Or start manually: sudo systemctl start goofydeck"
+    log ""
+    log "Service management:"
+    log "- Status: sudo systemctl status goofydeck"
+    log "- Logs: sudo journalctl -u goofydeck"
+    log "- Stop: sudo systemctl stop goofydeck"
+  else
+    log "1. Connect your Ulanzi D200 device"
+    log "2. Run: ./launch_stack.sh --byobu"
+    log ""
+    log "To install as a system service, run:"
+    log "  sudo ./install.sh --install-service"
+  fi
   log ""
   log "If device is not found, try:"
   log "- Unplug/replug the USB device"
@@ -856,4 +961,141 @@ main() {
   log "- If needed: newgrp plugdev or log out/in"
 }
 
-main
+install_systemd_service() {
+  log "Installing GoofyDeck systemd service..."
+  
+  # Check if running on Linux
+  if [ "$(uname -s)" != "Linux" ]; then
+    log "WARNING: systemd service installation is only supported on Linux"
+    log "Skipping service installation..."
+    return 0
+  fi
+  
+  # Check if running as root
+  if [ "$EUID" -ne 0 ]; then
+    log "To install systemd service, run:"
+    log "  sudo ./install.sh --install-service"
+    return 0
+  fi
+  
+  # Service file content
+  local service_content='[Unit]
+Description=GoofyDeck - Ulanzi D200 Control System
+Documentation=https://github.com/wozt/GoofyDeck
+After=network.target
+Wants=network.target
+
+[Service]
+Type=forking
+User='"$(stat -c "%U" "${ROOT}")"'
+Group='"$(stat -c "%G" "${ROOT}")"'
+WorkingDirectory='"${ROOT}"'
+Environment=HOME='"$(dirname "${ROOT}")"'
+ExecStart='"${ROOT}/launch_stack.sh" --byobu'
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+PrivateTmp=yes
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target'
+  
+  # Create service file
+  local service_file="/etc/systemd/system/goofydeck.service"
+  
+  # Backup existing service if it exists
+  if [ -f "${service_file}" ]; then
+    log "Backing up existing service..."
+    cp "${service_file}" "${service_file}.backup"
+  fi
+  
+  # Write service file
+  echo "${service_content}" > "${service_file}"
+  chmod 644 "${service_file}"
+  
+  # Reload systemd
+  log "Reloading systemd..."
+  systemctl daemon-reload
+  
+  # Enable service
+  log "Enabling GoofyDeck service..."
+  systemctl enable goofydeck
+  
+  # Start service
+  log "Starting GoofyDeck service..."
+  if systemctl start goofydeck; then
+    log_success "GoofyDeck service started successfully!"
+  else
+    log_error "Failed to start GoofyDeck service"
+    log "Check status with: systemctl status goofydeck"
+    log "Check logs with: journalctl -u goofydeck"
+    return 1
+  fi
+  
+  # Show status
+  echo
+  log "Service status:"
+  systemctl status goofydeck --no-pager
+  
+  echo
+  log_success "GoofyDeck service installation completed!"
+  echo
+  log "Useful commands:"
+  echo "  sudo systemctl status goofydeck     - Check service status"
+  echo "  sudo journalctl -u goofydeck        - View service logs"
+  echo "  sudo systemctl restart goofydeck      - Restart service"
+  echo "  sudo systemctl stop goofydeck         - Stop service"
+  echo "  sudo systemctl disable goofydeck      - Disable autostart"
+  echo
+  log "To stop the service and run manually:"
+  echo "  sudo systemctl stop goofydeck"
+  echo "  cd ${ROOT}"
+  echo "  ./launch_stack.sh --byobu"
+}
+
+uninstall_systemd_service() {
+  log "Uninstalling GoofyDeck systemd service..."
+  
+  # Check if running as root
+  if [ "$EUID" -ne 0 ]; then
+    log_error "This must be run as root (sudo)"
+    echo "Usage: sudo ./install.sh --uninstall-service"
+    return 1
+  fi
+  
+  # Check if service exists
+  if ! systemctl list-unit-files | grep -q "goofydeck.service"; then
+    log_warning "GoofyDeck service is not installed"
+    return 0
+  fi
+  
+  # Stop service if running
+  if systemctl is-active --quiet goofydeck; then
+    log "Stopping GoofyDeck service..."
+    systemctl stop goofydeck
+  fi
+  
+  # Disable service
+  log "Disabling GoofyDeck service..."
+  systemctl disable goofydeck
+  
+  # Remove service file
+  log "Removing service file..."
+  rm -f "/etc/systemd/system/goofydeck.service"
+  
+  # Reload systemd
+  log "Reloading systemd..."
+  systemctl daemon-reload
+  
+  # Reset failed units if any
+  systemctl reset-failed 2>/dev/null || true
+  
+  log_success "GoofyDeck service uninstalled successfully!"
+  echo
+  log "The service has been removed but GoofyDeck files remain intact."
+  log "You can still run GoofyDeck manually:"
+  echo "  cd ${ROOT}"
+  echo "  ./launch_stack.sh --byobu"
+}

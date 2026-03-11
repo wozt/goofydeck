@@ -23,6 +23,50 @@ cd GoofyDeck
 
 The installer automatically detects Raspberry Pi Zero 2W and other low-memory devices, offering to disable wallpapers for better performance. The MDI icon downloader uses lightweight methods optimized for constrained environments.
 
+### 🔧 Systemd Service (Optional)
+
+For automatic startup at boot, you can install GoofyDeck as a systemd service:
+
+**During installation:**
+```bash
+./install.sh
+# The installer will ask if you want to install the service
+```
+
+**Manual installation:**
+```bash
+# Install as system service (requires sudo)
+sudo ./install.sh --install-service
+
+# Uninstall system service
+sudo ./install.sh --uninstall-service
+```
+
+**Service Management:**
+```bash
+# Check service status
+sudo systemctl status goofydeck
+
+# View service logs
+sudo journalctl -u goofydeck
+
+# Restart service
+sudo systemctl restart goofydeck
+
+# Stop service
+sudo systemctl stop goofydeck
+
+# Disable autostart
+sudo systemctl disable goofydeck
+```
+
+**To run manually instead of service:**
+```bash
+sudo systemctl stop goofydeck
+cd /path/to/GoofyDeck
+./launch_stack.sh --byobu
+```
+
 ## Prerequisites
 
 - **Firmware update**: The Ulanzi D200 must have its firmware updated once using the official Windows software. Using a Windows VM works for this step.
