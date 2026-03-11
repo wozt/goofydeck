@@ -204,12 +204,51 @@ setup_mdi_icons() {
   log "Downloading ${missing_count} missing MDI icons..."
   mkdir -p "${mdi_dir}"
   
-  # Use the external script for download
-  if [ -f "${ROOT}/icons/download_mdi.sh" ]; then
-    "${ROOT}/icons/download_mdi.sh"
-    log_success "MDI icons download completed"
-  else
-    log_warning "download_mdi.sh not found, skipping icon download"
+  # Fast individual download approach
+  local downloaded=0
+  local failed=0
+  local github_url="https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg"
+  
+  for icon in ${missing_icons}; do
+    local icon_url="${github_url}/${icon}.svg"
+    local target_file="${mdi_dir}/${icon}.svg"
+    
+    if [ -f "${target_file}" ]; then
+      continue
+    fi
+    
+    log "Downloading ${icon}.svg..."
+    
+    if command -v curl >/dev/null 2>&1; then
+      if curl -s --connect-timeout 10 --max-time 30 "${icon_url}" -o "${target_file}" 2>/dev/null; then
+        downloaded=$((downloaded + 1))
+        log_success "Downloaded ${icon}.svg"
+      else
+        failed=$((failed + 1))
+        log_warning "Failed to download ${icon}.svg"
+      fi
+    elif command -v wget >/dev/null 2>&1; then
+      if wget -q --timeout=30 --tries=3 "${icon_url}" -O "${target_file}" 2>/dev/null; then
+        downloaded=$((downloaded + 1))
+        log_success "Downloaded ${icon}.svg"
+      else
+        failed=$((failed + 1))
+        log_warning "Failed to download ${icon}.svg"
+      fi
+    else
+      log_warning "Neither curl nor wget available"
+      failed=${missing_count}
+      break
+    fi
+  done
+  
+  if [ "${downloaded}" -gt 0 ]; then
+    log_success "MDI icons download completed: ${downloaded} downloaded, ${failed} failed"
+  fi
+  
+  if [ "${failed}" -gt 0 ]; then
+    log_warning "Some icons failed to download. You can run manually:"
+    log_warning "${ROOT}/icons/download_mdi.sh"
   fi
 }
 
