@@ -419,10 +419,12 @@ setup_systemd_service() {
   read -p "Install GoofyDeck as systemd service (auto-start at boot)? [y/N]: " install_service
   if [[ "${install_service}" =~ ^[Nn]*$ ]] || [ -z "${install_service}" ]; then
     log "Skipping systemd service installation"
+    export ENABLE_SYSTEMD="false"
     return 0
   fi
   
   log "Installing systemd service..."
+  export ENABLE_SYSTEMD="true"
   
   # Create a daemon script that keeps processes running
   local daemon_script="${ROOT}/goofydeck-daemon.sh"
@@ -607,6 +609,9 @@ main() {
   echo "================================="
   echo
   
+  # Initialize systemd service flag
+  export ENABLE_SYSTEMD="false"
+  
   # Run all setup steps
   setup_usb_permissions
   echo
@@ -629,13 +634,43 @@ main() {
   log_success "Installation completed!"
   echo
   log "Next steps:"
-  log "1. Connect your Ulanzi D200 device"
-  log "2. Run: ./launch_stack.sh --byobu"
+  log "1. Connect your Ulanzi D200 device if not done already"
+  log "2a. Run: ./launch_stack.sh --byobu to launch manually"
+  log "2b. Restart your host device OR start the service with: sudo systemctl start goofydeck" 
+  if [ "${ENABLE_SYSTEMD}" = "true" ]; then
+    log "   (systemd service was enabled during installation)"
+  fi
   echo
   log "If device is not found, try:"
   log "- Unplug/replug the USB device"
   log "- Run: groups | grep plugdev (should contain your username)"
   log "- If needed: newgrp plugdev or log out/in"
+  # Offer to start the service if it was installed
+  if [ "${ENABLE_SYSTEMD}" = "true" ]; then
+    echo "🚀 Quick Start Option:"
+    read -p "Start goofydeck service now? [y/N]: " start_service
+    if [[ "${start_service}" =~ ^[Yy]*$ ]]; then
+      log "Starting goofydeck service..."
+      if sudo systemctl start goofydeck.service; then
+        sleep 2
+        if sudo systemctl is-active --quiet goofydeck.service; then
+          log_success "✅ goofydeck service is now running!"
+          log "View logs with: sudo journalctl -u goofydeck.service -f"
+          log "Stop service with: sudo systemctl stop goofydeck.service"
+        else
+          log_warning "⚠️  Service started but may not be active yet"
+          log "Check status with: sudo systemctl status goofydeck.service"
+        fi
+      else
+        log_error "❌ Failed to start goofydeck service"
+        log "You can start it manually with: sudo systemctl start goofydeck.service"
+      fi
+    else
+      log "Service not started. You can start it later with:"
+      log "sudo systemctl start goofydeck.service"
+    fi
+    echo
+  fi
 }
 
 # Run main function
