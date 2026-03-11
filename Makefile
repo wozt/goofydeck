@@ -32,9 +32,9 @@ ifneq ($(strip $(MDI_LIBS)),)
 HAVE_MDI := 1
 endif
 
-.PHONY: all daemon tools icons standalone clean dir_bin dir_icons dir_standalone
+.PHONY: all daemon tools icons clean dir_bin dir_icons
 
-all: daemon tools icons standalone
+all: daemon tools icons
 
 daemon: ulanzi_d200_daemon
 
@@ -43,16 +43,16 @@ ulanzi_d200_daemon: ulanzi_d200_daemon.c
 
 tools: bin/send_image_page bin/send_video_page_wrapper bin/paging_daemon bin/ha_daemon
 
-bin/paging_daemon: src/lib/paging.c | dir_bin
+bin/paging_daemon: src/bin/paging.c | dir_bin
 	$(CC) $(CFLAGS) $(YAML_CFLAGS) -o $@ $< $(PNG_LIBS) $(ZLIB_LIBS) $(YAML_LIBS)
 
-bin/ha_daemon: src/lib/ha_daemon.c | dir_bin
+bin/ha_daemon: src/bin/ha_daemon.c | dir_bin
 	$(CC) $(CFLAGS) $(OPENSSL_CFLAGS) -o $@ $< $(PTHREAD_LIBS) $(OPENSSL_LIBS)
 
-bin/send_image_page: src/lib/send_image_page.c | dir_bin
+bin/send_image_page: src/bin/send_image_page.c | dir_bin
 	$(CC) $(CFLAGS) -o $@ $< $(PNG_LIBS) $(PTHREAD_LIBS) $(MATH_LIBS)
 
-bin/send_video_page_wrapper: src/lib/send_video_page_wrapper.c | dir_bin
+bin/send_video_page_wrapper: src/bin/send_video_page_wrapper.c | dir_bin
 	$(CC) $(CFLAGS) $(FFMPEG_CFLAGS) -o $@ $< $(FFMPEG_LIBS) $(PNG_LIBS) $(ZLIB_LIBS) $(PTHREAD_LIBS) $(MATH_LIBS)
 
 icons: icons/draw_border icons/draw_optimize icons/draw_over icons/draw_square icons/draw_rectangle icons/draw_text icons/draw_normalize
@@ -100,19 +100,11 @@ else
 	@exit 1
 endif
 
-standalone: standalone/draw_optimize_std
-
-standalone/draw_optimize_std: src/standalone/draw_optimize_std.c | dir_standalone
-	$(CC) $(CFLAGS) -o $@ $< $(ZLIB_LIBS)
-
 dir_bin:
 	mkdir -p bin
 
 dir_icons:
 	mkdir -p icons
-
-dir_standalone:
-	mkdir -p standalone
 
 clean:
 	rm -f ulanzi_d200_daemon
@@ -125,4 +117,3 @@ clean:
 	rm -f icons/draw_text_rectangle icons/draw_optimize_rectangle icons/draw_over_rectangle
 	rm -f icons/draw_normalize_rectangle
 	rm -f icons/draw_mdi_rectangle icons/draw_svg_rectangle
-	rm -f standalone/draw_optimize_std
