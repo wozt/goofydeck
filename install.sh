@@ -343,6 +343,14 @@ setup_env_file() {
     echo
     log "Environment file configured at ${ENV_FILE}"
     log "You can edit it manually anytime to change settings"
+  else
+    log "Environment file created with default values"
+  fi
+}
+
+setup_mdi_icons() {
+  if [ "${NO_MDI}" -eq 1 ]; then
+    log "Skipping MDI icons download (--no-mdi specified)"
     return 0
   fi
 
