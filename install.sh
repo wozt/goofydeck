@@ -358,7 +358,7 @@ Type=simple
 User=$(whoami)
 WorkingDirectory=${ROOT}
 Environment=HOME=$(dirname "${ROOT}")
-ExecStart=${ROOT}/launch_stack.sh --byobu
+ExecStart=${ROOT}/launch_stack.sh
 ExecReload=/bin/kill -HUP \$MAINPID
 KillMode=mixed
 TimeoutStopSec=5
@@ -374,6 +374,8 @@ WantedBy=multi-user.target"
   sudo systemctl enable goofydeck
   log_success "Systemd service installed and enabled"
   log "To start the service: sudo systemctl start goofydeck"
+  log "To stop the service: sudo systemctl stop goofydeck"
+  log "To view logs: sudo journalctl -u goofydeck.service -f"
 }
 
 # Step 8: Performance Optimization
