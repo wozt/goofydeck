@@ -1,7 +1,7 @@
 # GoofyDeck
 
 GoofyDeck controls an Ulanzi D200 with C daemons and config-driven paging, with optional Home Assistant integration (`ha_daemon`).
-/!\\ This project is still under construction /!\\
+/!\ This project is still under construction /!\
 
 The previous (long) README has been archived to `legacy/README.md`.
 
@@ -12,20 +12,55 @@ The previous (long) README has been archived to `legacy/README.md`.
 git clone <repository-url>
 cd GoofyDeck
 
-# Install dependencies and download icons
+# Interactive installation (recommended)
 ./install.sh
 
 # Launch GoofyDeck
 ./launch_stack.sh --byobu
 ```
 
+### 🎯 Interactive Installation
+
+The new `install.sh` provides a fully interactive installation experience:
+
+- **🔧 USB Device Permissions**: Automatic udev rules configuration
+- **⚙️ Environment Setup**: .env file with USERNAME and Home Assistant integration
+- **🎨 MDI Icons**: Choice between complete set (7000+ icons) or configuration-specific
+- **📚 Fonts Collection**: Optional font installation
+- **🔨 Dependencies**: Automatic system dependencies installation
+- **⚡ Compilation**: Binary compilation when needed
+- **🚀 Systemd Service**: Optional auto-start service installation
+- **⚡ Performance**: RPI Zero 2W optimization
+
+### 🎨 MDI Icons Download Options
+
+The installer offers flexible MDI icons download:
+
+**Option 1: Complete Set (Recommended)**
+- Downloads all 7000+ Material Design Icons (~50MB)
+- ⚡ **More practical**: No runtime downloads when adding new icons
+- ⚡ **Faster**: Icons instantly available for miniapps
+- ⚡ **Very useful**: Essential for custom miniapps development
+- ⚡ **Future-proof**: Supports any icon without re-running installation
+
+**Option 2: Configuration Only**
+- Downloads only icons found in your `configuration.yml`
+- Smaller download size
+- Runtime downloads for new icons
+
+**Option 3: Skip**
+- Icons downloaded on-demand during runtime (slower)
+
 ### 🎯 Raspberry Pi Zero 2W Optimization
 
-The installer automatically detects Raspberry Pi Zero 2W and other low-memory devices, offering to disable wallpapers for better performance. The MDI icon downloader uses lightweight methods optimized for constrained environments.
+The installer automatically detects Raspberry Pi Zero 2W and other low-memory devices, offering to:
+- Disable wallpapers for better performance
+- Use optimized MDI download methods
+- Reduce memory footprint
 
 ### 🔧 Systemd Service (Optional)
 
-For automatic startup at boot, you can install GoofyDeck as a systemd service:
+For automatic startup at boot, GoofyDeck can be installed as a systemd service:
 
 **During installation:**
 ```bash
@@ -33,14 +68,11 @@ For automatic startup at boot, you can install GoofyDeck as a systemd service:
 # The installer will ask if you want to install the service
 ```
 
-**Manual installation:**
-```bash
-# Install as system service (requires sudo)
-sudo ./install.sh --install-service
-
-# Uninstall system service
-sudo ./install.sh --uninstall-service
-```
+**Service Features:**
+- 🔄 **Automatic restart** if processes crash
+- 📊 **Process monitoring** with auto-recovery
+- 📝 **Integrated logging** via systemd journal
+- ⚡ **Optimized for daemon** operation (no interactive terminal needed)
 
 **Service Management:**
 ```bash
@@ -48,11 +80,10 @@ sudo ./install.sh --uninstall-service
 sudo systemctl status goofydeck
 
 # View service logs
-sudo journalctl -u goofydeck
+sudo journalctl -u goofydeck -f
 
-# Restart service
-sudo systemctl restart goofydeck
-
+# Start/stop service
+sudo systemctl start goofydeck
 # Stop service
 sudo systemctl stop goofydeck
 
@@ -70,20 +101,55 @@ cd /path/to/GoofyDeck
 ## Prerequisites
 
 - **Firmware update**: The Ulanzi D200 must have its firmware updated once using the official Windows software. Using a Windows VM works for this step.
+- **System dependencies**: Automatically installed by `install.sh`
+- **sudo access**: Required for USB permissions and systemd service
 
-## Build
+## Build & Installation
 
+### Option 1: Interactive Installation (Recommended)
 ```bash
 ./install.sh
+```
+This handles everything automatically:
+- System dependencies
+- USB permissions
+- Environment configuration
+- MDI icons download
+- Binary compilation
+- Optional systemd service
+
+### Option 2: Manual Build
+```bash
+# Install dependencies manually (see install.sh for details)
+sudo apt install build-essential pkg-config git libhidapi-dev libusb-1.0-0-dev zlib1g-dev libpng-dev libyaml-dev libssl-dev ffmpeg libavformat-dev libavcodec-dev libavutil-dev libswscale-dev imagemagick librsvg2-bin librsvg2-dev libcairo2-dev libusb-dev jq bc netcat-openbsd socat fonts-noto-core fonts-noto-color-emoji
+
+# Build binaries
 make all
+
+# Download MDI icons manually
+./icons/download_mdi.sh all
 ```
 
 ## Run
 
-Recommended (byobu):
-
+### Method 1: Systemd Service (Recommended)
 ```bash
+# Start the service
+sudo systemctl start goofydeck
+
+# View logs
+sudo journalctl -u goofydeck -f
+```
+
+### Method 2: Manual Launch
+```bash
+# Interactive terminal (recommended for development)
 ./launch_stack.sh --byobu
+
+# Background mode
+./launch_stack.sh
+
+# Stop all processes
 ./launch_stack.sh --kill
 ```
 
@@ -94,6 +160,73 @@ Manual:
 ./bin/paging_daemon
 ./bin/ha_daemon
 ```
+
+## 🛠️ Troubleshooting
+
+### Device Not Found
+```bash
+# Check USB device access
+lsusb | grep 2207:0019
+
+# Check user groups
+groups | grep plugdev
+
+# If not in plugdev group:
+sudo usermod -a -G plugdev $USER
+# Then logout and login again
+```
+
+### Service Issues
+```bash
+# Check service status
+sudo systemctl status goofydeck
+
+# View service logs
+sudo journalctl -u goofydeck -n 50
+
+# Restart service
+sudo systemctl restart goofydeck
+```
+
+### MDI Icons Issues
+```bash
+# Check MDI icons directory
+ls -la assets/mdi/ | wc -l
+
+# Re-download all icons
+./icons/download_mdi.sh all
+
+# Clear cache and retry
+rm -f .cache/mdi_dl_*.once
+./install.sh
+```
+
+### Performance Issues (RPI Zero 2W)
+```bash
+# Check if wallpapers are disabled
+grep "disable_wallpapers" config/configuration.yml
+
+# Disable wallpapers manually
+sed -i 's/disable_wallpapers: false/disable_wallpapers: true/' config/configuration.yml
+```
+
+## 🔧 Advanced Features
+
+### Miniapps Development
+With complete MDI icons download (7000+ icons), you have instant access to:
+- Any Material Design icon for your miniapps
+- No runtime download delays
+- Complete creative freedom
+
+### Home Assistant Integration
+Configure in `.env` file:
+```bash
+HA_HOST="ws://your-home-assistant:8123"
+HA_ACCESS_TOKEN="your_long_lived_token"
+```
+
+### Custom Fonts
+The installer can download additional fonts for better text rendering in your pages.
 
 ## Sockets
 

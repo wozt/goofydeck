@@ -165,6 +165,15 @@ setup_mdi_icons() {
   echo "3) Skip MDI icons download"
   echo
   
+  # Information about complete download benefits
+  echo "📖 Why download ALL MDI icons?"
+  echo "   ⚡ More practical: No runtime downloads when adding new icons"
+  echo "   ⚡ Faster: Icons are instantly available for miniapps"
+  echo "   ⚡ Very useful: Essential for custom miniapps development"
+  echo "   ⚡ Future-proof: Supports any icon without re-running installation"
+  echo "   ⚡ Complete access: 7000+ icons for unlimited creativity"
+  echo
+  
   while true; do
     read -p "Choose option [1/2/3]: " mdi_option
     case "${mdi_option}" in
@@ -177,6 +186,7 @@ setup_mdi_icons() {
         if [[ "${confirm_all}" =~ ^[Yy]*$ ]]; then
           download_all_mdi_icons
           log_success "All MDI icons downloaded successfully"
+          log "🎉 You now have instant access to 7000+ icons for your miniapps!"
           return 0
         else
           echo "Cancelled. Choose another option."
@@ -189,6 +199,7 @@ setup_mdi_icons() {
         ;;
       3)
         log "Skipping MDI icons download"
+        log "⚠️  Note: Icons will be downloaded on-demand during runtime (slower)"
         return 0
         ;;
       *)

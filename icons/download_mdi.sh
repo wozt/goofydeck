@@ -316,54 +316,68 @@ download_all() {
     
     mkdir -p "${DEST}"
     
-    # Create temporary directory safely
-    local TMP_DIR
-    if ! TMP_DIR="$(mktemp -d 2>/dev/null)"; then
+    # Create temporary directory safely using a fixed pattern
+    local TMP_DIR="/tmp/goofydeck_mdi_all_$$"
+    if ! mkdir -p "${TMP_DIR}"; then
         log_error "Failed to create temporary directory"
         exit 1
     fi
     
-    # Ensure cleanup happens even if something fails
-    cleanup() { 
+    # Simple cleanup at the end
+    cleanup_all_temp() {
         if [ -d "${TMP_DIR}" ]; then
             rm -rf "${TMP_DIR}"
         fi
     }
-    trap cleanup EXIT
     
     log_info "Cloning MaterialDesign repository (sparse, svg only)..."
-    git -c advice.detachedHead=false clone --depth 1 --filter=blob:none --sparse "${REPO_URL}" "${TMP_DIR}/repo" >&2
-    
-    log_info "Setting up sparse checkout for svg directory..."
-    git -C "${TMP_DIR}/repo" sparse-checkout set svg >&2
-    
-    local SVG_DIR="${TMP_DIR}/repo/svg"
-    if [ ! -d "${SVG_DIR}" ]; then
-        log_error "SVG directory not found in clone"
+    if git -c advice.detachedHead=false clone --depth 1 --filter=blob:none --sparse "${REPO_URL}" "${TMP_DIR}/repo" >&2; then
+        log_info "Setting up sparse checkout for svg directory..."
+        if git -C "${TMP_DIR}/repo" sparse-checkout set svg >&2; then
+            log_info "Checking out files..."
+            if git -C "${TMP_DIR}/repo" checkout >&2; then
+                local SVG_DIR="${TMP_DIR}/repo/svg"
+                if [ -d "${SVG_DIR}" ]; then
+                    local downloaded=0
+                    local skipped=0
+                    
+                    log_info "Copying SVG files to ${DEST}..."
+                    for file in "${SVG_DIR}"/*.svg; do
+                        [ -e "${file}" ] || continue
+                        local name="$(basename "${file}")"
+                        local target="${DEST}/${name}"
+                        
+                        if [ -f "${target}" ]; then
+                            skipped=$((skipped + 1))
+                        else
+                            cp "${file}" "${target}"
+                            downloaded=$((downloaded + 1))
+                        fi
+                    done
+                    
+                    log_success "Download completed: ${downloaded} new files, ${skipped} already present"
+                    cleanup_all_temp
+                    return 0
+                else
+                    log_error "SVG directory not found in clone"
+                    cleanup_all_temp
+                    exit 1
+                fi
+            else
+                log_error "Git checkout failed"
+                cleanup_all_temp
+                exit 1
+            fi
+        else
+            log_error "Git sparse checkout setup failed"
+            cleanup_all_temp
+            exit 1
+        fi
+    else
+        log_error "Git clone failed"
+        cleanup_all_temp
         exit 1
     fi
-    
-    local downloaded=0
-    local skipped=0
-    
-    log_info "Copying SVG files to ${DEST}..."
-    for file in "${SVG_DIR}"/*.svg; do
-        [ -e "${file}" ] || continue
-        local name="$(basename "${file}")"
-        local target="${DEST}/${name}"
-        
-        if [ -f "${target}" ]; then
-            skipped=$((skipped + 1))
-            log_info "Skipped ${name} (already exists)"
-        else
-            cp "${file}" "${target}"
-            downloaded=$((downloaded + 1))
-            log_info "Downloaded ${name}"
-        fi
-    done
-    
-    echo
-    log_success "Full download completed: ${downloaded} new files, ${skipped} already present"
 }
 
 # Test all methods
