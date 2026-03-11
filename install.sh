@@ -1092,10 +1092,10 @@ uninstall_systemd_service() {
   # Reset failed units if any
   systemctl reset-failed 2>/dev/null || true
   
-  log_success "GoofyDeck service uninstalled successfully!"
-  echo
   log "The service has been removed but GoofyDeck files remain intact."
   log "You can still run GoofyDeck manually:"
   echo "  cd ${ROOT}"
   echo "  ./launch_stack.sh --byobu"
 }
+
+main
