@@ -348,6 +348,121 @@ setup_systemd_service() {
   
   log "Installing systemd service..."
   
+  # Create a daemon script that keeps processes running
+  local daemon_script="${ROOT}/goofydeck-daemon.sh"
+  cat > "${daemon_script}" << 'EOF'
+#!/bin/bash
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+PIDS_DIR="${ROOT}/pids"
+
+# Create pids directory
+mkdir -p "${PIDS_DIR}"
+
+# Function to start a daemon
+start_daemon() {
+    local name="$1"
+    local cmd="$2"
+    local pid_file="${PIDS_DIR}/${name}.pid"
+    
+    if [ -f "${pid_file}" ] && kill -0 "$(cat "${pid_file}")" 2>/dev/null; then
+        echo "${name} already running (PID: $(cat "${pid_file}"))"
+        return 0
+    fi
+    
+    echo "Starting ${name}..."
+    nohup bash -c "${cmd}" > /dev/null 2>&1 &
+    echo $! > "${pid_file}"
+    echo "${name} started (PID: $(cat "${pid_file}"))"
+}
+
+# Function to stop a daemon
+stop_daemon() {
+    local name="$1"
+    local pid_file="${PIDS_DIR}/${name}.pid"
+    
+    if [ -f "${pid_file}" ]; then
+        local pid="$(cat "${pid_file}")"
+        if kill -0 "${pid}" 2>/dev/null; then
+            echo "Stopping ${name} (PID: ${pid})..."
+            kill "${pid}"
+            # Wait for process to stop
+            for i in {1..10}; do
+                if ! kill -0 "${pid}" 2>/dev/null; then
+                    break
+                fi
+                sleep 1
+            done
+            # Force kill if still running
+            if kill -0 "${pid}" 2>/dev/null; then
+                kill -9 "${pid}"
+            fi
+        fi
+        rm -f "${pid_file}"
+        echo "${name} stopped"
+    fi
+}
+
+# Function to check daemon status
+check_daemon() {
+    local name="$1"
+    local pid_file="${PIDS_DIR}/${name}.pid"
+    
+    if [ -f "${pid_file}" ] && kill -0 "$(cat "${pid_file}")" 2>/dev/null; then
+        echo "${name} is running (PID: $(cat "${pid_file}"))"
+        return 0
+    else
+        echo "${name} is not running"
+        return 1
+    fi
+}
+
+# Handle signals
+cleanup() {
+    echo "Stopping all daemons..."
+    stop_daemon "ulanzi_d200_daemon"
+    stop_daemon "ha_daemon"
+    stop_daemon "paging_daemon"
+    exit 0
+}
+
+trap cleanup SIGTERM SIGINT
+
+# Start all daemons
+start_daemon "ulanzi_d200_daemon" "cd '${ROOT}' && ./ulanzi_d200_daemon"
+sleep 2
+start_daemon "ha_daemon" "cd '${ROOT}' && ./bin/ha_daemon"
+sleep 2
+start_daemon "paging_daemon" "cd '${ROOT}' && ./bin/paging_daemon"
+
+echo "All daemons started. Monitoring..."
+
+# Keep running and monitor daemons
+while true; do
+    sleep 30
+    
+    # Check if daemons are still running, restart if needed
+    if ! check_daemon "ulanzi_d200_daemon"; then
+        echo "Restarting ulanzi_d200_daemon..."
+        start_daemon "ulanzi_d200_daemon" "cd '${ROOT}' && ./ulanzi_d200_daemon"
+    fi
+    
+    if ! check_daemon "ha_daemon"; then
+        echo "Restarting ha_daemon..."
+        start_daemon "ha_daemon" "cd '${ROOT}' && ./bin/ha_daemon"
+    fi
+    
+    if ! check_daemon "paging_daemon"; then
+        echo "Restarting paging_daemon..."
+        start_daemon "paging_daemon" "cd '${ROOT}' && ./bin/paging_daemon"
+    fi
+done
+EOF
+
+  chmod +x "${daemon_script}"
+  
   local service_file="/etc/systemd/system/goofydeck.service"
   local service_content="[Unit]
 Description=GoofyDeck Service
@@ -358,13 +473,14 @@ Type=simple
 User=$(whoami)
 WorkingDirectory=${ROOT}
 Environment=HOME=$(dirname "${ROOT}")
-ExecStart=${ROOT}/launch_stack.sh
+ExecStart=${daemon_script}
 ExecReload=/bin/kill -HUP \$MAINPID
 KillMode=mixed
-TimeoutStopSec=5
-PrivateTmp=yes
+TimeoutStopSec=10
 Restart=on-failure
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target"
