@@ -13,7 +13,7 @@ CDN_URL="https://cdn.jsdelivr.net/npm/@mdi/svg@latest/svg"
 # Default values
 MODE="all"
 ICON_NAME=""
-METHOD="github"
+METHOD="auto"
 VERBOSE=false
 
 # Colors for output
@@ -43,8 +43,8 @@ ${YELLOW}OPTIONS:${NC}
     ${GREEN}-d, --dest DIR${NC}      Destination directory (default: ${DEST})
 
 ${YELLOW}METHODS:${NC}
-    ${GREEN}github${NC}    Use GitHub Raw URL only (fastest, lightweight, default)
-    ${GREEN}auto${NC}      Try methods in order: cdn -> github -> git
+    ${GREEN}auto${NC}      Try methods in order: cdn -> github -> git (default)
+    ${GREEN}github${NC}    Use GitHub Raw URL only (fastest, lightweight)
     ${GREEN}git${NC}       Use git sparse checkout (requires git, heavier)
     ${GREEN}cdn${NC}       Use jsdelivr CDN only (may have network issues)
 
@@ -86,7 +86,7 @@ log_error() {
     echo -e "${RED}❌ $1${NC}"
 }
 
-# Method 1: GitHub Raw URL (fastest, lightweight)
+# Method 1: GitHub Raw URL (most reliable for individual downloads)
 download_github_raw() {
     local icon="$1"
     local target="${DEST}/${icon}.svg"
@@ -100,24 +100,37 @@ download_github_raw() {
     
     mkdir -p "${DEST}"
     
+    # Ensure we have the required tools
     if command -v curl >/dev/null 2>&1; then
         if curl -s --connect-timeout 10 --max-time 30 "${GITHUB_RAW_URL}/${icon}.svg" -o "${target}" 2>/dev/null; then
-            log_success "Downloaded ${icon}.svg via GitHub Raw"
-            return 0
+            if [ -f "${target}" ] && [ -s "${target}" ]; then
+                log_success "Downloaded ${icon}.svg via GitHub Raw"
+                return 0
+            else
+                rm -f "${target}"  # Remove empty file
+                log_warning "GitHub Raw: downloaded file is empty or invalid"
+                return 1
+            fi
         else
             log_warning "GitHub Raw: curl download failed"
             return 1
         fi
     elif command -v wget >/dev/null 2>&1; then
         if wget -q --timeout=30 --tries=3 "${GITHUB_RAW_URL}/${icon}.svg" -O "${target}" 2>/dev/null; then
-            log_success "Downloaded ${icon}.svg via GitHub Raw"
-            return 0
+            if [ -f "${target}" ] && [ -s "${target}" ]; then
+                log_success "Downloaded ${icon}.svg via GitHub Raw"
+                return 0
+            else
+                rm -f "${target}"  # Remove empty file
+                log_warning "GitHub Raw: downloaded file is empty or invalid"
+                return 1
+            fi
         else
             log_warning "GitHub Raw: wget download failed"
             return 1
         fi
     else
-        log_error "Neither curl nor wget available"
+        log_error "Neither curl nor wget available for GitHub Raw method"
         return 1
     fi
 }
@@ -158,7 +171,7 @@ download_cdn() {
     fi
 }
 
-# Method 3: Git Sparse Checkout
+# Method 3: Git sparse checkout (heavier but complete)
 download_git() {
     local icon="$1"
     local target="${DEST}/${icon}.svg"
@@ -170,12 +183,27 @@ download_git() {
         return 0
     fi
     
-    command -v git >/dev/null 2>&1 || { log_error "git is required for Git method"; return 1; }
+    # Check if git is available
+    command -v git >/dev/null 2>&1 || { 
+        log_error "git is required for Git method"; 
+        return 1; 
+    }
     
-    local TMP_DIR
-    TMP_DIR="$(mktemp -d 2>/dev/null)" || { log_error "Failed to create temporary directory"; return 1; }
-    cleanup() { rm -rf "${TMP_DIR}" 2>/dev/null; }
-    trap cleanup EXIT
+    # Create temporary directory safely using a fixed pattern
+    local TMP_DIR="/tmp/goofydeck_mdi_$$"
+    if ! mkdir -p "${TMP_DIR}"; then
+        log_error "Failed to create temporary directory"
+        return 1
+    fi
+    
+    # Simple cleanup at the end
+    local cleanup_done=0
+    cleanup_temp() {
+        if [ "${cleanup_done}" = "0" ] && [ -d "${TMP_DIR}" ]; then
+            rm -rf "${TMP_DIR}"
+            cleanup_done=1
+        fi
+    }
     
     log_info "Cloning repository (sparse)..."
     if git -c advice.detachedHead=false clone --depth 1 --filter=blob:none --sparse "${REPO_URL}" "${TMP_DIR}/repo" 2>/dev/null; then
@@ -187,21 +215,28 @@ download_git() {
                 if [ -f "${source_file}" ]; then
                     cp "${source_file}" "${target}"
                     log_success "Downloaded ${icon}.svg via Git"
+                    cleanup_temp
                     return 0
                 else
                     log_warning "Git: Source file not found"
+                    cleanup_temp
+                    return 1
                 fi
             else
                 log_warning "Git: Checkout failed"
+                cleanup_temp
+                return 1
             fi
         else
-            log_warning "Git: Sparse checkout failed"
+            log_warning "Git: Sparse checkout setup failed"
+            cleanup_temp
+            return 1
         fi
     else
         log_warning "Git: Clone failed"
+        cleanup_temp
+        return 1
     fi
-    
-    return 1
 }
 
 # Auto method: try all methods in order
@@ -281,9 +316,19 @@ download_all() {
     
     mkdir -p "${DEST}"
     
+    # Create temporary directory safely
     local TMP_DIR
-    TMP_DIR="$(mktemp -d 2>/dev/null)" || { log_error "Failed to create temporary directory"; exit 1; }
-    cleanup() { rm -rf "${TMP_DIR}" 2>/dev/null; }
+    if ! TMP_DIR="$(mktemp -d 2>/dev/null)"; then
+        log_error "Failed to create temporary directory"
+        exit 1
+    fi
+    
+    # Ensure cleanup happens even if something fails
+    cleanup() { 
+        if [ -d "${TMP_DIR}" ]; then
+            rm -rf "${TMP_DIR}"
+        fi
+    }
     trap cleanup EXIT
     
     log_info "Cloning MaterialDesign repository (sparse, svg only)..."

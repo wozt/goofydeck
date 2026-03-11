@@ -158,6 +158,69 @@ setup_mdi_icons() {
   log "Step 3: MDI Icons Download"
   echo "============================="
   
+  # First, offer the complete download option
+  echo "MDI Icons Download Options:"
+  echo "1) Download ALL Material Design Icons (7000+ files, ~50MB)"
+  echo "2) Download only icons from configuration.yml"
+  echo "3) Skip MDI icons download"
+  echo
+  
+  while true; do
+    read -p "Choose option [1/2/3]: " mdi_option
+    case "${mdi_option}" in
+      1)
+        log "Downloading ALL Material Design Icons..."
+        log "⚠️  This will download 7000+ SVG files (~50MB)"
+        log "⚠️  This may take several minutes depending on your connection"
+        echo
+        read -p "Confirm download ALL MDI icons? [y/N]: " confirm_all
+        if [[ "${confirm_all}" =~ ^[Yy]*$ ]]; then
+          download_all_mdi_icons
+          log_success "All MDI icons downloaded successfully"
+          return 0
+        else
+          echo "Cancelled. Choose another option."
+          continue
+        fi
+        ;;
+      2)
+        download_config_mdi_icons
+        return 0
+        ;;
+      3)
+        log "Skipping MDI icons download"
+        return 0
+        ;;
+      *)
+        echo "Invalid option. Please choose 1, 2, or 3."
+        ;;
+    esac
+  done
+}
+
+# Download ALL MDI icons (complete set)
+download_all_mdi_icons() {
+  local mdi_dir="${ROOT}/assets/mdi"
+  mkdir -p "${mdi_dir}"
+  
+  log "Starting complete MDI icons download..."
+  log "This may take several minutes..."
+  
+  # Use the external script for complete download
+  if [ -f "${ROOT}/icons/download_mdi.sh" ]; then
+    log "Using download_mdi.sh for complete download..."
+    "${ROOT}/icons/download_mdi.sh" all
+    local total_count
+    total_count=$(ls -1 "${mdi_dir}"/*.svg 2>/dev/null | wc -l)
+    log_success "Complete download finished: ${total_count} icons downloaded"
+  else
+    log_error "download_mdi.sh not found. Cannot download complete set."
+    return 1
+  fi
+}
+
+# Download only icons from configuration (original behavior)
+download_config_mdi_icons() {
   read -p "Download MDI icons from configuration.yml? [Y/n]: " download_mdi
   if [[ "${download_mdi}" =~ ^[Nn]*$ ]]; then
     log "Skipping MDI icons download"
@@ -220,19 +283,21 @@ setup_mdi_icons() {
     log "Downloading ${icon}.svg..."
     
     if command -v curl >/dev/null 2>&1; then
-      if curl -s --connect-timeout 10 --max-time 30 "${icon_url}" -o "${target_file}" 2>/dev/null; then
+      if curl -s --connect-timeout 10 --max-time 30 "${icon_url}" -o "${target_file}" 2>/dev/null && [ -s "${target_file}" ]; then
         downloaded=$((downloaded + 1))
         log_success "Downloaded ${icon}.svg"
       else
         failed=$((failed + 1))
+        rm -f "${target_file}" 2>/dev/null
         log_warning "Failed to download ${icon}.svg"
       fi
     elif command -v wget >/dev/null 2>&1; then
-      if wget -q --timeout=30 --tries=3 "${icon_url}" -O "${target_file}" 2>/dev/null; then
+      if wget -q --timeout=30 --tries=3 "${icon_url}" -O "${target_file}" 2>/dev/null && [ -s "${target_file}" ]; then
         downloaded=$((downloaded + 1))
         log_success "Downloaded ${icon}.svg"
       else
         failed=$((failed + 1))
+        rm -f "${target_file}" 2>/dev/null
         log_warning "Failed to download ${icon}.svg"
       fi
     else
