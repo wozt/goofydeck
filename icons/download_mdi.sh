@@ -13,7 +13,7 @@ CDN_URL="https://cdn.jsdelivr.net/npm/@mdi/svg@latest/svg"
 # Default values
 MODE="all"
 ICON_NAME=""
-METHOD="auto"
+METHOD="github"
 VERBOSE=false
 
 # Colors for output
@@ -43,8 +43,8 @@ ${YELLOW}OPTIONS:${NC}
     ${GREEN}-d, --dest DIR${NC}      Destination directory (default: ${DEST})
 
 ${YELLOW}METHODS:${NC}
-    ${GREEN}auto${NC}      Try methods in order: cdn -> github -> git (default)
-    ${GREEN}github${NC}    Use GitHub Raw URL only (fastest, lightweight)
+    ${GREEN}github${NC}    Use GitHub Raw URL only (fastest, lightweight, default)
+    ${GREEN}auto${NC}      Try methods in order: cdn -> github -> git
     ${GREEN}git${NC}       Use git sparse checkout (requires git, heavier)
     ${GREEN}cdn${NC}       Use jsdelivr CDN only (may have network issues)
 
@@ -172,8 +172,9 @@ download_git() {
     
     command -v git >/dev/null 2>&1 || { log_error "git is required for Git method"; return 1; }
     
-    local TMP_DIR="$(mktemp -d)"
-    cleanup() { rm -rf "${TMP_DIR}"; }
+    local TMP_DIR
+    TMP_DIR="$(mktemp -d 2>/dev/null)" || { log_error "Failed to create temporary directory"; return 1; }
+    cleanup() { rm -rf "${TMP_DIR}" 2>/dev/null; }
     trap cleanup EXIT
     
     log_info "Cloning repository (sparse)..."
@@ -280,8 +281,9 @@ download_all() {
     
     mkdir -p "${DEST}"
     
-    local TMP_DIR="$(mktemp -d)"
-    cleanup() { rm -rf "${TMP_DIR}"; }
+    local TMP_DIR
+    TMP_DIR="$(mktemp -d 2>/dev/null)" || { log_error "Failed to create temporary directory"; exit 1; }
+    cleanup() { rm -rf "${TMP_DIR}" 2>/dev/null; }
     trap cleanup EXIT
     
     log_info "Cloning MaterialDesign repository (sparse, svg only)..."
